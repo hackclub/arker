@@ -1,0 +1,90 @@
+# Development Dockerfile with live reloading
+FROM golang:1.22-bookworm
+
+# Install required packages and Playwright dependencies (matching production)
+RUN apt-get update && apt-get install -y \
+    git \
+    python3 \
+    python3-pip \
+    curl \
+    ca-certificates \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2 \
+    libatspi2.0-0 \
+    libgtk-3-0 \
+    libxss1 \
+    fonts-liberation \
+    libappindicator3-1 \
+    lsb-release \
+    xdg-utils \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install yt-dlp
+RUN pip3 install --break-system-packages yt-dlp
+
+# Set working directory
+WORKDIR /app
+
+# Install Air for live reloading (compatible with Go 1.22)
+RUN go install github.com/air-verse/air@v1.52.3
+
+# Install Playwright CLI that matches our library version
+RUN go install github.com/playwright-community/playwright-go/cmd/playwright@v0.4501.1
+ENV PATH="/root/go/bin:${PATH}"
+
+# Copy go.mod and go.sum first for better Docker layer caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Install Playwright browsers (dependencies already installed above)
+RUN playwright install chromium
+
+# Verify installation
+RUN playwright --version
+
+# Create data directories
+RUN mkdir -p /data /cache
+
+# Create .air.toml configuration for live reloading
+RUN echo '[build]\n\
+  cmd = "go build -o ./tmp/main ."\n\
+  bin = "tmp/main"\n\
+  full_bin = "APP_ENV=dev ./tmp/main"\n\
+  include_ext = ["go", "tpl", "tmpl", "html"]\n\
+  exclude_dir = ["assets", "tmp", "vendor", "pgdata", "storage", "cache"]\n\
+  include_dir = []\n\
+  exclude_file = []\n\
+  delay = 1000 # ms\n\
+  stop_on_dir_change = true\n\
+  log = "build-errors.log"\n\
+  \n\
+[color]\n\
+  main = "magenta"\n\
+  watcher = "cyan"\n\
+  build = "yellow"\n\
+  runner = "green"\n\
+  \n\
+[log]\n\
+  time = false\n\
+  \n\
+[misc]\n\
+  clean_on_exit = true' > .air.toml
+
+# Default command is to run Air
+CMD ["air"]

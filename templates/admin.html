@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Arker - Admin Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .url-item { border: 1px solid #ddd; margin-bottom: 20px; padding: 15px; border-radius: 5px; }
+        .url-original { font-weight: bold; font-size: 18px; margin-bottom: 10px; word-break: break-all; }
+        .captures { margin-left: 20px; }
+        .capture-item { margin: 10px 0; padding: 10px; background: #f8f9fa; border-radius: 3px; }
+        .capture-link { text-decoration: none; color: #007bff; font-weight: bold; }
+        .capture-link:hover { text-decoration: underline; }
+        .new-capture-btn { background: #28a745; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
+        .new-capture-btn:hover { background: #218838; }
+        .add-url-form { background: #e9ecef; padding: 20px; border-radius: 5px; margin-bottom: 20px; }
+        .add-url-form input { padding: 10px; border: 1px solid #ccc; border-radius: 4px; margin-right: 10px; width: 400px; }
+        .add-url-form button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .status { font-style: italic; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Arker - Admin Dashboard</h1>
+        <a href="/login" style="color: #dc3545;">Logout</a>
+    </div>
+    
+    <div class="add-url-form">
+        <h3>Archive New URL</h3>
+        <form id="addUrlForm">
+            <input type="url" id="newUrl" placeholder="Enter URL to archive" required>
+            <button type="submit">Archive</button>
+        </form>
+    </div>
+
+    <h2>Archived URLs</h2>
+    {{range .urls}}
+    <div class="url-item">
+        <div class="url-original">{{.Original}}</div>
+        <div class="captures">
+            {{if .Captures}}
+                {{range .Captures}}
+                <div class="capture-item">
+                    <a href="/{{.ShortID}}" class="capture-link">{{.ShortID}}</a> - 
+                    <span>{{.Timestamp.Format "2006-01-02 15:04:05"}}</span>
+                </div>
+                {{end}}
+            {{else}}
+                <div class="status">No captures yet</div>
+            {{end}}
+        </div>
+        <button class="new-capture-btn" onclick="requestCapture({{.ID}})">New Capture</button>
+    </div>
+    {{end}}
+
+    <script>
+        document.getElementById('addUrlForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const url = document.getElementById('newUrl').value;
+            
+            try {
+                const response = await fetch('/api/v1/archive', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: url })
+                });
+                
+                const result = await response.json();
+                if (response.ok) {
+                    alert('Archive requested! Short ID: ' + result.short_id);
+                    location.reload();
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        });
+
+        async function requestCapture(urlId) {
+            try {
+                const response = await fetch(`/admin/url/${urlId}/capture`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                if (response.ok) {
+                    alert('New capture requested! Short ID: ' + result.short_id);
+                    location.reload();
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>

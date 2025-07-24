@@ -1,0 +1,28 @@
+# Binaries
+arker
+*.exe
+
+# Test coverage
+*.out
+
+# Data directories  
+storage/
+cache/
+pgdata/
+tmp/
+
+# OS files
+.DS_Store
+*.swp
+*.swo
+
+# IDE files
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak

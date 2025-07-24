@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: arker
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d arker"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/app          # Mount source code for live reloading
+      - ./storage:/data
+      - ./cache:/cache
+      - /app/pgdata     # Exclude pgdata from volume mount
+    environment:
+      DB_URL: "postgres://user:pass@db:5432/arker?sslmode=disable"
+      STORAGE_PATH: /data
+      CACHE_PATH: /cache
+      MAX_WORKERS: 5
+      GIN_MODE: debug   # Enable Gin debug mode
+    working_dir: /app
+    # Increase memory limit for Playwright
+    mem_limit: 2g
+    shm_size: 2g
+    # Keep container running for development
+    tty: true
+    stdin_open: true

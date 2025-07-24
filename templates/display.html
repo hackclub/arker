@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Archive - {{.short_id}}</title>
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; }
+        .archive-bar { 
+            background: #f8f9fa; 
+            padding: 10px 20px; 
+            border-bottom: 1px solid #ddd; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+        }
+        .archive-info { font-weight: bold; }
+        .archive-date { color: #666; font-size: 14px; }
+        .tabs { 
+            display: flex; 
+            background: #e9ecef; 
+            margin: 0; 
+            padding: 0; 
+            list-style: none; 
+            border-bottom: 1px solid #ddd;
+        }
+        .tabs li { margin: 0; }
+        .tabs a { 
+            display: block; 
+            padding: 12px 20px; 
+            text-decoration: none; 
+            color: #495057; 
+            border-right: 1px solid #ddd;
+            text-transform: capitalize;
+        }
+        .tabs a:hover, .tabs a.active { 
+            background: white; 
+            color: #007bff; 
+        }
+        .tab-content { 
+            padding: 20px; 
+            min-height: 500px;
+        }
+        .tab-content.mhtml-active {
+            padding: 0;
+        }
+        .tab-pane { display: none; }
+        .tab-pane.active { display: block; }
+        .tab-pane#tab-mhtml { 
+            position: relative; 
+            padding: 0; 
+            margin: 0;
+            height: calc(100vh - 120px); /* Full height minus header and tabs */
+        }
+        .download-link { 
+            display: inline-block; 
+            padding: 10px 20px; 
+            background: #007bff; 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 4px; 
+            margin-bottom: 20px;
+        }
+        .download-link:hover { background: #0056b3; }
+        .mhtml-download-link {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .git-clone { 
+            background: #f8f9fa; 
+            padding: 15px; 
+            border-radius: 4px; 
+            font-family: monospace; 
+            margin-bottom: 20px;
+        }
+        .screenshot-img { max-width: 100%; height: auto; border: 1px solid #ddd; }
+        .video-player { max-width: 100%; height: auto; }
+        .mhtml-iframe { 
+            width: 100%; 
+            height: 100%; 
+            border: none;
+        }
+        .status-pending { color: #ffc107; font-style: italic; }
+        .status-failed { color: #dc3545; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div class="archive-bar">
+        <div class="archive-info">{{.domain}}</div>
+        <div class="archive-date">Archived: {{.date}}</div>
+    </div>
+
+    <ul class="tabs">
+        {{range .archives}}
+        {{if eq .Status "completed"}}
+        <li><a href="#tab-{{.Type}}" onclick="showTab('{{.Type}}')">{{.Type}}</a></li>
+        {{end}}
+        {{end}}
+    </ul>
+
+    <div class="tab-content">
+        {{range .archives}}
+        <div id="tab-{{.Type}}" class="tab-pane">
+            {{if eq .Status "completed"}}
+                {{if eq .Type "mhtml"}}
+                    <iframe src="/archive/{{$.short_id}}/mhtml/html" class="mhtml-iframe"></iframe>
+                    <a href="/archive/{{$.short_id}}/{{.Type}}" class="download-link mhtml-download-link">Download MHTML File</a>
+                {{else if eq .Type "screenshot"}}
+                    <h3>Full Page Screenshot</h3>
+                    <img src="/archive/{{$.short_id}}/{{.Type}}" alt="Full page screenshot" class="screenshot-img">
+                {{else if eq .Type "youtube"}}
+                    <h3>YouTube Video</h3>
+                    <video src="/archive/{{$.short_id}}/{{.Type}}" controls class="video-player">
+                        Your browser does not support the video tag.
+                    </video>
+                    <br><br>
+                    <a href="/archive/{{$.short_id}}/{{.Type}}" class="download-link">Download Video</a>
+                {{else if eq .Type "git"}}
+                    <h3>Git Repository</h3>
+                    <div class="git-clone">
+                        git clone https://{{$.host}}/git/{{$.short_id}}
+                    </div>
+                    <a href="/archive/{{$.short_id}}/{{.Type}}" class="download-link">Download Repository Archive</a>
+                    <p>You can clone this repository using the git command above, or download the compressed archive.</p>
+                {{end}}
+            {{else if eq .Status "pending"}}
+                <div class="status-pending">Archive in progress...</div>
+            {{else if eq .Status "failed"}}
+                <div class="status-failed">Archive failed</div>
+            {{end}}
+        </div>
+        {{end}}
+    </div>
+
+    <script>
+        function showTab(type) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-pane').forEach(pane => {
+                pane.classList.remove('active');
+            });
+            document.querySelectorAll('.tabs a').forEach(link => {
+                link.classList.remove('active');
+            });
+            
+            // Show selected tab
+            const selectedPane = document.getElementById('tab-' + type);
+            const selectedLink = document.querySelector(`a[href="#tab-${type}"]`);
+            const tabContent = document.querySelector('.tab-content');
+            
+            if (selectedPane) {
+                selectedPane.classList.add('active');
+            }
+            if (selectedLink) {
+                selectedLink.classList.add('active');
+            }
+            
+            // Add/remove mhtml-active class for proper padding
+            if (type === 'mhtml') {
+                tabContent.classList.add('mhtml-active');
+            } else {
+                tabContent.classList.remove('mhtml-active');
+            }
+        }
+
+        // Show first available tab by default
+        document.addEventListener('DOMContentLoaded', function() {
+            const firstTab = document.querySelector('.tabs a');
+            if (firstTab) {
+                const tabType = firstTab.getAttribute('href').replace('#tab-', '');
+                showTab(tabType);
+            }
+        });
+    </script>
+</body>
+</html>
