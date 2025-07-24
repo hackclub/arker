@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     curl \
     ca-certificates \
+    ffmpeg \
     libnss3 \
     libnspr4 \
     libatk1.0-0 \
