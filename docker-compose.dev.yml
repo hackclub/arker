@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   db:
@@ -28,20 +28,17 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - .:/app          # Mount source code for live reloading
+      - .:/app # Mount source code for live reloading
       - ./storage:/data
       - ./cache:/cache
-      - /app/pgdata     # Exclude pgdata from volume mount
+      - /app/pgdata # Exclude pgdata from volume mount
     environment:
       DB_URL: "postgres://user:pass@db:5432/arker?sslmode=disable"
       STORAGE_PATH: /data
       CACHE_PATH: /cache
-      MAX_WORKERS: 5
-      GIN_MODE: debug   # Enable Gin debug mode
+      MAX_WORKERS: 2
+      GIN_MODE: debug # Enable Gin debug mode
     working_dir: /app
-    # Increase memory limit for Playwright
-    mem_limit: 2g
-    shm_size: 2g
     # Keep container running for development
     tty: true
     stdin_open: true
