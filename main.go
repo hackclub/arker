@@ -734,6 +734,30 @@ func decodePartData(partData *PartData) ([]byte, error) {
 	}
 }
 
+// Extract repository name from git URL
+func extractRepoName(url string) string {
+	// Remove .git suffix if present
+	url = strings.TrimSuffix(url, ".git")
+	
+	// Extract last part of path
+	parts := strings.Split(strings.TrimRight(url, "/"), "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return "repo"
+}
+
+// Check if URL is a git repository
+func isGitURL(url string) bool {
+	lowerURL := strings.ToLower(url)
+	return strings.HasSuffix(lowerURL, ".git") ||
+		strings.Contains(lowerURL, "github.com/") ||
+		strings.Contains(lowerURL, "gitlab.com/") ||
+		strings.Contains(lowerURL, "bitbucket.org/") ||
+		strings.Contains(lowerURL, "codeberg.org/") ||
+		strings.Contains(lowerURL, "git.")
+}
+
 // Get archive types based on URL patterns
 func getArchiveTypes(url string) []string {
 	types := []string{"mhtml", "screenshot"}
@@ -745,12 +769,7 @@ func getArchiveTypes(url string) []string {
 	}
 	
 	// Add Git archiver for Git repository URLs
-	if strings.HasSuffix(lowerURL, ".git") ||
-		strings.Contains(lowerURL, "github.com/") ||
-		strings.Contains(lowerURL, "gitlab.com/") ||
-		strings.Contains(lowerURL, "bitbucket.org/") ||
-		strings.Contains(lowerURL, "codeberg.org/") ||
-		strings.Contains(lowerURL, "git.") {
+	if isGitURL(url) {
 		types = append(types, "git")
 	}
 	
@@ -888,13 +907,24 @@ func displayGet(c *gin.Context, db *gorm.DB) {
 	var archivedURL ArchivedURL
 	db.First(&archivedURL, capture.ArchivedURLID)
 	
+	// Check if this is a git repository and generate clone info
+	isGit := isGitURL(archivedURL.Original)
+	var gitCloneName string
+	if isGit {
+		repoName := extractRepoName(archivedURL.Original)
+		date := capture.CreatedAt.Format("2006-01-02")
+		gitCloneName = fmt.Sprintf("%s_%s", date, repoName)
+	}
+	
 	c.HTML(http.StatusOK, "display.html", gin.H{
-		"domain":       "arker.hackclub.com", // Or c.Request.Host
-		"date":         capture.Timestamp.Format(time.RFC1123),
-		"archives":     capture.ArchiveItems,
-		"short_id":     shortID,
-		"host":         c.Request.Host,
-		"original_url": archivedURL.Original,
+		"domain":        "arker.hackclub.com", // Or c.Request.Host
+		"date":          capture.Timestamp.Format(time.RFC1123),
+		"archives":      capture.ArchiveItems,
+		"short_id":      shortID,
+		"host":          c.Request.Host,
+		"original_url":  archivedURL.Original,
+		"is_git":        isGit,
+		"git_clone_name": gitCloneName,
 	})
 }
 

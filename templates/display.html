@@ -112,13 +112,39 @@
     </div>
 
     <ul class="tabs">
-        {{range .archives}}
-        <li><a href="#tab-{{.Type}}" onclick="showTab('{{.Type}}')" class="{{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
-            {{.Type}}
-            {{if eq .Status "processing"}} ⟳{{end}}
-            {{if eq .Status "pending"}} ⏳{{end}}
-            {{if eq .Status "failed"}} ✗{{end}}
-        </a></li>
+        {{if .is_git}}
+            {{/* Show git tab first for git repositories */}}
+            {{range .archives}}
+            {{if eq .Type "git"}}
+            <li><a href="#tab-{{.Type}}" onclick="showTab('{{.Type}}')" class="{{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}} git-tab-first">
+                {{.Type}}
+                {{if eq .Status "processing"}} ⟳{{end}}
+                {{if eq .Status "pending"}} ⏳{{end}}
+                {{if eq .Status "failed"}} ✗{{end}}
+            </a></li>
+            {{end}}
+            {{end}}
+            {{/* Then show other tabs */}}
+            {{range .archives}}
+            {{if ne .Type "git"}}
+            <li><a href="#tab-{{.Type}}" onclick="showTab('{{.Type}}')" class="{{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
+                {{.Type}}
+                {{if eq .Status "processing"}} ⟳{{end}}
+                {{if eq .Status "pending"}} ⏳{{end}}
+                {{if eq .Status "failed"}} ✗{{end}}
+            </a></li>
+            {{end}}
+            {{end}}
+        {{else}}
+            {{/* Default order for non-git URLs */}}
+            {{range .archives}}
+            <li><a href="#tab-{{.Type}}" onclick="showTab('{{.Type}}')" class="{{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
+                {{.Type}}
+                {{if eq .Status "processing"}} ⟳{{end}}
+                {{if eq .Status "pending"}} ⏳{{end}}
+                {{if eq .Status "failed"}} ✗{{end}}
+            </a></li>
+            {{end}}
         {{end}}
     </ul>
 
@@ -142,10 +168,10 @@
                 {{else if eq .Type "git"}}
                     <h3>Git Repository</h3>
                     <div class="git-clone">
-                        git clone https://{{$.host}}/git/{{$.short_id}}
+                        git clone https://{{$.host}}/git/{{$.short_id}}{{if $.git_clone_name}} {{$.git_clone_name}}{{end}}
                     </div>
                     <a href="/archive/{{$.short_id}}/{{.Type}}" class="download-link">Download Repository Archive</a>
-                    <p>You can clone this repository using the git command above, or download the compressed archive.</p>
+                    <p>You can clone this repository using the git command above{{if $.git_clone_name}} (will create directory "{{$.git_clone_name}}"){{end}}, or download the compressed archive.</p>
                 {{end}}
             {{else if eq .Status "pending"}}
                 <div class="processing-header">
