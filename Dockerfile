@@ -42,12 +42,14 @@ WORKDIR /app
 
 # Copy and build application first
 COPY go.mod go.sum ./
-# Ensure module mode is enabled for all go commands
+# Ensure module mode is enabled and GOPATH is not used
 ENV GO111MODULE=on
+ENV GOPATH=
 RUN go env && go mod download
 COPY . .
 ENV GO111MODULE=on
-RUN go env && go build -o arker ./cmd
+ENV GOPATH=
+RUN go env && go build -mod=mod -o arker ./cmd
 
 # Install Playwright CLI that matches our library version
 RUN go install github.com/playwright-community/playwright-go/cmd/playwright@v0.4501.1
