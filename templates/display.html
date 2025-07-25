@@ -12,6 +12,52 @@
             justify-content: space-between; 
             align-items: center;
         }
+        .archive-left { 
+            display: flex; 
+            align-items: center; 
+            gap: 15px;
+        }
+        .past-archives-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        .past-archives-btn {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .past-archives-btn:hover { background: #5a6268; }
+        .past-archives-content {
+            display: none;
+            position: absolute;
+            background-color: white;
+            min-width: 350px;
+            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+            z-index: 1000;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            top: 100%;
+            left: 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .past-archives-content a {
+            color: black;
+            padding: 8px 12px;
+            text-decoration: none;
+            display: block;
+            font-size: 12px;
+        }
+        .past-archives-content a:hover {
+            background-color: #f1f1f1;
+        }
+        .past-archives-dropdown:hover .past-archives-content {
+            display: block;
+        }
         .archive-info { font-weight: bold; }
         .archive-date { color: #666; font-size: 14px; }
         .tabs { 
@@ -107,8 +153,16 @@
 </head>
 <body>
     <div class="archive-bar">
-        <div class="archive-info">{{.domain}}</div>
-        <div class="archive-date">Archived: {{.date}}</div>
+        <div class="archive-left">
+            <div class="archive-info">{{.original_url}}</div>
+            <div class="past-archives-dropdown">
+                <button class="past-archives-btn">Past Archives ▼</button>
+                <div class="past-archives-content" id="past-archives-list">
+                    Loading...
+                </div>
+            </div>
+        </div>
+        <div class="archive-date">Archived: <span id="archive-time">{{.date}}</span></div>
     </div>
 
     <ul class="tabs">
@@ -167,11 +221,11 @@
                     <a href="/archive/{{$.short_id}}/{{.Type}}" class="download-link">Download Video</a>
                 {{else if eq .Type "git"}}
                     <h3>Git Repository</h3>
-                    <div class="git-clone">
-                        git clone https://{{$.host}}/git/{{$.short_id}}{{if $.git_clone_name}} {{$.git_clone_name}}{{end}}
+                    <div class="git-clone" id="git-clone-command">
+                        git clone https://{{$.host}}/git/{{$.short_id}}{{if $.git_repo_name}} <span id="git-clone-name-placeholder">{{$.timestamp}}_{{$.git_repo_name}}</span>{{end}}
                     </div>
                     <a href="/archive/{{$.short_id}}/{{.Type}}" class="download-link">Download Repository Archive</a>
-                    <p>You can clone this repository using the git command above{{if $.git_clone_name}} (will create directory "{{$.git_clone_name}}"){{end}}, or download the compressed archive.</p>
+                    <p id="git-clone-description">You can clone this repository using the git command above{{if $.git_repo_name}} (will create directory "<span id="git-clone-name-description">{{$.timestamp}}_{{$.git_repo_name}}</span>"){{end}}, or download the compressed archive.</p>
                 {{end}}
             {{else if eq .Status "pending"}}
                 <div class="processing-header">
@@ -281,6 +335,118 @@
             }
         }
 
+        // Convert time to user's local timezone
+        function updateTimeToLocal() {
+            const timeElement = document.getElementById('archive-time');
+            const originalTime = '{{.date}}'; // RFC1123 format
+            try {
+                const date = new Date(originalTime);
+                timeElement.textContent = date.toLocaleString();
+            } catch (error) {
+                console.error('Error parsing date:', error);
+            }
+        }
+
+        // Calculate relative time (like "5 minutes ago", "2 hours ago")
+        function getRelativeTime(date) {
+            const now = new Date();
+            const diffMs = now - date;
+            const diffSecs = Math.floor(diffMs / 1000);
+            const diffMins = Math.floor(diffSecs / 60);
+            const diffHours = Math.floor(diffMins / 60);
+            const diffDays = Math.floor(diffHours / 24);
+            const diffWeeks = Math.floor(diffDays / 7);
+            const diffMonths = Math.floor(diffDays / 30);
+            const diffYears = Math.floor(diffDays / 365);
+
+            if (diffSecs < 60) {
+                return diffSecs <= 1 ? 'just now' : `${diffSecs} seconds ago`;
+            } else if (diffMins < 60) {
+                return diffMins === 1 ? '1 minute ago' : `${diffMins} minutes ago`;
+            } else if (diffHours < 24) {
+                return diffHours === 1 ? '1 hour ago' : `${diffHours} hours ago`;
+            } else if (diffDays < 7) {
+                return diffDays === 1 ? '1 day ago' : `${diffDays} days ago`;
+            } else if (diffWeeks < 4) {
+                return diffWeeks === 1 ? '1 week ago' : `${diffWeeks} weeks ago`;
+            } else if (diffMonths < 12) {
+                return diffMonths === 1 ? '1 month ago' : `${diffMonths} months ago`;
+            } else {
+                return diffYears === 1 ? '1 year ago' : `${diffYears} years ago`;
+            }
+        }
+
+        // Load past archives for this URL
+        async function loadPastArchives() {
+            try {
+                const response = await fetch(`/api/v1/past-archives?url=${encodeURIComponent('{{.original_url}}')}`, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const archives = await response.json();
+                    const dropdown = document.getElementById('past-archives-list');
+                    
+                    if (archives.length === 0) {
+                        dropdown.innerHTML = '<div style="padding: 8px 12px; color: #666;">No other archives found</div>';
+                    } else {
+                        dropdown.innerHTML = archives.map(archive => {
+                            const date = new Date(archive.timestamp);
+                            const localDateTime = date.toLocaleString([], { 
+                                year: 'numeric', 
+                                month: '2-digit', 
+                                day: '2-digit', 
+                                hour: '2-digit', 
+                                minute: '2-digit',
+                                hour12: true 
+                            });
+                            const relativeTime = getRelativeTime(date);
+                            const isCurrent = archive.short_id === '{{.short_id}}';
+                            const style = isCurrent ? 'font-weight: bold; color: #007bff;' : '';
+                            const currentLabel = isCurrent ? ' (current)' : '';
+                            return `<a href="/${archive.short_id}" style="${style}">${localDateTime} - ${relativeTime}${currentLabel}</a>`;
+                        }).join('');
+                    }
+                } else {
+                    document.getElementById('past-archives-list').innerHTML = '<div style="padding: 8px 12px; color: #dc3545;">Error loading archives</div>';
+                }
+            } catch (error) {
+                console.error('Error loading past archives:', error);
+                document.getElementById('past-archives-list').innerHTML = '<div style="padding: 8px 12px; color: #dc3545;">Error loading archives</div>';
+            }
+        }
+
+        // Update git clone names to use local timezone
+        function updateGitCloneNames() {
+            const timestamp = '{{.timestamp}}'; // RFC3339 format
+            const repoName = '{{.git_repo_name}}';
+            
+            if (timestamp && repoName) {
+                try {
+                    const date = new Date(timestamp);
+                    const localDate = date.toLocaleDateString('en-CA'); // YYYY-MM-DD format
+                    const gitCloneName = `${localDate}_${repoName}`;
+                    
+                    // Update the placeholder in the git clone command
+                    const placeholder = document.getElementById('git-clone-name-placeholder');
+                    if (placeholder) {
+                        placeholder.textContent = gitCloneName;
+                    }
+                    
+                    // Update the description
+                    const description = document.getElementById('git-clone-name-description');
+                    if (description) {
+                        description.textContent = gitCloneName;
+                    }
+                } catch (error) {
+                    console.error('Error parsing timestamp for git clone name:', error);
+                }
+            }
+        }
+
         // Show first available tab by default
         document.addEventListener('DOMContentLoaded', function() {
             const firstTab = document.querySelector('.tabs a');
@@ -288,6 +454,15 @@
                 const tabType = firstTab.getAttribute('href').replace('#tab-', '');
                 showTab(tabType);
             }
+            
+            // Update time to local timezone
+            updateTimeToLocal();
+            
+            // Update git clone names to local timezone
+            updateGitCloneNames();
+            
+            // Load past archives
+            loadPastArchives();
         });
     </script>
 </body>

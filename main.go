@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"image"
 	"image/png"
 	"io"
 	"log"
@@ -221,6 +222,44 @@ func (a *MHTMLArchiver) Archive(url string, logWriter io.Writer, db *gorm.DB, it
 	return strings.NewReader(dataStr), ".mhtml", "application/x-mhtml", cleanup, nil
 }
 
+// resizeImageIfNeeded resizes an image if it exceeds WebP maximum dimensions (16383x16383)
+func resizeImageIfNeeded(img image.Image, logWriter io.Writer) image.Image {
+	const maxDim = 16383
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+	
+	if width <= maxDim && height <= maxDim {
+		return img // No resizing needed
+	}
+	
+	// Calculate new dimensions while maintaining aspect ratio
+	var newWidth, newHeight int
+	if width > height {
+		newWidth = maxDim
+		newHeight = (height * maxDim) / width
+	} else {
+		newHeight = maxDim
+		newWidth = (width * maxDim) / height
+	}
+	
+	fmt.Fprintf(logWriter, "Image too large (%dx%d), resizing to %dx%d\n", width, height, newWidth, newHeight)
+	
+	// Create new image
+	resized := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
+	
+	// Simple nearest neighbor scaling
+	for y := 0; y < newHeight; y++ {
+		for x := 0; x < newWidth; x++ {
+			srcX := (x * width) / newWidth
+			srcY := (y * height) / newHeight
+			resized.Set(x, y, img.At(bounds.Min.X+srcX, bounds.Min.Y+srcY))
+		}
+	}
+	
+	return resized
+}
+
 // ScreenshotArchiver
 type ScreenshotArchiver struct {
 	browser playwright.Browser
@@ -292,6 +331,9 @@ func (a *ScreenshotArchiver) Archive(url string, logWriter io.Writer, db *gorm.D
 	}
 	
 	fmt.Fprintf(logWriter, "Image decoded, bounds: %v\n", img.Bounds())
+
+	// Resize image if it exceeds WebP limits
+	img = resizeImageIfNeeded(img, logWriter)
 
 	var webpBuf bytes.Buffer
 	err = nativewebp.Encode(&webpBuf, img, nil)
@@ -860,6 +902,48 @@ func requestCapture(c *gin.Context, db *gorm.DB) {
 	c.JSON(http.StatusOK, gin.H{"short_id": shortID})
 }
 
+func apiPastArchives(c *gin.Context, db *gorm.DB) {
+	url := c.Query("url")
+	if url == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "url parameter is required"})
+		return
+	}
+
+	var archivedURL ArchivedURL
+	if err := db.Where("original = ?", url).First(&archivedURL).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusOK, []interface{}{})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	var captures []Capture
+	if err := db.Where("archived_url_id = ?", archivedURL.ID).
+		Order("created_at DESC").
+		Limit(10).
+		Find(&captures).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	type PastArchive struct {
+		ShortID   string    `json:"short_id"`
+		Timestamp time.Time `json:"timestamp"`
+	}
+
+	var pastArchives []PastArchive
+	for _, capture := range captures {
+		pastArchives = append(pastArchives, PastArchive{
+			ShortID:   capture.ShortID,
+			Timestamp: capture.Timestamp,
+		})
+	}
+
+	c.JSON(http.StatusOK, pastArchives)
+}
+
 func apiArchive(c *gin.Context, db *gorm.DB) {
 	var req struct {
 		URL   string   `json:"url"`
@@ -909,22 +993,20 @@ func displayGet(c *gin.Context, db *gorm.DB) {
 	
 	// Check if this is a git repository and generate clone info
 	isGit := isGitURL(archivedURL.Original)
-	var gitCloneName string
+	var gitRepoName string
 	if isGit {
-		repoName := extractRepoName(archivedURL.Original)
-		date := capture.CreatedAt.Format("2006-01-02")
-		gitCloneName = fmt.Sprintf("%s_%s", date, repoName)
+		gitRepoName = extractRepoName(archivedURL.Original)
 	}
 	
 	c.HTML(http.StatusOK, "display.html", gin.H{
-		"domain":        "arker.hackclub.com", // Or c.Request.Host
 		"date":          capture.Timestamp.Format(time.RFC1123),
+		"timestamp":     capture.Timestamp.Format(time.RFC3339), // For JavaScript parsing
 		"archives":      capture.ArchiveItems,
 		"short_id":      shortID,
 		"host":          c.Request.Host,
 		"original_url":  archivedURL.Original,
 		"is_git":        isGit,
-		"git_clone_name": gitCloneName,
+		"git_repo_name": gitRepoName,
 	})
 }
 
@@ -1291,6 +1373,7 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"logs": item.Logs})
 	})
 	r.POST("/api/v1/archive", func(c *gin.Context) { apiArchive(c, db) })
+	r.GET("/api/v1/past-archives", func(c *gin.Context) { apiPastArchives(c, db) })
 	r.GET("/:shortid", func(c *gin.Context) { displayGet(c, db) })
 	r.GET("/logs/:shortid/:type", func(c *gin.Context) {
 		shortID := c.Param("shortid")
