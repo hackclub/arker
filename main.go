@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"image/png"
 	"io"
 	"log"
 	"math/big"
@@ -27,6 +28,7 @@ import (
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/go-git/go-git/v5"
+	"github.com/HugoSmits86/nativewebp"
 	"github.com/playwright-community/playwright-go"
 	"github.com/klauspost/compress/zstd"
 	"golang.org/x/crypto/bcrypt"
@@ -60,8 +62,11 @@ type ArchiveItem struct {
 	gorm.Model
 	CaptureID  uint
 	Type       string // mhtml, screenshot, git, youtube
-	Status     string // pending, completed, failed
+	Status     string // pending, processing, completed, failed
 	StorageKey string
+	Extension  string // .webp, .mhtml, .tar.zst, .mp4, etc.
+	Logs       string `gorm:"type:text"`
+	RetryCount int
 }
 
 // Job for queue
@@ -112,7 +117,7 @@ func (s *FSStorage) Exists(key string) (bool, error) {
 
 // Archiver interface
 type Archiver interface {
-	Archive(url string) (data io.Reader, extension string, contentType string, cleanup func(), err error)
+	Archive(url string, logWriter io.Writer) (data io.Reader, extension string, contentType string, cleanup func(), err error)
 }
 
 // MHTMLArchiver
@@ -120,31 +125,62 @@ type MHTMLArchiver struct {
 	browser playwright.Browser
 }
 
-func (a *MHTMLArchiver) Archive(url string) (io.Reader, string, string, func(), error) {
+func (a *MHTMLArchiver) Archive(url string, logWriter io.Writer) (io.Reader, string, string, func(), error) {
+	fmt.Fprintf(logWriter, "Starting MHTML archive for: %s\n", url)
+	
 	page, err := a.browser.NewPage()
 	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to create browser page: %v\n", err)
 		return nil, "", "", nil, err
 	}
 	cleanup := func() { page.Close() }
 
-	if _, err = page.Goto(url, playwright.PageGotoOptions{Timeout: playwright.Float(30000)}); err != nil {
+	// Log console messages and errors
+	page.On("console", func(msg playwright.ConsoleMessage) {
+		fmt.Fprintf(logWriter, "Console [%s]: %s\n", msg.Type(), msg.Text())
+	})
+	page.On("pageerror", func(err error) {
+		fmt.Fprintf(logWriter, "Page error: %v\n", err)
+	})
+
+	fmt.Fprintf(logWriter, "Navigating to URL...\n")
+	if _, err = page.Goto(url, playwright.PageGotoOptions{
+		Timeout: playwright.Float(30000),
+	}); err != nil {
+		fmt.Fprintf(logWriter, "Failed to navigate to URL: %v\n", err)
 		cleanup()
 		return nil, "", "", nil, err
 	}
 
+	// Wait for document.readyState === 'complete'
+	fmt.Fprintf(logWriter, "Waiting for page to load completely...\n")
+	if _, err = page.WaitForFunction("document.readyState === 'complete'", playwright.PageWaitForFunctionOptions{
+		Timeout: playwright.Float(30000),
+	}); err != nil {
+		fmt.Fprintf(logWriter, "Page failed to load completely: %v\n", err)
+		cleanup()
+		return nil, "", "", nil, err
+	}
+	fmt.Fprintf(logWriter, "Page loaded successfully\n")
+
+	fmt.Fprintf(logWriter, "Creating CDP session for MHTML capture...\n")
 	session, err := page.Context().NewCDPSession(page)
 	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to create CDP session: %v\n", err)
 		cleanup()
 		return nil, "", "", nil, err
 	}
 
+	fmt.Fprintf(logWriter, "Capturing MHTML snapshot...\n")
 	result, err := session.Send("Page.captureSnapshot", map[string]interface{}{"format": "mhtml"})
 	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to capture MHTML snapshot: %v\n", err)
 		cleanup()
 		return nil, "", "", nil, err
 	}
 
 	dataStr := result.(map[string]interface{})["data"].(string)
+	fmt.Fprintf(logWriter, "MHTML archive completed successfully, size: %d bytes\n", len(dataStr))
 	return strings.NewReader(dataStr), ".mhtml", "application/x-mhtml", cleanup, nil
 }
 
@@ -153,45 +189,110 @@ type ScreenshotArchiver struct {
 	browser playwright.Browser
 }
 
-func (a *ScreenshotArchiver) Archive(url string) (io.Reader, string, string, func(), error) {
-	page, err := a.browser.NewPage()
+func (a *ScreenshotArchiver) Archive(url string, logWriter io.Writer) (io.Reader, string, string, func(), error) {
+	fmt.Fprintf(logWriter, "Starting screenshot archive for: %s\n", url)
+	
+	page, err := a.browser.NewPage(playwright.BrowserNewPageOptions{
+		Viewport: &playwright.Size{
+			Width:  1500,
+			Height: 1080,
+		},
+		DeviceScaleFactor: playwright.Float(2.0), // Retina quality
+	})
 	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to create browser page: %v\n", err)
 		return nil, "", "", nil, err
 	}
 	cleanup := func() { page.Close() }
 
-	if _, err = page.Goto(url); err != nil {
+	// Log console messages and errors
+	page.On("console", func(msg playwright.ConsoleMessage) {
+		fmt.Fprintf(logWriter, "Console [%s]: %s\n", msg.Type(), msg.Text())
+	})
+	page.On("pageerror", func(err error) {
+		fmt.Fprintf(logWriter, "Page error: %v\n", err)
+	})
+
+	fmt.Fprintf(logWriter, "Navigating to URL...\n")
+	if _, err = page.Goto(url, playwright.PageGotoOptions{
+		Timeout: playwright.Float(30000),
+	}); err != nil {
+		fmt.Fprintf(logWriter, "Failed to navigate to URL: %v\n", err)
 		cleanup()
 		return nil, "", "", nil, err
 	}
 
+	// Wait for document.readyState === 'complete'
+	fmt.Fprintf(logWriter, "Waiting for page to load completely...\n")
+	if _, err = page.WaitForFunction("document.readyState === 'complete'", playwright.PageWaitForFunctionOptions{
+		Timeout: playwright.Float(30000),
+	}); err != nil {
+		fmt.Fprintf(logWriter, "Page failed to load completely: %v\n", err)
+		cleanup()
+		return nil, "", "", nil, err
+	}
+	fmt.Fprintf(logWriter, "Page loaded successfully\n")
+
+	fmt.Fprintf(logWriter, "Taking full-page screenshot...\n")
 	data, err := page.Screenshot(playwright.PageScreenshotOptions{
 		FullPage: playwright.Bool(true),
 		Type:     (*playwright.ScreenshotType)(playwright.String("png")),
 	})
 	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to take screenshot: %v\n", err)
 		cleanup()
 		return nil, "", "", nil, err
 	}
 
-	return strings.NewReader(string(data)), ".png", "image/png", cleanup, nil
+	// Convert PNG to WebP
+	fmt.Fprintf(logWriter, "Screenshot captured, size: %d bytes. Converting to WebP...\n", len(data))
+	
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to decode PNG: %v\n", err)
+		cleanup()
+		return nil, "", "", nil, err
+	}
+	
+	fmt.Fprintf(logWriter, "Image decoded, bounds: %v\n", img.Bounds())
+
+	var webpBuf bytes.Buffer
+	err = nativewebp.Encode(&webpBuf, img, nil)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to encode WebP: %v\n", err)
+		cleanup()
+		return nil, "", "", nil, err
+	}
+
+	fmt.Fprintf(logWriter, "Screenshot archive completed successfully, WebP size: %d bytes\n", webpBuf.Len())
+	
+	return bytes.NewReader(webpBuf.Bytes()), ".webp", "image/webp", cleanup, nil
 }
 
 // GitArchiver
 type GitArchiver struct{}
 
-func (a *GitArchiver) Archive(url string) (io.Reader, string, string, func(), error) {
+func (a *GitArchiver) Archive(url string, logWriter io.Writer) (io.Reader, string, string, func(), error) {
+	fmt.Fprintf(logWriter, "Starting git archive for: %s\n", url)
+	
 	tempDir, err := os.MkdirTemp("", "git-archive-")
 	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to create temp directory: %v\n", err)
 		return nil, "", "", nil, err
 	}
 	cleanup := func() { os.RemoveAll(tempDir) }
 
-	_, err = git.PlainClone(tempDir, true, &git.CloneOptions{URL: url})
+	fmt.Fprintf(logWriter, "Cloning repository to: %s\n", tempDir)
+	_, err = git.PlainClone(tempDir, true, &git.CloneOptions{
+		URL:      url,
+		Progress: logWriter,
+	})
 	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to clone repository: %v\n", err)
 		cleanup()
 		return nil, "", "", nil, err
 	}
+	fmt.Fprintf(logWriter, "Repository cloned successfully\n")
 
 	pr, pw := io.Pipe()
 
@@ -200,10 +301,13 @@ func (a *GitArchiver) Archive(url string) (io.Reader, string, string, func(), er
 		tw := tar.NewWriter(pw)
 		defer tw.Close()
 		
+		fmt.Fprintf(logWriter, "Creating tar archive...\n")
 		if err := addDirToTar(tw, tempDir, ""); err != nil {
+			fmt.Fprintf(logWriter, "Failed to create tar archive: %v\n", err)
 			pw.CloseWithError(err)
 			return
 		}
+		fmt.Fprintf(logWriter, "Git archive completed successfully\n")
 	}()
 
 	return pr, ".tar", "application/x-tar", cleanup, nil
@@ -218,23 +322,29 @@ type PartData struct {
 	Data   []byte
 }
 
-func (a *YTArchiver) Archive(url string) (io.Reader, string, string, func(), error) {
+func (a *YTArchiver) Archive(url string, logWriter io.Writer) (io.Reader, string, string, func(), error) {
+	fmt.Fprintf(logWriter, "Starting YouTube archive for: %s\n", url)
+	
 	cmd := exec.Command("yt-dlp", "-f", "bestvideo+bestaudio/best", "--no-playlist", "--no-write-thumbnail", "--verbose", "-o", "-", url)
 	pr, err := cmd.StdoutPipe()
 	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to create stdout pipe: %v\n", err)
 		return nil, "", "", nil, err
 	}
 	
-	// Stream stderr to stdout for debugging
-	cmd.Stderr = os.Stdout
+	// Stream stderr to log writer for debugging
+	cmd.Stderr = logWriter
 	
+	fmt.Fprintf(logWriter, "Starting yt-dlp process...\n")
 	if err = cmd.Start(); err != nil {
+		fmt.Fprintf(logWriter, "Failed to start yt-dlp: %v\n", err)
 		return nil, "", "", nil, err
 	}
 	cleanup := func() { 
 		cmd.Process.Kill()
 		cmd.Wait() 
 	}
+	fmt.Fprintf(logWriter, "YouTube download started successfully\n")
 	return pr, ".mp4", "video/mp4", cleanup, nil
 }
 
@@ -471,13 +581,39 @@ func worker(id int, jobChan <-chan Job, storage Storage, db *gorm.DB, archivers 
 
 // Process job (streams to zstd/FS)
 func processJob(job Job, storage Storage, db *gorm.DB, archivers map[string]Archiver) error {
+	var item ArchiveItem
+	if err := db.Where("capture_id = ? AND type = ?", job.CaptureID, job.Type).First(&item).Error; err != nil {
+		return err
+	}
+	
+	// Check retry limit
+	if item.RetryCount >= 3 {
+		db.Model(&item).Update("status", "failed")
+		return fmt.Errorf("max retries exceeded for %s %s", job.ShortID, job.Type)
+	}
+	
+	// Update status to processing and increment retry count
+	db.Model(&item).Updates(map[string]interface{}{
+		"status":      "processing",
+		"retry_count": gorm.Expr("retry_count + 1"),
+	})
+	
 	arch, ok := archivers[job.Type]
 	if !ok {
 		return fmt.Errorf("unknown archiver %s", job.Type)
 	}
 	
-	data, ext, _, cleanup, err := arch.Archive(job.URL)
+	var logBuf bytes.Buffer
+	data, ext, _, cleanup, err := arch.Archive(job.URL, &logBuf)
 	if err != nil {
+		if cleanup != nil {
+			cleanup()
+		}
+		// Store logs and mark as failed
+		db.Model(&item).Updates(map[string]interface{}{
+			"status": "failed",
+			"logs":   logBuf.String(),
+		})
 		return err
 	}
 	if cleanup != nil {
@@ -501,9 +637,12 @@ func processJob(job Job, storage Storage, db *gorm.DB, archivers map[string]Arch
 		return err
 	}
 	
-	db.Model(&ArchiveItem{}).Where("capture_id = ? AND type = ?", job.CaptureID, job.Type).Updates(map[string]interface{}{
+	// Mark as completed and store logs
+	db.Model(&item).Updates(map[string]interface{}{
 		"status":      "completed",
 		"storage_key": key,
+		"extension":   ext,
+		"logs":        logBuf.String(),
 	})
 	return nil
 }
@@ -524,6 +663,29 @@ func decodePartData(partData *PartData) ([]byte, error) {
 	default:
 		return partData.Data, nil
 	}
+}
+
+// Get archive types based on URL patterns
+func getArchiveTypes(url string) []string {
+	types := []string{"mhtml", "screenshot"}
+	lowerURL := strings.ToLower(url)
+	
+	// Add YouTube archiver for YouTube URLs
+	if strings.Contains(lowerURL, "youtube.com") || strings.Contains(lowerURL, "youtu.be") {
+		types = append(types, "youtube")
+	}
+	
+	// Add Git archiver for Git repository URLs
+	if strings.HasSuffix(lowerURL, ".git") ||
+		strings.Contains(lowerURL, "github.com/") ||
+		strings.Contains(lowerURL, "gitlab.com/") ||
+		strings.Contains(lowerURL, "bitbucket.org/") ||
+		strings.Contains(lowerURL, "codeberg.org/") ||
+		strings.Contains(lowerURL, "git.") {
+		types = append(types, "git")
+	}
+	
+	return types
 }
 
 // Generate short ID
@@ -582,7 +744,7 @@ func adminGet(c *gin.Context, db *gorm.DB) {
 		return
 	}
 	var urls []ArchivedURL
-	db.Preload("Captures", func(db *gorm.DB) *gorm.DB {
+	db.Preload("Captures.ArchiveItems").Preload("Captures", func(db *gorm.DB) *gorm.DB {
 		return db.Order("created_at DESC")
 	}).Order("updated_at DESC").Find(&urls)
 	c.HTML(http.StatusOK, "admin.html", gin.H{"urls": urls})
@@ -598,7 +760,7 @@ func requestCapture(c *gin.Context, db *gorm.DB) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid URL ID"})
 		return
 	}
-	types := []string{"mhtml", "screenshot", "git", "youtube"} // TODO: Parse from body for custom types
+	types := getArchiveTypes(u.Original)
 	shortID := generateShortID(db)
 	capture := Capture{ArchivedURLID: u.ID, Timestamp: time.Now(), ShortID: shortID}
 	db.Create(&capture)
@@ -620,7 +782,7 @@ func apiArchive(c *gin.Context, db *gorm.DB) {
 		return
 	}
 	if len(req.Types) == 0 {
-		req.Types = []string{"mhtml", "screenshot", "git", "youtube"}
+		req.Types = getArchiveTypes(req.URL)
 	}
 	var u ArchivedURL
 	err := db.Where("original = ?", req.URL).First(&u).Error
@@ -662,7 +824,7 @@ func displayGet(c *gin.Context, db *gorm.DB) {
 }
 
 // generateArchiveFilename creates a descriptive filename for archive downloads
-func generateArchiveFilename(capture Capture, archivedURL ArchivedURL, typ string) string {
+func generateArchiveFilename(capture Capture, archivedURL ArchivedURL, extension string) string {
 	// Format: YYYY-MM-DD_downcased_url.extension
 	date := capture.CreatedAt.Format("2006-01-02")
 	
@@ -694,7 +856,10 @@ func generateArchiveFilename(capture Capture, archivedURL ArchivedURL, typ strin
 		url = url[:50]
 	}
 	
-	return fmt.Sprintf("%s_%s.%s", date, url, typ)
+	// Remove leading dot from extension if present
+	extension = strings.TrimPrefix(extension, ".")
+	
+	return fmt.Sprintf("%s_%s.%s", date, url, extension)
 }
 
 func serveArchive(c *gin.Context, storage Storage, db *gorm.DB) {
@@ -740,7 +905,7 @@ func serveArchive(c *gin.Context, storage Storage, db *gorm.DB) {
 		ct = "multipart/related" // Original MHTML content type for downloads
 		attach = true
 	case "screenshot":
-		ct = "image/png"
+		ct = "image/webp"
 	case "youtube":
 		ct = "video/mp4"
 	case "git":
@@ -752,7 +917,7 @@ func serveArchive(c *gin.Context, storage Storage, db *gorm.DB) {
 	}
 	c.Header("Content-Type", ct)
 	if attach {
-		filename := generateArchiveFilename(capture, archivedURL, typ)
+		filename := generateArchiveFilename(capture, archivedURL, item.Extension)
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 	}
 	io.Copy(c.Writer, zr)
@@ -974,9 +1139,32 @@ func main() {
 	if maxWorkers <= 0 {
 		maxWorkers = 5
 	}
+	// Resume pending archives on startup
+	var pendingItems []ArchiveItem
+	db.Where("status IN (?, ?) AND retry_count < ?", "pending", "processing", 3).Find(&pendingItems)
+	for _, item := range pendingItems {
+		var capture Capture
+		db.First(&capture, item.CaptureID)
+		var au ArchivedURL
+		db.First(&au, capture.ArchivedURLID)
+		jobChan <- Job{CaptureID: capture.ID, ShortID: capture.ShortID, Type: item.Type, URL: au.Original}
+		log.Printf("Resuming pending job: %s %s", capture.ShortID, item.Type)
+	}
+
 	for i := 1; i <= maxWorkers; i++ {
 		go worker(i, jobChan, storage, db, archivers)
 	}
+
+	// Start log cleanup routine
+	go func() {
+		for {
+			time.Sleep(24 * time.Hour)
+			result := db.Model(&ArchiveItem{}).Where("status = ? AND updated_at < ?", "completed", time.Now().Add(-30*24*time.Hour)).Update("logs", "")
+			if result.RowsAffected > 0 {
+				log.Printf("Cleaned up logs for %d completed archives older than 30 days", result.RowsAffected)
+			}
+		}
+	}()
 
 	r := gin.Default()
 	r.LoadHTMLGlob("templates/*.html")
@@ -987,6 +1175,16 @@ func main() {
 	r.POST("/login", func(c *gin.Context) { loginPost(c, db) })
 	r.GET("/admin", func(c *gin.Context) { adminGet(c, db) })
 	r.POST("/admin/url/:id/capture", func(c *gin.Context) { requestCapture(c, db) })
+	r.GET("/admin/item/:id/log", func(c *gin.Context) {
+		if !requireLogin(c) { return }
+		id := c.Param("id")
+		var item ArchiveItem
+		if db.First(&item, id).Error != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"logs": item.Logs})
+	})
 	r.POST("/api/v1/archive", func(c *gin.Context) { apiArchive(c, db) })
 	r.GET("/:shortid", func(c *gin.Context) { displayGet(c, db) })
 	r.GET("/archive/:shortid/:type", func(c *gin.Context) { serveArchive(c, storage, db) })

@@ -126,8 +126,14 @@
                 {{end}}
             {{else if eq .Status "pending"}}
                 <div class="status-pending">Archive in progress...</div>
+            {{else if eq .Status "processing"}}
+                <div class="status-pending">Archive being processed...</div>
             {{else if eq .Status "failed"}}
                 <div class="status-failed">Archive failed</div>
+                {{if .Logs}}
+                <h4>Error Details:</h4>
+                <pre style="white-space: pre-wrap; background: #f8f9fa; padding: 15px; border: 1px solid #ddd; border-radius: 4px; max-height: 400px; overflow-y: auto; font-size: 12px;">{{.Logs}}</pre>
+                {{end}}
             {{end}}
         </div>
         {{end}}
