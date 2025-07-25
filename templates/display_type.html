@@ -477,7 +477,11 @@
 
         // Copy archive URL to clipboard
         async function copyArchiveUrl() {
-            const url = window.location.href;
+            // Build the base URL without the type suffix
+            const protocol = window.location.protocol;
+            const host = window.location.host;
+            const shortId = '{{.short_id}}';
+            const url = `${protocol}//${host}/${shortId}`;
             const button = document.getElementById('copy-url-btn');
             
             try {
