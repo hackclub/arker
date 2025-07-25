@@ -219,11 +219,15 @@ type PartData struct {
 }
 
 func (a *YTArchiver) Archive(url string) (io.Reader, string, string, func(), error) {
-	cmd := exec.Command("yt-dlp", "-f", "best", "--no-playlist", "--no-write-thumbnail", "-o", "-", url)
+	cmd := exec.Command("yt-dlp", "-f", "bestvideo+bestaudio/best", "--no-playlist", "--no-write-thumbnail", "--verbose", "-o", "-", url)
 	pr, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, "", "", nil, err
 	}
+	
+	// Stream stderr to stdout for debugging
+	cmd.Stderr = os.Stdout
+	
 	if err = cmd.Start(); err != nil {
 		return nil, "", "", nil, err
 	}
