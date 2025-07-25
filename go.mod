@@ -6,6 +6,7 @@ toolchain go1.24.5
 
 require (
 	github.com/HugoSmits86/nativewebp v1.2.0
+	github.com/SaveTheRbtz/zstd-seekable-format-go/pkg v0.8.0
 	github.com/gin-contrib/sessions v0.0.5
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-git/go-git/v5 v5.8.1
@@ -21,8 +22,6 @@ require (
 	dario.cat/mergo v1.0.0 // indirect
 	github.com/Microsoft/go-winio v0.6.1 // indirect
 	github.com/ProtonMail/go-crypto v0.0.0-20230717121422-5aa5874ade95 // indirect
-	github.com/SaveTheRbtz/zstd-seekable-format-go v0.7.1 // indirect
-	github.com/SaveTheRbtz/zstd-seekable-format-go/pkg v0.8.0 // indirect
 	github.com/acomagu/bufpipe v1.0.4 // indirect
 	github.com/bytedance/sonic v1.9.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
