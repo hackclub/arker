@@ -1225,9 +1225,13 @@ func adminGet(c *gin.Context, db *gorm.DB) {
 		return
 	}
 	var urls []ArchivedURL
+	// Sort by most recent archive creation (not URL creation)
 	db.Preload("Captures.ArchiveItems").Preload("Captures", func(db *gorm.DB) *gorm.DB {
 		return db.Order("created_at DESC")
-	}).Order("updated_at DESC").Find(&urls)
+	}).Joins("LEFT JOIN captures ON archived_urls.id = captures.archived_url_id").
+		Joins("LEFT JOIN archive_items ON captures.id = archive_items.capture_id").
+		Group("archived_urls.id").
+		Order("MAX(archive_items.created_at) DESC").Find(&urls)
 	c.HTML(http.StatusOK, "admin.html", gin.H{"urls": urls})
 }
 

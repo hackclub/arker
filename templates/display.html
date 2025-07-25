@@ -154,7 +154,7 @@
 <body>
     <div class="archive-bar">
         <div class="archive-left">
-            <div class="archive-info">{{.original_url}}</div>
+            <div class="archive-info"><a href="{{.original_url}}" target="_blank" style="color: #007bff; text-decoration: none;">{{.original_url}}</a></div>
             <div class="past-archives-dropdown">
                 <button class="past-archives-btn">Past Archives ▼</button>
                 <div class="past-archives-content" id="past-archives-list">
@@ -190,14 +190,27 @@
             {{end}}
             {{end}}
         {{else}}
-            {{/* Default order for non-git URLs */}}
+            {{/* For websites, show MHTML first, then others */}}
             {{range .archives}}
+            {{if eq .Type "mhtml"}}
+            <li><a href="#tab-{{.Type}}" onclick="showTab('{{.Type}}')" class="{{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}} mhtml-tab-first">
+                {{.Type}}
+                {{if eq .Status "processing"}} ⟳{{end}}
+                {{if eq .Status "pending"}} ⏳{{end}}
+                {{if eq .Status "failed"}} ✗{{end}}
+            </a></li>
+            {{end}}
+            {{end}}
+            {{/* Then show other tabs */}}
+            {{range .archives}}
+            {{if ne .Type "mhtml"}}
             <li><a href="#tab-{{.Type}}" onclick="showTab('{{.Type}}')" class="{{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
                 {{.Type}}
                 {{if eq .Status "processing"}} ⟳{{end}}
                 {{if eq .Status "pending"}} ⏳{{end}}
                 {{if eq .Status "failed"}} ✗{{end}}
             </a></li>
+            {{end}}
             {{end}}
         {{end}}
     </ul>
