@@ -44,6 +44,8 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+# Ensure module mode is enabled and build
+ENV GO111MODULE=on
 RUN go build -o arker ./cmd
 
 # Install Playwright CLI that matches our library version
