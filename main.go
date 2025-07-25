@@ -115,9 +115,46 @@ func (s *FSStorage) Exists(key string) (bool, error) {
 	return err == nil, err
 }
 
+// DBLogWriter writes logs to database in real-time
+type DBLogWriter struct {
+	db     *gorm.DB
+	itemID uint
+	buffer strings.Builder
+	mutex  sync.Mutex
+}
+
+func NewDBLogWriter(db *gorm.DB, itemID uint) *DBLogWriter {
+	return &DBLogWriter{
+		db:     db,
+		itemID: itemID,
+	}
+}
+
+func (w *DBLogWriter) Write(p []byte) (n int, err error) {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	
+	// Write to buffer
+	n, err = w.buffer.Write(p)
+	if err != nil {
+		return n, err
+	}
+	
+	// Update database with current log content
+	w.db.Model(&ArchiveItem{}).Where("id = ?", w.itemID).Update("logs", w.buffer.String())
+	
+	return n, nil
+}
+
+func (w *DBLogWriter) String() string {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	return w.buffer.String()
+}
+
 // Archiver interface
 type Archiver interface {
-	Archive(url string, logWriter io.Writer) (data io.Reader, extension string, contentType string, cleanup func(), err error)
+	Archive(url string, logWriter io.Writer, db *gorm.DB, itemID uint) (data io.Reader, extension string, contentType string, cleanup func(), err error)
 }
 
 // MHTMLArchiver
@@ -125,7 +162,7 @@ type MHTMLArchiver struct {
 	browser playwright.Browser
 }
 
-func (a *MHTMLArchiver) Archive(url string, logWriter io.Writer) (io.Reader, string, string, func(), error) {
+func (a *MHTMLArchiver) Archive(url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
 	fmt.Fprintf(logWriter, "Starting MHTML archive for: %s\n", url)
 	
 	page, err := a.browser.NewPage()
@@ -189,7 +226,7 @@ type ScreenshotArchiver struct {
 	browser playwright.Browser
 }
 
-func (a *ScreenshotArchiver) Archive(url string, logWriter io.Writer) (io.Reader, string, string, func(), error) {
+func (a *ScreenshotArchiver) Archive(url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
 	fmt.Fprintf(logWriter, "Starting screenshot archive for: %s\n", url)
 	
 	page, err := a.browser.NewPage(playwright.BrowserNewPageOptions{
@@ -272,7 +309,7 @@ func (a *ScreenshotArchiver) Archive(url string, logWriter io.Writer) (io.Reader
 // GitArchiver
 type GitArchiver struct{}
 
-func (a *GitArchiver) Archive(url string, logWriter io.Writer) (io.Reader, string, string, func(), error) {
+func (a *GitArchiver) Archive(url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
 	fmt.Fprintf(logWriter, "Starting git archive for: %s\n", url)
 	
 	tempDir, err := os.MkdirTemp("", "git-archive-")
@@ -322,8 +359,18 @@ type PartData struct {
 	Data   []byte
 }
 
-func (a *YTArchiver) Archive(url string, logWriter io.Writer) (io.Reader, string, string, func(), error) {
+func (a *YTArchiver) Archive(url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
 	fmt.Fprintf(logWriter, "Starting YouTube archive for: %s\n", url)
+	
+	// First, test if yt-dlp can access the video
+	fmt.Fprintf(logWriter, "Testing video accessibility with yt-dlp...\n")
+	testCmd := exec.Command("yt-dlp", "--print", "title,duration,uploader", url)
+	testOutput, err := testCmd.CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(logWriter, "yt-dlp test failed: %v\nOutput: %s\n", err, string(testOutput))
+		return nil, "", "", nil, fmt.Errorf("yt-dlp cannot access video: %v", err)
+	}
+	fmt.Fprintf(logWriter, "Video info:\n%s\n", string(testOutput))
 	
 	cmd := exec.Command("yt-dlp", "-f", "bestvideo+bestaudio/best", "--no-playlist", "--no-write-thumbnail", "--verbose", "-o", "-", url)
 	pr, err := cmd.StdoutPipe()
@@ -332,10 +379,30 @@ func (a *YTArchiver) Archive(url string, logWriter io.Writer) (io.Reader, string
 		return nil, "", "", nil, err
 	}
 	
-	// Stream stderr to log writer for debugging
-	cmd.Stderr = logWriter
+	// Create a pipe for stderr so we can capture and forward logs
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to create stderr pipe: %v\n", err)
+		return nil, "", "", nil, err
+	}
 	
-	fmt.Fprintf(logWriter, "Starting yt-dlp process...\n")
+	// Start capturing stderr in a goroutine
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			n, err := stderrPipe.Read(buf)
+			if n > 0 {
+				logWriter.Write(buf[:n])
+				// Also write to stdout for immediate debugging
+				os.Stdout.Write(buf[:n])
+			}
+			if err != nil {
+				break
+			}
+		}
+	}()
+	
+	fmt.Fprintf(logWriter, "Starting yt-dlp download process...\n")
 	if err = cmd.Start(); err != nil {
 		fmt.Fprintf(logWriter, "Failed to start yt-dlp: %v\n", err)
 		return nil, "", "", nil, err
@@ -603,16 +670,18 @@ func processJob(job Job, storage Storage, db *gorm.DB, archivers map[string]Arch
 		return fmt.Errorf("unknown archiver %s", job.Type)
 	}
 	
-	var logBuf bytes.Buffer
-	data, ext, _, cleanup, err := arch.Archive(job.URL, &logBuf)
+	dbLogWriter := NewDBLogWriter(db, item.ID)
+	log.Printf("Starting archive job: %s %s", job.ShortID, job.Type)
+	data, ext, _, cleanup, err := arch.Archive(job.URL, dbLogWriter, db, item.ID)
+	log.Printf("Archive job returned: %s %s, error: %v", job.ShortID, job.Type, err)
 	if err != nil {
 		if cleanup != nil {
 			cleanup()
 		}
-		// Store logs and mark as failed
+		// Store final logs and mark as failed
 		db.Model(&item).Updates(map[string]interface{}{
 			"status": "failed",
-			"logs":   logBuf.String(),
+			"logs":   dbLogWriter.String(),
 		})
 		return err
 	}
@@ -637,12 +706,12 @@ func processJob(job Job, storage Storage, db *gorm.DB, archivers map[string]Arch
 		return err
 	}
 	
-	// Mark as completed and store logs
+	// Mark as completed and store final logs
 	db.Model(&item).Updates(map[string]interface{}{
 		"status":      "completed",
 		"storage_key": key,
 		"extension":   ext,
-		"logs":        logBuf.String(),
+		"logs":        dbLogWriter.String(),
 	})
 	return nil
 }

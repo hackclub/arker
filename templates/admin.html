@@ -129,6 +129,9 @@
             }
         }
 
+        let currentLogId = null;
+        let logPollingInterval = null;
+
         async function viewLog(id) {
             try {
                 const response = await fetch(`/admin/item/${id}/log`);
@@ -136,6 +139,10 @@
                 if (response.ok) {
                     document.getElementById('logContent').textContent = result.logs || 'No logs available';
                     document.getElementById('logModal').style.display = 'block';
+                    
+                    // Start polling if this is a processing item
+                    currentLogId = id;
+                    startLogPolling();
                 } else {
                     alert('Error: ' + result.error);
                 }
@@ -144,8 +151,47 @@
             }
         }
 
+        async function refreshLogs() {
+            if (!currentLogId) return;
+            
+            try {
+                const response = await fetch(`/admin/item/${currentLogId}/log`);
+                const result = await response.json();
+                if (response.ok) {
+                    const logContent = document.getElementById('logContent');
+                    const newLogs = result.logs || 'No logs available';
+                    if (logContent.textContent !== newLogs) {
+                        logContent.textContent = newLogs;
+                        // Scroll to bottom to show latest logs
+                        logContent.scrollTop = logContent.scrollHeight;
+                    }
+                }
+            } catch (error) {
+                console.error('Error refreshing logs:', error);
+            }
+        }
+
+        function startLogPolling() {
+            // Clear any existing interval
+            if (logPollingInterval) {
+                clearInterval(logPollingInterval);
+            }
+            
+            // Start polling every 2 seconds
+            logPollingInterval = setInterval(refreshLogs, 2000);
+        }
+
+        function stopLogPolling() {
+            if (logPollingInterval) {
+                clearInterval(logPollingInterval);
+                logPollingInterval = null;
+            }
+            currentLogId = null;
+        }
+
         function closeLogModal() {
             document.getElementById('logModal').style.display = 'none';
+            stopLogPolling();
         }
 
         // Close modal when clicking outside of it
@@ -153,6 +199,7 @@
             const modal = document.getElementById('logModal');
             if (event.target == modal) {
                 modal.style.display = 'none';
+                stopLogPolling();
             }
         }
     </script>
