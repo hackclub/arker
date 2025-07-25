@@ -131,14 +131,14 @@ func TestGenerateShortID(t *testing.T) {
 	}
 	
 	// Test basic ID characteristics
-	id1 := "abc123XY"
-	id2 := "xyz789ZZ"
+	id1 := "abc12"
+	id2 := "xyz78"
 	
 	if id1 == id2 {
 		t.Error("Different IDs should not be equal")
 	}
 	
-	if len(id1) != 8 {
-		t.Error("ID should be 8 characters")
+	if len(id1) != 5 {
+		t.Error("ID should be 5 characters")
 	}
 }

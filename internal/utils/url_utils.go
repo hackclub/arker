@@ -62,7 +62,7 @@ func GenerateShortID(db *gorm.DB) string {
 	alphabet := []rune("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 	for {
 		var sb strings.Builder
-		for i := 0; i < 8; i++ {
+		for i := 0; i < 5; i++ {
 			n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
 			sb.WriteRune(alphabet[n.Int64()])
 		}
