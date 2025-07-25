@@ -1,0 +1,116 @@
+package handlers
+
+import (
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
+	"gorm.io/gorm"
+	"arker/internal/models"
+	"arker/internal/storage"
+	"arker/internal/utils"
+)
+
+func ServeArchive(c *gin.Context, storage storage.Storage, db *gorm.DB) {
+	shortID := c.Param("shortid")
+	typ := c.Param("type")
+	var item models.ArchiveItem
+	var capture models.Capture
+	var archivedURL models.ArchivedURL
+	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
+		Where("captures.short_id = ? AND archive_items.type = ?", shortID, typ).
+		First(&item).Error; err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	if err := db.Where("short_id = ?", shortID).First(&capture).Error; err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	if err := db.Where("id = ?", capture.ArchivedURLID).First(&archivedURL).Error; err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	if item.Status != "completed" {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	r, err := storage.Reader(item.StorageKey)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	defer r.Close()
+	zr, err := zstd.NewReader(r)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	defer zr.Close()
+	var ct string
+	attach := false
+	switch typ {
+	case "mhtml":
+		ct = "multipart/related" // Original MHTML content type for downloads
+		attach = true
+	case "screenshot":
+		ct = "image/webp"
+	case "youtube":
+		ct = "video/mp4"
+	case "git":
+		ct = "application/zstd"
+		attach = true
+	default:
+		ct = "application/octet-stream"
+		attach = true
+	}
+	c.Header("Content-Type", ct)
+	if attach {
+		filename := utils.GenerateArchiveFilename(capture, archivedURL, item.Extension)
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+	}
+	io.Copy(c.Writer, zr)
+}
+
+func ServeMHTMLAsHTML(c *gin.Context, storage storage.Storage, db *gorm.DB) {
+	shortID := c.Param("shortid")
+	var item models.ArchiveItem
+	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
+		Where("captures.short_id = ? AND archive_items.type = ?", shortID, "mhtml").
+		First(&item).Error; err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	if item.Status != "completed" {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	
+	r, err := storage.Reader(item.StorageKey)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	defer r.Close()
+	
+	zr, err := zstd.NewReader(r)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	defer zr.Close()
+	
+	c.Header("Content-Type", "text/html")
+	
+	log.Printf("Converting MHTML to HTML for %s", shortID)
+	
+	// Use the working MHTML converter
+	converter := &utils.MHTMLConverter{}
+	if err := converter.Convert(zr, c.Writer); err != nil {
+		log.Printf("MHTML conversion error: %v", err)
+		c.String(http.StatusInternalServerError, "MHTML conversion failed: %v", err)
+		return
+	}
+}

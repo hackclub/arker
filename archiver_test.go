@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/go-git/go-git/v5"
+	"arker/internal/archivers"
 )
 
 func TestGitArchiver(t *testing.T) {
@@ -47,7 +48,7 @@ func TestGitArchiver(t *testing.T) {
 	}
 
 	// Test the GitArchiver
-	archiver := &GitArchiver{}
+	archiver := &archivers.GitArchiver{}
 	
 	// Note: This would require a remote git URL for a full test
 	// For now, we just test the structure
@@ -59,7 +60,7 @@ func TestGitArchiver(t *testing.T) {
 func TestMHTMLArchiver(t *testing.T) {
 	// This test would require a running Playwright browser
 	// For now, just test the structure
-	archiver := &MHTMLArchiver{}
+	archiver := &archivers.MHTMLArchiver{}
 	
 	if archiver == nil {
 		t.Error("MHTMLArchiver should not be nil")
@@ -69,7 +70,7 @@ func TestMHTMLArchiver(t *testing.T) {
 func TestScreenshotArchiver(t *testing.T) {
 	// This test would require a running Playwright browser
 	// For now, just test the structure
-	archiver := &ScreenshotArchiver{}
+	archiver := &archivers.ScreenshotArchiver{}
 	
 	if archiver == nil {
 		t.Error("ScreenshotArchiver should not be nil")
@@ -79,7 +80,7 @@ func TestScreenshotArchiver(t *testing.T) {
 func TestYTArchiver(t *testing.T) {
 	// This test would require yt-dlp to be installed
 	// For now, just test the structure
-	archiver := &YTArchiver{}
+	archiver := &archivers.YTArchiver{}
 	
 	if archiver == nil {
 		t.Error("YTArchiver should not be nil")

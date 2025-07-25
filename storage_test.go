@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"arker/internal/storage"
+	"arker/internal/archivers"
 )
 
 func TestFSStorage(t *testing.T) {
@@ -16,7 +18,7 @@ func TestFSStorage(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	s := NewFSStorage(tempDir)
+	s := storage.NewFSStorage(tempDir)
 	key := "test/file.txt"
 
 	// Test Writer
@@ -90,7 +92,7 @@ func TestAddDirToTar(t *testing.T) {
 	// Create tar
 	buf := new(bytes.Buffer)
 	tw := tar.NewWriter(buf)
-	if err = addDirToTar(tw, tempDir, ""); err != nil {
+	if err = archivers.AddDirToTar(tw, tempDir, ""); err != nil {
 		t.Fatal(err)
 	}
 	tw.Close()

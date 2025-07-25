@@ -2,9 +2,9 @@
 
 ## Build and Test Commands
 
-- **Build**: `go build -o arker .`
+- **Build**: `go build -o arker ./cmd`
 - **Test**: `go test -v`
-- **Run locally**: `go run .`
+- **Run locally**: `go run ./cmd`
 - **Docker build**: `docker compose build`
 - **Docker run**: `docker compose up`
 
@@ -21,10 +21,16 @@
 
 ## Project Structure
 
-- `main.go` - Main application with all core functionality
+- `cmd/main.go` - Main application entry point
+- `internal/` - Internal packages (modular architecture)
+  - `archivers/` - Archive implementations (MHTML, screenshot, git, youtube)
+  - `handlers/` - HTTP handlers for API and web interface
+  - `models/` - Database models and types
+  - `storage/` - Storage interface and implementations
+  - `utils/` - Shared utilities (logging, health checks, timeouts)
+  - `workers/` - Job processing and queue management
 - `templates/` - HTML templates for web interface
-- `storage_test.go` - Tests for storage and utility functions
-- `archiver_test.go` - Tests for archiver interfaces
+- `*_test.go` - Tests for storage and archiver interfaces
 - `Dockerfile` - Container build configuration
 - `docker-compose.yml` - Multi-service orchestration
 
@@ -55,8 +61,11 @@ Environment variables:
 
 ## Architecture Notes
 
-- Uses streaming compression with zstd for all file operations
-- Queue-based async processing with configurable workers
-- Git repositories support HTTP cloning via git-http-backend
-- Modular storage interface for easy S3 migration
-- Session-based admin authentication
+- **Modular Design**: Clean separation of concerns with internal packages
+- **Performance Optimized**: Reuses Chromium pages for MHTML+screenshot jobs (2x speedup)
+- **Resilient**: Error handling with retries, timeouts, and health checks
+- **Streaming**: Uses streaming compression with zstd for all file operations
+- **Async Processing**: Queue-based processing with configurable workers
+- **Git Support**: HTTP cloning via git-http-backend
+- **Storage Abstraction**: Modular storage interface for easy S3 migration
+- **Authentication**: Session-based admin authentication
