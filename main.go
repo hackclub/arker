@@ -883,12 +883,18 @@ func displayGet(c *gin.Context, db *gorm.DB) {
 		c.Status(http.StatusNotFound)
 		return
 	}
+	
+	// Get the original URL for the capture
+	var archivedURL ArchivedURL
+	db.First(&archivedURL, capture.ArchivedURLID)
+	
 	c.HTML(http.StatusOK, "display.html", gin.H{
-		"domain":   "arker.hackclub.com", // Or c.Request.Host
-		"date":     capture.Timestamp.Format(time.RFC1123),
-		"archives": capture.ArchiveItems,
-		"short_id": shortID,
-		"host":     c.Request.Host,
+		"domain":       "arker.hackclub.com", // Or c.Request.Host
+		"date":         capture.Timestamp.Format(time.RFC1123),
+		"archives":     capture.ArchiveItems,
+		"short_id":     shortID,
+		"host":         c.Request.Host,
+		"original_url": archivedURL.Original,
 	})
 }
 
@@ -1256,6 +1262,18 @@ func main() {
 	})
 	r.POST("/api/v1/archive", func(c *gin.Context) { apiArchive(c, db) })
 	r.GET("/:shortid", func(c *gin.Context) { displayGet(c, db) })
+	r.GET("/logs/:shortid/:type", func(c *gin.Context) {
+		shortID := c.Param("shortid")
+		typ := c.Param("type")
+		var item ArchiveItem
+		if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
+			Where("captures.short_id = ? AND archive_items.type = ?", shortID, typ).
+			First(&item).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"logs": item.Logs, "status": item.Status})
+	})
 	r.GET("/archive/:shortid/:type", func(c *gin.Context) { serveArchive(c, storage, db) })
 	r.GET("/archive/:shortid/mhtml/html", func(c *gin.Context) { serveMHTMLAsHTML(c, storage, db) })
 	r.Any("/git/*path", func(c *gin.Context) { gitHandler(c, storage, db, cachePath) })

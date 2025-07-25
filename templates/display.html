@@ -83,6 +83,26 @@
         }
         .status-pending { color: #ffc107; font-style: italic; }
         .status-failed { color: #dc3545; font-style: italic; }
+        .status-processing { color: #17a2b8; font-style: italic; }
+        .log-container { 
+            background: #f8f9fa; 
+            border: 1px solid #ddd; 
+            border-radius: 4px; 
+            padding: 15px; 
+            margin: 15px 0;
+            max-height: 400px; 
+            overflow-y: auto; 
+            font-family: monospace; 
+            font-size: 12px; 
+            white-space: pre-wrap;
+        }
+        .processing-header { 
+            background: #e3f2fd; 
+            padding: 10px; 
+            border-radius: 4px; 
+            margin-bottom: 10px; 
+            border-left: 4px solid #2196f3; 
+        }
     </style>
 </head>
 <body>
@@ -93,9 +113,12 @@
 
     <ul class="tabs">
         {{range .archives}}
-        {{if eq .Status "completed"}}
-        <li><a href="#tab-{{.Type}}" onclick="showTab('{{.Type}}')">{{.Type}}</a></li>
-        {{end}}
+        <li><a href="#tab-{{.Type}}" onclick="showTab('{{.Type}}')" class="{{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
+            {{.Type}}
+            {{if eq .Status "processing"}} ⟳{{end}}
+            {{if eq .Status "pending"}} ⏳{{end}}
+            {{if eq .Status "failed"}} ✗{{end}}
+        </a></li>
         {{end}}
     </ul>
 
@@ -125,14 +148,25 @@
                     <p>You can clone this repository using the git command above, or download the compressed archive.</p>
                 {{end}}
             {{else if eq .Status "pending"}}
-                <div class="status-pending">Archive in progress...</div>
+                <div class="processing-header">
+                    <h3>⏳ Archive Queued</h3>
+                    <p>This {{.Type}} archive is waiting to be processed...</p>
+                </div>
+                <div id="logs-{{.Type}}" class="log-container">Waiting for processing to start...</div>
             {{else if eq .Status "processing"}}
-                <div class="status-pending">Archive being processed...</div>
+                <div class="processing-header">
+                    <h3>⟳ Archive in Progress</h3>
+                    <p>Processing {{.Type}} archive for: <strong>{{$.original_url}}</strong></p>
+                </div>
+                <div id="logs-{{.Type}}" class="log-container">{{if .Logs}}{{.Logs}}{{else}}Starting archive process...{{end}}</div>
             {{else if eq .Status "failed"}}
-                <div class="status-failed">Archive failed</div>
+                <div class="status-failed">
+                    <h3>✗ Archive Failed</h3>
+                    <p>The {{.Type}} archive failed to complete.</p>
+                </div>
                 {{if .Logs}}
                 <h4>Error Details:</h4>
-                <pre style="white-space: pre-wrap; background: #f8f9fa; padding: 15px; border: 1px solid #ddd; border-radius: 4px; max-height: 400px; overflow-y: auto; font-size: 12px;">{{.Logs}}</pre>
+                <div class="log-container">{{.Logs}}</div>
                 {{end}}
             {{end}}
         </div>
@@ -140,6 +174,10 @@
     </div>
 
     <script>
+        let currentTab = null;
+        let logPollingInterval = null;
+        const shortId = '{{.short_id}}';
+
         function showTab(type) {
             // Hide all tabs
             document.querySelectorAll('.tab-pane').forEach(pane => {
@@ -166,6 +204,54 @@
                 tabContent.classList.add('mhtml-active');
             } else {
                 tabContent.classList.remove('mhtml-active');
+            }
+
+            // Start log polling for this tab if it's processing
+            currentTab = type;
+            startLogPolling();
+        }
+
+        async function refreshLogs() {
+            if (!currentTab) return;
+
+            try {
+                const response = await fetch(`/logs/${shortId}/${currentTab}`);
+                const result = await response.json();
+                
+                if (response.ok) {
+                    const logContainer = document.getElementById(`logs-${currentTab}`);
+                    if (logContainer) {
+                        const newLogs = result.logs || 'No logs available yet...';
+                        if (logContainer.textContent !== newLogs) {
+                            logContainer.textContent = newLogs;
+                            // Scroll to bottom to show latest logs
+                            logContainer.scrollTop = logContainer.scrollHeight;
+                        }
+
+                        // If status changed to completed, reload the page to show the final result
+                        if (result.status === 'completed') {
+                            setTimeout(() => location.reload(), 1000);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error refreshing logs:', error);
+            }
+        }
+
+        function startLogPolling() {
+            // Clear any existing interval
+            if (logPollingInterval) {
+                clearInterval(logPollingInterval);
+            }
+            
+            // Only start polling if we have a log container (meaning it's processing/pending)
+            const logContainer = document.getElementById(`logs-${currentTab}`);
+            if (logContainer) {
+                // Start polling every 2 seconds
+                logPollingInterval = setInterval(refreshLogs, 2000);
+                // Also refresh immediately
+                refreshLogs();
             }
         }
 
