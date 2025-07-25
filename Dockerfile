@@ -40,14 +40,14 @@ RUN pip3 install --break-system-packages yt-dlp[default]
 
 WORKDIR /app
 
-# Ensure module mode is enabled
-ENV GO111MODULE=on
-
 # Copy and build application first
 COPY go.mod go.sum ./
-RUN go mod download
+# Ensure module mode is enabled for all go commands
+ENV GO111MODULE=on
+RUN go env && go mod download
 COPY . .
-RUN go build -o arker ./cmd
+ENV GO111MODULE=on
+RUN go env && go build -o arker ./cmd
 
 # Install Playwright CLI that matches our library version
 RUN go install github.com/playwright-community/playwright-go/cmd/playwright@v0.4501.1
