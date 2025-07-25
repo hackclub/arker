@@ -1,4 +1,4 @@
-FROM golang:1.22-bookworm
+FROM golang:1.24-bookworm
 
 # Install required packages and Playwright dependencies
 RUN apt-get update && apt-get install -y \

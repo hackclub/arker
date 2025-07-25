@@ -1,5 +1,5 @@
 # Development Dockerfile with live reloading
-FROM golang:1.22-bookworm
+FROM golang:1.24-bookworm
 
 # Install required packages and Playwright dependencies (matching production)
 RUN apt-get update && apt-get install -y \
