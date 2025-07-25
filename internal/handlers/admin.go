@@ -42,7 +42,10 @@ func RequestCapture(c *gin.Context, db *gorm.DB) {
 		return
 	}
 	
-	c.JSON(http.StatusOK, gin.H{"short_id": shortID})
+	// Construct full URL from request host
+	fullURL := utils.BuildFullURL(c, shortID)
+	
+	c.JSON(http.StatusOK, gin.H{"url": fullURL})
 }
 
 func GetItemLog(c *gin.Context, db *gorm.DB) {
@@ -77,5 +80,8 @@ func AdminArchive(c *gin.Context, db *gorm.DB) {
 		return
 	}
 	
-	c.JSON(http.StatusOK, gin.H{"short_id": shortID})
+	// Construct full URL from request host
+	fullURL := utils.BuildFullURL(c, shortID)
+	
+	c.JSON(http.StatusOK, gin.H{"url": fullURL})
 }

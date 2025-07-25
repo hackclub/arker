@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{.current_type}} - {{.short_id}}</title>
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; }
+        .archive-bar { 
+            background: #f8f9fa; 
+            padding: 10px 20px; 
+            border-bottom: 1px solid #ddd; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+        }
+        .archive-left { 
+            display: flex; 
+            align-items: center; 
+            gap: 15px;
+        }
+        .past-archives-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        .past-archives-btn {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .past-archives-btn:hover { background: #5a6268; }
+        .past-archives-content {
+            display: none;
+            position: absolute;
+            background-color: white;
+            min-width: 350px;
+            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+            z-index: 1000;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            top: 100%;
+            left: 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .past-archives-content a {
+            color: black;
+            padding: 8px 12px;
+            text-decoration: none;
+            display: block;
+            font-size: 12px;
+        }
+        .past-archives-content a:hover {
+            background-color: #f1f1f1;
+        }
+        .past-archives-dropdown:hover .past-archives-content {
+            display: block;
+        }
+        .archive-info { font-weight: bold; }
+        .archive-date { color: #666; font-size: 14px; }
+        .copy-url-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 15px;
+        }
+        .copy-url-btn:hover { background: #218838; }
+        .copy-url-btn.copied { background: #6c757d; }
+        .tabs { 
+            display: flex; 
+            background: #e9ecef; 
+            margin: 0; 
+            padding: 0; 
+            list-style: none; 
+            border-bottom: 1px solid #ddd;
+        }
+        .tabs li { margin: 0; }
+        .tabs a { 
+            display: block; 
+            padding: 12px 20px; 
+            text-decoration: none; 
+            color: #495057; 
+            border-right: 1px solid #ddd;
+            text-transform: capitalize;
+        }
+        .tabs a:hover { 
+            background: #f8f9fa; 
+            color: #007bff; 
+        }
+        .tabs a.active { 
+            background: white; 
+            color: #007bff; 
+            font-weight: bold;
+        }
+        .content { 
+            padding: 20px; 
+            min-height: 500px;
+        }
+        .content.mhtml-active {
+            padding: 0;
+        }
+        .content.mhtml-active .mhtml-iframe {
+            height: calc(100vh - 120px); /* Full height minus header and tabs */
+        }
+        .content.screenshot-active {
+            padding: 0;
+            position: relative;
+        }
+        .download-link { 
+            display: inline-block; 
+            padding: 10px 20px; 
+            background: #007bff; 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 4px; 
+            margin-bottom: 20px;
+        }
+        .download-link:hover { background: #0056b3; }
+        .mhtml-download-link {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .screenshot-download-link {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .git-clone { 
+            background: #f8f9fa; 
+            padding: 15px; 
+            border-radius: 4px; 
+            font-family: monospace; 
+            margin-bottom: 20px;
+        }
+        .screenshot-img { 
+            width: 100%; 
+            height: auto; 
+            display: block;
+            margin: 0;
+        }
+        .video-player { max-width: 100%; height: auto; }
+        .mhtml-iframe { 
+            width: 100%; 
+            height: 100%; 
+            border: none;
+        }
+        .status-pending { color: #ffc107; font-style: italic; }
+        .status-failed { color: #dc3545; font-style: italic; }
+        .status-processing { color: #17a2b8; font-style: italic; }
+        .log-container { 
+            background: #f8f9fa; 
+            border: 1px solid #ddd; 
+            border-radius: 4px; 
+            padding: 15px; 
+            margin: 15px 0;
+            max-height: 400px; 
+            overflow-y: auto; 
+            font-family: monospace; 
+            font-size: 12px; 
+            white-space: pre-wrap;
+        }
+        .processing-header { 
+            background: #e3f2fd; 
+            padding: 10px; 
+            border-radius: 4px; 
+            margin-bottom: 10px; 
+            border-left: 4px solid #2196f3; 
+        }
+    </style>
+</head>
+<body>
+    <div class="archive-bar">
+        <div class="archive-left">
+            <div class="archive-info"><a href="{{.original_url}}" target="_blank" style="color: #007bff; text-decoration: none;">{{.original_url}}</a></div>
+            <div class="past-archives-dropdown">
+                <button class="past-archives-btn">Past Archives ▼</button>
+                <div class="past-archives-content" id="past-archives-list">
+                    Loading...
+                </div>
+            </div>
+        </div>
+        <div class="archive-date">
+            Archived: <span id="archive-time">{{.date}}</span>
+            <button class="copy-url-btn" onclick="copyArchiveUrl()" id="copy-url-btn">Copy Archive URL</button>
+        </div>
+    </div>
+
+    <ul class="tabs">
+        {{if .is_git}}
+            {{/* Show git tab first for git repositories */}}
+            {{range .archives}}
+            {{if eq .Type "git"}}
+            <li><a href="/{{$.short_id}}/{{.Type}}" class="{{if eq .Type $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
+                {{.Type}}
+                {{if eq .Status "processing"}} ⟳{{end}}
+                {{if eq .Status "pending"}} ⏳{{end}}
+                {{if eq .Status "failed"}} ✗{{end}}
+            </a></li>
+            {{end}}
+            {{end}}
+            {{/* Then show other tabs */}}
+            {{range .archives}}
+            {{if ne .Type "git"}}
+            {{$urlType := .Type}}{{if eq .Type "mhtml"}}{{$urlType = "web"}}{{end}}
+            {{$displayName := .Type}}{{if eq .Type "mhtml"}}{{$displayName = "Web"}}{{end}}{{if eq .Type "youtube"}}{{$displayName = "YouTube"}}{{end}}
+            <li><a href="/{{$.short_id}}/{{$urlType}}" class="{{if eq $urlType $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
+                {{$displayName}}
+                {{if eq .Status "processing"}} ⟳{{end}}
+                {{if eq .Status "pending"}} ⏳{{end}}
+                {{if eq .Status "failed"}} ✗{{end}}
+            </a></li>
+            {{end}}
+            {{end}}
+        {{else if .is_youtube}}
+            {{/* Show youtube tab first for YouTube URLs */}}
+            {{range .archives}}
+            {{if eq .Type "youtube"}}
+            <li><a href="/{{$.short_id}}/{{.Type}}" class="{{if eq .Type $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
+                YouTube
+                {{if eq .Status "processing"}} ⟳{{end}}
+                {{if eq .Status "pending"}} ⏳{{end}}
+                {{if eq .Status "failed"}} ✗{{end}}
+            </a></li>
+            {{end}}
+            {{end}}
+            {{/* Then show other tabs */}}
+            {{range .archives}}
+            {{if ne .Type "youtube"}}
+            {{$urlType := .Type}}{{if eq .Type "mhtml"}}{{$urlType = "web"}}{{end}}
+            {{$displayName := .Type}}{{if eq .Type "mhtml"}}{{$displayName = "Web"}}{{end}}{{if eq .Type "youtube"}}{{$displayName = "YouTube"}}{{end}}
+            <li><a href="/{{$.short_id}}/{{$urlType}}" class="{{if eq $urlType $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
+                {{$displayName}}
+                {{if eq .Status "processing"}} ⟳{{end}}
+                {{if eq .Status "pending"}} ⏳{{end}}
+                {{if eq .Status "failed"}} ✗{{end}}
+            </a></li>
+            {{end}}
+            {{end}}
+        {{else}}
+            {{/* For websites, show Web first, then others */}}
+            {{range .archives}}
+            {{if eq .Type "mhtml"}}
+            <li><a href="/{{$.short_id}}/web" class="{{if eq "web" $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
+                Web
+                {{if eq .Status "processing"}} ⟳{{end}}
+                {{if eq .Status "pending"}} ⏳{{end}}
+                {{if eq .Status "failed"}} ✗{{end}}
+            </a></li>
+            {{end}}
+            {{end}}
+            {{/* Then show other tabs */}}
+            {{range .archives}}
+            {{if ne .Type "mhtml"}}
+            {{$displayName := .Type}}{{if eq .Type "youtube"}}{{$displayName = "YouTube"}}{{end}}
+            <li><a href="/{{$.short_id}}/{{.Type}}" class="{{if eq .Type $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
+                {{$displayName}}
+                {{if eq .Status "processing"}} ⟳{{end}}
+                {{if eq .Status "pending"}} ⏳{{end}}
+                {{if eq .Status "failed"}} ✗{{end}}
+            </a></li>
+            {{end}}
+            {{end}}
+        {{end}}
+    </ul>
+
+    <div class="content {{if eq .current_type "web"}}mhtml-active{{end}}{{if eq .current_type "screenshot"}}screenshot-active{{end}}">
+        {{if eq .current_item.Status "completed"}}
+            {{if eq .current_type "web"}}
+                <iframe src="/archive/{{.short_id}}/mhtml/html" class="mhtml-iframe"></iframe>
+                <a href="/archive/{{.short_id}}/mhtml" class="download-link mhtml-download-link">Download MHTML File</a>
+            {{else if eq .current_type "screenshot"}}
+                <img src="/archive/{{.short_id}}/{{.current_type}}" alt="Full page screenshot" class="screenshot-img">
+                <a href="/archive/{{.short_id}}/{{.current_type}}" class="download-link screenshot-download-link" id="screenshot-download-btn">Download Screenshot</a>
+            {{else if eq .current_type "youtube"}}
+                <h3>YouTube Video</h3>
+                <video src="/archive/{{.short_id}}/{{.current_type}}" controls class="video-player">
+                    Your browser does not support the video tag.
+                </video>
+                <br><br>
+                <a href="/archive/{{.short_id}}/{{.current_type}}" class="download-link">Download Video</a>
+            {{else if eq .current_type "git"}}
+                <h3>Git Repository</h3>
+                <div class="git-clone" id="git-clone-command">
+                    git clone https://{{.host}}/git/{{.short_id}}{{if .git_repo_name}} <span id="git-clone-name-placeholder">{{.timestamp}}_{{.git_repo_name}}</span>{{end}}
+                </div>
+                <a href="/archive/{{.short_id}}/{{.current_type}}" class="download-link">Download Repository Archive</a>
+                <p id="git-clone-description">You can clone this repository using the git command above{{if .git_repo_name}} (will create directory "<span id="git-clone-name-description">{{.timestamp}}_{{.git_repo_name}}</span>"){{end}}, or download the compressed archive.</p>
+            {{end}}
+        {{else if eq .current_item.Status "pending"}}
+            <div class="processing-header">
+                <h3>⏳ Archive Queued</h3>
+                <p>This {{.current_type}} archive is waiting to be processed...</p>
+            </div>
+            <div id="logs-{{.current_type}}" class="log-container">Waiting for processing to start...</div>
+        {{else if eq .current_item.Status "processing"}}
+            <div class="processing-header">
+                <h3>⟳ Archive in Progress</h3>
+                <p>Processing {{.current_type}} archive for: <strong>{{.original_url}}</strong></p>
+            </div>
+            <div id="logs-{{.current_type}}" class="log-container">{{if .current_item.Logs}}{{.current_item.Logs}}{{else}}Starting archive process...{{end}}</div>
+        {{else if eq .current_item.Status "failed"}}
+            <div class="status-failed">
+                <h3>✗ Archive Failed</h3>
+                <p>The {{.current_type}} archive failed to complete.</p>
+            </div>
+            {{if .current_item.Logs}}
+            <h4>Error Details:</h4>
+            <div class="log-container">{{.current_item.Logs}}</div>
+            {{end}}
+        {{end}}
+    </div>
+
+    <script>
+        const shortId = '{{.short_id}}';
+        const currentType = '{{.current_type}}';
+        let logPollingInterval = null;
+
+        async function refreshLogs() {
+            try {
+                const response = await fetch(`/logs/${shortId}/${currentType}`);
+                const result = await response.json();
+                
+                if (response.ok) {
+                    const logContainer = document.getElementById(`logs-${currentType}`);
+                    if (logContainer) {
+                        const newLogs = result.logs || 'No logs available yet...';
+                        if (logContainer.textContent !== newLogs) {
+                            logContainer.textContent = newLogs;
+                            // Scroll to bottom to show latest logs
+                            logContainer.scrollTop = logContainer.scrollHeight;
+                        }
+
+                        // If status changed to completed, reload the page to show the final result
+                        if (result.status === 'completed') {
+                            setTimeout(() => location.reload(), 1000);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error refreshing logs:', error);
+            }
+        }
+
+        function startLogPolling() {
+            // Only start polling if we have a log container (meaning it's processing/pending)
+            const logContainer = document.getElementById(`logs-${currentType}`);
+            if (logContainer) {
+                // Start polling every 2 seconds
+                logPollingInterval = setInterval(refreshLogs, 2000);
+                // Also refresh immediately
+                refreshLogs();
+            }
+        }
+
+        // Convert time to user's local timezone
+        function updateTimeToLocal() {
+            const timeElement = document.getElementById('archive-time');
+            const originalTime = '{{.date}}'; // RFC1123 format
+            try {
+                const date = new Date(originalTime);
+                timeElement.textContent = date.toLocaleString();
+            } catch (error) {
+                console.error('Error parsing date:', error);
+            }
+        }
+
+        // Calculate relative time (like "5 minutes ago", "2 hours ago")
+        function getRelativeTime(date) {
+            const now = new Date();
+            const diffMs = now - date;
+            const diffSecs = Math.floor(diffMs / 1000);
+            const diffMins = Math.floor(diffSecs / 60);
+            const diffHours = Math.floor(diffMins / 60);
+            const diffDays = Math.floor(diffHours / 24);
+            const diffWeeks = Math.floor(diffDays / 7);
+            const diffMonths = Math.floor(diffDays / 30);
+            const diffYears = Math.floor(diffDays / 365);
+
+            if (diffSecs < 60) {
+                return diffSecs <= 1 ? 'just now' : `${diffSecs} seconds ago`;
+            } else if (diffMins < 60) {
+                return diffMins === 1 ? '1 minute ago' : `${diffMins} minutes ago`;
+            } else if (diffHours < 24) {
+                return diffHours === 1 ? '1 hour ago' : `${diffHours} hours ago`;
+            } else if (diffDays < 7) {
+                return diffDays === 1 ? '1 day ago' : `${diffDays} days ago`;
+            } else if (diffWeeks < 4) {
+                return diffWeeks === 1 ? '1 week ago' : `${diffWeeks} weeks ago`;
+            } else if (diffMonths < 12) {
+                return diffMonths === 1 ? '1 month ago' : `${diffMonths} months ago`;
+            } else {
+                return diffYears === 1 ? '1 year ago' : `${diffYears} years ago`;
+            }
+        }
+
+        // Load past archives for this URL
+        async function loadPastArchives() {
+            try {
+                const response = await fetch(`/web/past-archives?url=${encodeURIComponent('{{.original_url}}')}`, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const archives = await response.json();
+                    const dropdown = document.getElementById('past-archives-list');
+                    
+                    if (archives.length === 0) {
+                        dropdown.innerHTML = '<div style="padding: 8px 12px; color: #666;">No other archives found</div>';
+                    } else {
+                        dropdown.innerHTML = archives.map(archive => {
+                            const date = new Date(archive.timestamp);
+                            const localDateTime = date.toLocaleString([], { 
+                                year: 'numeric', 
+                                month: '2-digit', 
+                                day: '2-digit', 
+                                hour: '2-digit', 
+                                minute: '2-digit',
+                                hour12: true 
+                            });
+                            const relativeTime = getRelativeTime(date);
+                            const isCurrent = archive.short_id === '{{.short_id}}';
+                            const style = isCurrent ? 'font-weight: bold; color: #007bff;' : '';
+                            const currentLabel = isCurrent ? ' (current)' : '';
+                            return `<a href="/${archive.short_id}" style="${style}">${localDateTime} - ${relativeTime}${currentLabel}</a>`;
+                        }).join('');
+                    }
+                } else {
+                    document.getElementById('past-archives-list').innerHTML = '<div style="padding: 8px 12px; color: #dc3545;">Error loading archives</div>';
+                }
+            } catch (error) {
+                console.error('Error loading past archives:', error);
+                document.getElementById('past-archives-list').innerHTML = '<div style="padding: 8px 12px; color: #dc3545;">Error loading archives</div>';
+            }
+        }
+
+        // Update git clone names to use local timezone
+        function updateGitCloneNames() {
+            const timestamp = '{{.timestamp}}'; // RFC3339 format
+            const repoName = '{{.git_repo_name}}';
+            
+            if (timestamp && repoName) {
+                try {
+                    const date = new Date(timestamp);
+                    const localDate = date.toLocaleDateString('en-CA'); // YYYY-MM-DD format
+                    const gitCloneName = `${localDate}_${repoName}`;
+                    
+                    // Update the placeholder in the git clone command
+                    const placeholder = document.getElementById('git-clone-name-placeholder');
+                    if (placeholder) {
+                        placeholder.textContent = gitCloneName;
+                    }
+                    
+                    // Update the description
+                    const description = document.getElementById('git-clone-name-description');
+                    if (description) {
+                        description.textContent = gitCloneName;
+                    }
+                } catch (error) {
+                    console.error('Error parsing timestamp for git clone name:', error);
+                }
+            }
+        }
+
+        // Copy archive URL to clipboard
+        async function copyArchiveUrl() {
+            const url = window.location.href;
+            const button = document.getElementById('copy-url-btn');
+            
+            try {
+                await navigator.clipboard.writeText(url);
+                // Update button to show success
+                const originalText = button.textContent;
+                button.textContent = 'Copied!';
+                button.classList.add('copied');
+                
+                // Reset button after 2 seconds
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.classList.remove('copied');
+                }, 2000);
+            } catch (err) {
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = url;
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    // Update button to show success
+                    const originalText = button.textContent;
+                    button.textContent = 'Copied!';
+                    button.classList.add('copied');
+                    
+                    // Reset button after 2 seconds
+                    setTimeout(() => {
+                        button.textContent = originalText;
+                        button.classList.remove('copied');
+                    }, 2000);
+                } catch (copyErr) {
+                    console.error('Failed to copy URL:', copyErr);
+                    button.textContent = 'Copy failed';
+                    setTimeout(() => {
+                        button.textContent = 'Copy Archive URL';
+                    }, 2000);
+                }
+                document.body.removeChild(textArea);
+            }
+        }
+
+        // Generate download filename with user's local timezone
+        function generateDownloadFilename() {
+            const timestamp = '{{.timestamp}}'; // RFC3339 format
+            const originalUrl = '{{.original_url}}';
+            const extension = '{{.current_item.Extension}}';
+            const currentType = '{{.current_type}}';
+            
+            if (timestamp && originalUrl && extension && currentType === 'screenshot') {
+                try {
+                    const date = new Date(timestamp);
+                    const localDate = date.toLocaleDateString('en-CA'); // YYYY-MM-DD format
+                    
+                    // Clean and format the URL similar to server logic
+                    let url = originalUrl.toLowerCase();
+                    // Remove protocol
+                    url = url.replace(/^https?:\/\//, '');
+                    // Remove www
+                    url = url.replace(/^www\./, '');
+                    // Replace problematic characters with underscores
+                    url = url.replace(/[/?&=#:; +%.]/g, '_');
+                    // Remove trailing underscores
+                    url = url.replace(/[_/]+$/, '');
+                    // Limit length
+                    if (url.length > 50) {
+                        url = url.substring(0, 50);
+                    }
+                    
+                    // Remove leading dot from extension
+                    const cleanExtension = extension.replace(/^\./, '');
+                    
+                    const filename = `${localDate}_${url}.${cleanExtension}`;
+                    
+                    // Update the download button
+                    const downloadBtn = document.getElementById('screenshot-download-btn');
+                    if (downloadBtn) {
+                        downloadBtn.setAttribute('download', filename);
+                    }
+                } catch (error) {
+                    console.error('Error generating download filename:', error);
+                }
+            }
+        }
+
+        // Initialize page
+        document.addEventListener('DOMContentLoaded', function() {
+            // Update time to local timezone
+            updateTimeToLocal();
+            
+            // Update git clone names to local timezone
+            updateGitCloneNames();
+            
+            // Generate download filename with user's timezone
+            generateDownloadFilename();
+            
+            // Load past archives
+            loadPastArchives();
+            
+            // Start log polling if needed
+            startLogPolling();
+        });
+    </script>
+</body>
+</html>

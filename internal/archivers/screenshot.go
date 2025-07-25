@@ -91,25 +91,29 @@ func (a *ScreenshotArchiver) ArchiveWithPage(page playwright.Page, url string, l
 	// Select format based on image dimensions
 	extension, mimeType, format := selectImageFormat(img, logWriter)
 
-	var outputBuf bytes.Buffer
+	// Use io.Pipe for streaming encoding
+	pipeReader, pipeWriter := io.Pipe()
 	
-	if format == "jpeg" {
-		err = jpeg.Encode(&outputBuf, img, &jpeg.Options{Quality: 85})
-		if err != nil {
-			fmt.Fprintf(logWriter, "Failed to encode JPEG: %v\n", err)
-			return nil, "", "", nil, err
+	// Start encoding in a goroutine
+	go func() {
+		defer pipeWriter.Close()
+		
+		var encodeErr error
+		if format == "jpeg" {
+			encodeErr = jpeg.Encode(pipeWriter, img, &jpeg.Options{Quality: 85})
+		} else {
+			encodeErr = nativewebp.Encode(pipeWriter, img, nil)
 		}
-	} else {
-		err = nativewebp.Encode(&outputBuf, img, nil)
-		if err != nil {
-			fmt.Fprintf(logWriter, "Failed to encode WebP: %v\n", err)
-			return nil, "", "", nil, err
+		
+		if encodeErr != nil {
+			fmt.Fprintf(logWriter, "Failed to encode %s: %v\n", format, encodeErr)
+			pipeWriter.CloseWithError(encodeErr)
+		} else {
+			fmt.Fprintf(logWriter, "Screenshot %s encoding completed successfully\n", format)
 		}
-	}
+	}()
 
-	fmt.Fprintf(logWriter, "Screenshot archive completed successfully, %s size: %d bytes\n", format, outputBuf.Len())
-	
-	return bytes.NewReader(outputBuf.Bytes()), extension, mimeType, cleanup, nil
+	return pipeReader, extension, mimeType, cleanup, nil
 }
 
 // selectImageFormat determines the best format based on image dimensions

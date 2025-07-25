@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 	"github.com/gin-gonic/gin"
-	"github.com/klauspost/compress/zstd"
+
 	"gorm.io/gorm"
 	"arker/internal/models"
 	"arker/internal/storage"
@@ -80,12 +80,7 @@ func unpackGit(key string, targetDir string, storage storage.Storage) error {
 		return err
 	}
 	defer r.Close()
-	zr, err := zstd.NewReader(r)
-	if err != nil {
-		return err
-	}
-	defer zr.Close()
-	tr := tar.NewReader(zr)
+	tr := tar.NewReader(r)
 	if err = os.MkdirAll(targetDir, 0755); err != nil {
 		return err
 	}

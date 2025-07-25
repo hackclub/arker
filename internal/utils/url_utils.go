@@ -33,6 +33,12 @@ func IsGitURL(url string) bool {
 		strings.Contains(lowerURL, "git.")
 }
 
+// Check if URL is a YouTube URL
+func IsYouTubeURL(url string) bool {
+	lowerURL := strings.ToLower(url)
+	return strings.Contains(lowerURL, "youtube.com") || strings.Contains(lowerURL, "youtu.be")
+}
+
 // Get archive types based on URL patterns
 func GetArchiveTypes(url string) []string {
 	types := []string{"mhtml", "screenshot"}

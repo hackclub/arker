@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"errors"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -16,6 +17,7 @@ func ApiKeysGet(c *gin.Context, db *gorm.DB) {
 	}
 
 	var apiKeys []models.APIKey
+	// Only get non-deleted API keys (GORM automatically excludes soft-deleted records)
 	db.Order("created_at DESC").Find(&apiKeys)
 	c.HTML(http.StatusOK, "api_keys.html", gin.H{"apiKeys": apiKeys})
 }
@@ -41,15 +43,10 @@ func ApiKeysCreate(c *gin.Context, db *gorm.DB) {
 		return
 	}
 
-	// Validate environment
-	if req.Environment != "dev" && req.Environment != "prod" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Environment must be 'dev' or 'prod'"})
-		return
-	}
-
 	// Sanitize inputs (replace spaces with hyphens, convert to lowercase)
 	req.Username = strings.ToLower(strings.ReplaceAll(req.Username, " ", "-"))
 	req.AppName = strings.ToLower(strings.ReplaceAll(req.AppName, " ", "-"))
+	req.Environment = strings.ToLower(strings.ReplaceAll(req.Environment, " ", "-"))
 
 	// Generate API key
 	fullKey, keyHash, err := GenerateAPIKey(req.Username, req.AppName, req.Environment)
@@ -65,6 +62,9 @@ func ApiKeysCreate(c *gin.Context, db *gorm.DB) {
 	if err := db.Where("key_prefix = ?", keyPrefix).First(&existingKey).Error; err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "API key with this combination already exists"})
 		return
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error checking existing keys"})
+		return
 	}
 
 	// Create API key record
@@ -78,7 +78,12 @@ func ApiKeysCreate(c *gin.Context, db *gorm.DB) {
 	}
 
 	if err := db.Create(&apiKey).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create API key"})
+		// Check if it's a uniqueness constraint violation
+		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique constraint") {
+			c.JSON(http.StatusConflict, gin.H{"error": "API key with this combination already exists"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create API key"})
+		}
 		return
 	}
 
@@ -132,7 +137,9 @@ func ApiKeysDelete(c *gin.Context, db *gorm.DB) {
 		return
 	}
 
-	if err := db.Delete(&models.APIKey{}, keyID).Error; err != nil {
+	// Use Unscoped() to perform a hard delete (permanently remove from database)
+	// instead of soft delete which just sets deleted_at timestamp
+	if err := db.Unscoped().Delete(&models.APIKey{}, keyID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete API key"})
 		return
 	}

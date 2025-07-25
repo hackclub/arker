@@ -5,14 +5,25 @@
     <style>
         body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-        .url-item { border: 1px solid #ddd; margin-bottom: 20px; padding: 15px; border-radius: 5px; }
-        .url-original { font-weight: bold; font-size: 18px; margin-bottom: 10px; word-break: break-all; }
-        .captures { margin-left: 20px; }
-        .capture-item { margin: 10px 0; padding: 10px; background: #f8f9fa; border-radius: 3px; }
+        .url-row { border: 1px solid #ddd; margin-bottom: 10px; padding: 15px; border-radius: 5px; display: flex; align-items: center; justify-content: space-between; }
+        .url-info { flex: 1; display: flex; align-items: center; gap: 15px; }
+        .url-original { font-weight: bold; font-size: 16px; word-break: break-all; }
+        .status-badge { padding: 4px 12px; border-radius: 20px; font-size: 14px; font-weight: bold; }
+        .status-success { background: #d4edda; color: #155724; }
+        .status-failed { background: #f8d7da; color: #721c24; }
+        .status-processing { background: #d1ecf1; color: #0c5460; }
+        .status-pending { background: #fff3cd; color: #856404; }
+        .actions { display: flex; gap: 8px; }
+        .new-capture-btn { background: #28a745; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        .new-capture-btn:hover { background: #218838; }
+        .view-logs-btn { background: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        .view-logs-btn:hover { background: #c82333; }
+        .expand-btn { background: #6c757d; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        .expand-btn:hover { background: #5a6268; }
+        .captures-detail { display: none; margin-top: 15px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-top: 1px solid #ddd; }
+        .capture-item { margin: 10px 0; padding: 10px; background: #ffffff; border: 1px solid #eee; border-radius: 3px; }
         .capture-link { text-decoration: none; color: #007bff; font-weight: bold; }
         .capture-link:hover { text-decoration: underline; }
-        .new-capture-btn { background: #28a745; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
-        .new-capture-btn:hover { background: #218838; }
         .add-url-form { background: #e9ecef; padding: 20px; border-radius: 5px; margin-bottom: 20px; }
         .add-url-form input { padding: 10px; border: 1px solid #ccc; border-radius: 4px; margin-right: 10px; width: 400px; }
         .add-url-form button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
@@ -30,6 +41,10 @@
         .log-modal-content { background-color: #fefefe; margin: 15% auto; padding: 20px; border: 1px solid #888; width: 80%; max-height: 60%; overflow-y: auto; border-radius: 5px; }
         .log-close { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
         .log-close:hover { color: black; }
+        .alert { padding: 15px; border-radius: 4px; margin: 15px 0; font-weight: bold; }
+        .alert-success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .alert-error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
@@ -50,11 +65,57 @@
         </form>
     </div>
 
-    <h2>Archived URLs</h2>
+    <div id="notification" class="hidden"></div>
+
     {{range .urls}}
     <div class="url-item">
-        <div class="url-original">{{.Original}}</div>
-        <div class="captures">
+        <div class="url-row">
+            <div class="url-info">
+                <div class="url-original">{{.Original}}</div>
+                {{if .Captures}}
+                    {{$latestCapture := index .Captures 0}}
+                    {{$hasFailure := false}}
+                    {{$hasProcessing := false}}
+                    {{$hasSuccess := false}}
+                    {{range $latestCapture.ArchiveItems}}
+                        {{if eq .Status "failed"}}{{$hasFailure = true}}{{end}}
+                        {{if eq .Status "processing"}}{{$hasProcessing = true}}{{end}}
+                        {{if eq .Status "completed"}}{{$hasSuccess = true}}{{end}}
+                    {{end}}
+                    {{if $hasFailure}}
+                        <span class="status-badge status-failed">Failed</span>
+                    {{else if $hasProcessing}}
+                        <span class="status-badge status-processing">Processing</span>
+                    {{else if $hasSuccess}}
+                        <span class="status-badge status-success">Success</span>
+                    {{else}}
+                        <span class="status-badge status-pending">Pending</span>
+                    {{end}}
+                    <span style="color: #6c757d; font-size: 14px;">
+                        {{len .Captures}} archives • Last: {{$latestCapture.Timestamp.Format "Jan 2, 15:04"}}
+                        <span id="total-size-{{.ID}}"></span>
+                    </span>
+                {{else}}
+                    <span class="status-badge status-pending">No captures</span>
+                {{end}}
+            </div>
+            <div class="actions">
+                {{if .Captures}}
+                    {{$latestCapture := index .Captures 0}}
+                    {{$hasFailure := false}}
+                    {{range $latestCapture.ArchiveItems}}
+                        {{if eq .Status "failed"}}{{$hasFailure = true}}{{end}}
+                    {{end}}
+                    {{if $hasFailure}}
+                        <button class="view-logs-btn" onclick="toggleDetails({{.ID}})">View Logs</button>
+                    {{end}}
+                    <button class="expand-btn" onclick="toggleDetails({{.ID}})">History</button>
+                {{end}}
+                <button class="new-capture-btn" onclick="requestCapture({{.ID}})">New Capture</button>
+            </div>
+        </div>
+        
+        <div id="details-{{.ID}}" class="captures-detail">
             {{if .Captures}}
                 {{range .Captures}}
                 <div class="capture-item">
@@ -71,9 +132,12 @@
                         {{range .ArchiveItems}}
                         <div class="archive-item">
                             <div>
-                                <span class="archive-type">{{.Type}}</span>: 
+                                <span class="archive-type">{{if eq .Type "mhtml"}}web{{else}}{{.Type}}{{end}}</span>: 
                                 <span class="archive-status status-{{.Status}}">{{.Status}}</span>
                                 {{if ne .RetryCount 0}}(retry {{.RetryCount}}){{end}}
+                                {{if and (eq .Status "completed") (gt .FileSize 0)}}
+                                    <span style="color: #6c757d; font-size: 12px; margin-left: 8px;" class="file-size" data-bytes="{{.FileSize}}">{{.FileSize}} bytes</span>
+                                {{end}}
                             </div>
                             <button class="log-btn" onclick="viewLog({{.ID}})">View Logs</button>
                         </div>
@@ -85,7 +149,6 @@
                 <div class="status">No captures yet</div>
             {{end}}
         </div>
-        <button class="new-capture-btn" onclick="requestCapture({{.ID}})">New Capture</button>
     </div>
     {{end}}
 
@@ -99,6 +162,54 @@
     </div>
 
     <script>
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        function formatAllSizes() {
+            // Format individual file sizes
+            document.querySelectorAll('.file-size').forEach(el => {
+                const bytes = parseInt(el.dataset.bytes);
+                el.textContent = formatBytes(bytes);
+            });
+
+            // Calculate and display total sizes for each URL
+            document.querySelectorAll('[id^="total-size-"]').forEach(el => {
+                const urlId = el.id.replace('total-size-', '');
+                const detailsDiv = document.getElementById('details-' + urlId);
+                if (detailsDiv) {
+                    let totalBytes = 0;
+                    detailsDiv.querySelectorAll('.file-size').forEach(sizeEl => {
+                        totalBytes += parseInt(sizeEl.dataset.bytes);
+                    });
+                    if (totalBytes > 0) {
+                        el.textContent = ' • ' + formatBytes(totalBytes);
+                    }
+                }
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', formatAllSizes);
+
+        function showNotification(message, type) {
+            const notification = document.getElementById('notification');
+            notification.className = `alert alert-${type}`;
+            notification.textContent = message;
+            notification.classList.remove('hidden');
+            
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                notification.classList.add('hidden');
+            }, 5000);
+            
+            // Scroll to notification
+            notification.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
         document.getElementById('addUrlForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             const url = document.getElementById('newUrl').value;
@@ -112,13 +223,16 @@
                 
                 const result = await response.json();
                 if (response.ok) {
-                    alert('Archive requested! Short ID: ' + result.short_id);
-                    location.reload();
+                    showNotification('Archive requested! URL: ' + result.url, 'success');
+                    // Clear the form
+                    document.getElementById('newUrl').value = '';
+                    // Reload after a short delay to show the notification
+                    setTimeout(() => location.reload(), 1500);
                 } else {
-                    alert('Error: ' + result.error);
+                    showNotification('Error: ' + result.error, 'error');
                 }
             } catch (error) {
-                alert('Error: ' + error.message);
+                showNotification('Error: ' + error.message, 'error');
             }
         });
 
@@ -130,13 +244,14 @@
                 
                 const result = await response.json();
                 if (response.ok) {
-                    alert('New capture requested! Short ID: ' + result.short_id);
-                    location.reload();
+                    showNotification('New capture requested! URL: ' + result.url, 'success');
+                    // Reload after a short delay to show the notification
+                    setTimeout(() => location.reload(), 1500);
                 } else {
-                    alert('Error: ' + result.error);
+                    showNotification('Error: ' + result.error, 'error');
                 }
             } catch (error) {
-                alert('Error: ' + error.message);
+                showNotification('Error: ' + error.message, 'error');
             }
         }
 
@@ -155,10 +270,10 @@
                     currentLogId = id;
                     startLogPolling();
                 } else {
-                    alert('Error: ' + result.error);
+                    showNotification('Error: ' + result.error, 'error');
                 }
             } catch (error) {
-                alert('Error fetching logs: ' + error.message);
+                showNotification('Error fetching logs: ' + error.message, 'error');
             }
         }
 
@@ -198,6 +313,15 @@
                 logPollingInterval = null;
             }
             currentLogId = null;
+        }
+
+        function toggleDetails(urlId) {
+            const details = document.getElementById(`details-${urlId}`);
+            if (details.style.display === 'none' || details.style.display === '') {
+                details.style.display = 'block';
+            } else {
+                details.style.display = 'none';
+            }
         }
 
         function closeLogModal() {

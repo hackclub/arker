@@ -20,6 +20,40 @@ import (
 	"arker/internal/workers"
 )
 
+func populateFileSizes(db *gorm.DB, storage storage.Storage) {
+	var items []models.ArchiveItem
+	// Find completed archive items that don't have file size set
+	db.Where("status = ? AND (file_size = 0 OR file_size IS NULL) AND storage_key != ''", "completed").Find(&items)
+	
+	if len(items) == 0 {
+		return
+	}
+	
+	log.Printf("Populating file sizes for %d existing archives...", len(items))
+	updated := 0
+	
+	for _, item := range items {
+		if item.StorageKey == "" {
+			continue
+		}
+		
+		size, err := storage.Size(item.StorageKey)
+		if err != nil {
+			log.Printf("Warning: Could not get size for %s: %v", item.StorageKey, err)
+			continue
+		}
+		
+		if size > 0 {
+			db.Model(&item).Update("file_size", size)
+			updated++
+		}
+	}
+	
+	if updated > 0 {
+		log.Printf("Updated file sizes for %d archives", updated)
+	}
+}
+
 func main() {
 	dsn := os.Getenv("DB_URL")
 	if dsn == "" {
@@ -30,6 +64,16 @@ func main() {
 		log.Fatal(err)
 	}
 	db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{})
+
+	storagePath := os.Getenv("STORAGE_PATH")
+	if storagePath == "" {
+		storagePath = "./storage"
+	}
+	fsStorage := storage.NewFSStorage(storagePath)
+	storageInstance := storage.NewZSTDStorage(fsStorage)
+	
+	// Populate file sizes for existing archives
+	populateFileSizes(db, storageInstance)
 
 	// Perform health checks on startup
 	log.Println("Performing startup health checks...")
@@ -84,12 +128,6 @@ func main() {
 		"git":        &archivers.GitArchiver{},
 		"youtube":    &archivers.YTArchiver{},
 	}
-
-	storagePath := os.Getenv("STORAGE_PATH")
-	if storagePath == "" {
-		storagePath = "./storage"
-	}
-	storageInstance := storage.NewFSStorage(storagePath)
 
 	cachePath := os.Getenv("CACHE_PATH")
 	if cachePath == "" {
@@ -146,11 +184,13 @@ func main() {
 	r.GET("/docs", handlers.DocsGet)
 	r.POST("/api/v1/archive", handlers.RequireAPIKey(db), func(c *gin.Context) { handlers.ApiArchive(c, db) })
 	r.GET("/api/v1/past-archives", handlers.RequireAPIKey(db), func(c *gin.Context) { handlers.ApiPastArchives(c, db) })
+	r.GET("/web/past-archives", func(c *gin.Context) { handlers.WebPastArchives(c, db) })
 	r.GET("/logs/:shortid/:type", func(c *gin.Context) { handlers.GetLogs(c, db) })
 	r.GET("/archive/:shortid/:type", func(c *gin.Context) { handlers.ServeArchive(c, storageInstance, db) })
 	r.GET("/archive/:shortid/mhtml/html", func(c *gin.Context) { handlers.ServeMHTMLAsHTML(c, storageInstance, db) })
 	r.Any("/git/*path", func(c *gin.Context) { handlers.GitHandler(c, storageInstance, db, cachePath) })
-	r.GET("/:shortid", func(c *gin.Context) { handlers.DisplayGet(c, db) })
+	r.GET("/:shortid/:type", func(c *gin.Context) { handlers.DisplayType(c, db) })
+	r.GET("/:shortid", func(c *gin.Context) { handlers.DisplayDefault(c, db) })
 	r.GET("/", func(c *gin.Context) { handlers.AdminGet(c, db) })
 
 	log.Println("Starting server on :8080")

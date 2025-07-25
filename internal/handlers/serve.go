@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"github.com/gin-gonic/gin"
-	"github.com/klauspost/compress/zstd"
 	"gorm.io/gorm"
 	"arker/internal/models"
 	"arker/internal/storage"
@@ -43,12 +42,6 @@ func ServeArchive(c *gin.Context, storage storage.Storage, db *gorm.DB) {
 		return
 	}
 	defer r.Close()
-	zr, err := zstd.NewReader(r)
-	if err != nil {
-		c.Status(http.StatusInternalServerError)
-		return
-	}
-	defer zr.Close()
 	var ct string
 	attach := false
 	switch typ {
@@ -71,7 +64,7 @@ func ServeArchive(c *gin.Context, storage storage.Storage, db *gorm.DB) {
 		filename := utils.GenerateArchiveFilename(capture, archivedURL, item.Extension)
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 	}
-	io.Copy(c.Writer, zr)
+	io.Copy(c.Writer, r)
 }
 
 func ServeMHTMLAsHTML(c *gin.Context, storage storage.Storage, db *gorm.DB) {
@@ -90,26 +83,20 @@ func ServeMHTMLAsHTML(c *gin.Context, storage storage.Storage, db *gorm.DB) {
 	
 	r, err := storage.Reader(item.StorageKey)
 	if err != nil {
+		log.Printf("Failed to open storage for %s: %v", shortID, err)
 		c.Status(http.StatusInternalServerError)
 		return
 	}
 	defer r.Close()
 	
-	zr, err := zstd.NewReader(r)
-	if err != nil {
-		c.Status(http.StatusInternalServerError)
-		return
-	}
-	defer zr.Close()
-	
 	c.Header("Content-Type", "text/html")
 	
 	log.Printf("Converting MHTML to HTML for %s", shortID)
 	
-	// Use the working MHTML converter
+	// Use the MHTML converter with streaming (decompression now handled by storage)
 	converter := &utils.MHTMLConverter{}
-	if err := converter.Convert(zr, c.Writer); err != nil {
-		log.Printf("MHTML conversion error: %v", err)
+	if err := converter.Convert(r, c.Writer); err != nil {
+		log.Printf("MHTML conversion error for %s: %v", shortID, err)
 		c.String(http.StatusInternalServerError, "MHTML conversion failed: %v", err)
 		return
 	}

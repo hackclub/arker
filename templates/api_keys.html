@@ -54,11 +54,7 @@
                 </div>
                 <div class="form-group">
                     <label for="environment">Environment:</label>
-                    <select id="environment" name="environment" required>
-                        <option value="">Select environment</option>
-                        <option value="dev">Development</option>
-                        <option value="prod">Production</option>
-                    </select>
+                    <input type="text" id="environment" name="environment" placeholder="e.g., dev-shinx, prod, staging" required>
                 </div>
                 <button type="submit" class="btn btn-primary">Generate API Key</button>
                 <button type="button" class="btn btn-secondary" onclick="hideCreateForm()">Cancel</button>

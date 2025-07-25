@@ -35,6 +35,7 @@ type ArchivedURL struct {
 type Capture struct {
 	gorm.Model
 	ArchivedURLID uint
+	ArchivedURL   ArchivedURL `gorm:"foreignKey:ArchivedURLID"`
 	Timestamp     time.Time
 	ShortID       string `gorm:"unique"`
 	APIKeyID      *uint     `gorm:"nullable"`
@@ -50,6 +51,7 @@ type ArchiveItem struct {
 	Status     string // pending, processing, completed, failed
 	StorageKey string
 	Extension  string // .webp, .mhtml, .tar.zst, .mp4, etc.
+	FileSize   int64  // file size in bytes
 	Logs       string `gorm:"type:text"`
 	RetryCount int
 }

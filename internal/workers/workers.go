@@ -7,7 +7,6 @@ import (
 	"log"
 	"time"
 	"gorm.io/gorm"
-	"github.com/klauspost/compress/zstd"
 	"github.com/playwright-community/playwright-go"
 	"arker/internal/archivers"
 	"arker/internal/models"
@@ -260,8 +259,12 @@ func ProcessSingleJob(job models.Job, storage storage.Storage, db *gorm.DB, arch
 	return saveArchiveData(data, ext, job.ShortID, job.Type, storage, db, &item, dbLogWriter)
 }
 
+
+
 // saveArchiveData handles the common logic for saving archive data to storage
 func saveArchiveData(data io.Reader, ext, shortID, jobType string, storage storage.Storage, db *gorm.DB, item *models.ArchiveItem, logWriter *utils.DBLogWriter) error {
+
+	
 	key := fmt.Sprintf("%s/%s%s.zst", shortID, jobType, ext)
 	w, err := storage.Writer(key)
 	if err != nil {
@@ -273,17 +276,8 @@ func saveArchiveData(data io.Reader, ext, shortID, jobType string, storage stora
 	}
 	defer w.Close()
 	
-	zw, err := zstd.NewWriter(w)
+	_, err = io.Copy(w, data)
 	if err != nil {
-		db.Model(item).Updates(map[string]interface{}{
-			"status": "failed", 
-			"logs":   logWriter.String(),
-		})
-		return err
-	}
-	defer zw.Close()
-	
-	if _, err = io.Copy(zw, data); err != nil {
 		db.Model(item).Updates(map[string]interface{}{
 			"status": "failed",
 			"logs":   logWriter.String(),
@@ -291,11 +285,28 @@ func saveArchiveData(data io.Reader, ext, shortID, jobType string, storage stora
 		return err
 	}
 	
-	// Mark as completed and store final logs
+	// Close writer to ensure all data is written and compressed
+	if err := w.Close(); err != nil {
+		db.Model(item).Updates(map[string]interface{}{
+			"status": "failed",
+			"logs":   logWriter.String(),
+		})
+		return fmt.Errorf("failed to close writer: %v", err)
+	}
+	
+	// Get file size after writing and closing
+	fileSize, err := storage.Size(key)
+	if err != nil {
+		log.Printf("Warning: Could not get file size for %s: %v", key, err)
+		fileSize = 0 // Continue without file size if we can't get it
+	}
+	
+	// Mark as completed and store final logs with file size
 	db.Model(item).Updates(map[string]interface{}{
 		"status":      "completed",
 		"storage_key": key,
 		"extension":   ext,
+		"file_size":   fileSize,
 		"logs":        logWriter.String(),
 	})
 	return nil
