@@ -29,7 +29,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.AutoMigrate(&models.User{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{})
+	db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{})
 
 	// Perform health checks on startup
 	log.Println("Performing startup health checks...")
@@ -136,16 +136,22 @@ func main() {
 	// Setup routes
 	r.GET("/login", handlers.LoginGet)
 	r.POST("/login", func(c *gin.Context) { handlers.LoginPost(c, db) })
-	r.GET("/admin", func(c *gin.Context) { handlers.AdminGet(c, db) })
+	r.GET("/admin/api-keys", func(c *gin.Context) { handlers.ApiKeysGet(c, db) })
+	r.POST("/admin/api-keys", func(c *gin.Context) { handlers.ApiKeysCreate(c, db) })
+	r.POST("/admin/api-keys/:id/toggle", func(c *gin.Context) { handlers.ApiKeysToggle(c, db) })
+	r.DELETE("/admin/api-keys/:id", func(c *gin.Context) { handlers.ApiKeysDelete(c, db) })
 	r.POST("/admin/url/:id/capture", func(c *gin.Context) { handlers.RequestCapture(c, db) })
+	r.POST("/admin/archive", func(c *gin.Context) { handlers.AdminArchive(c, db) })
 	r.GET("/admin/item/:id/log", func(c *gin.Context) { handlers.GetItemLog(c, db) })
-	r.POST("/api/v1/archive", func(c *gin.Context) { handlers.ApiArchive(c, db) })
-	r.GET("/api/v1/past-archives", func(c *gin.Context) { handlers.ApiPastArchives(c, db) })
-	r.GET("/:shortid", func(c *gin.Context) { handlers.DisplayGet(c, db) })
+	r.GET("/docs", handlers.DocsGet)
+	r.POST("/api/v1/archive", handlers.RequireAPIKey(db), func(c *gin.Context) { handlers.ApiArchive(c, db) })
+	r.GET("/api/v1/past-archives", handlers.RequireAPIKey(db), func(c *gin.Context) { handlers.ApiPastArchives(c, db) })
 	r.GET("/logs/:shortid/:type", func(c *gin.Context) { handlers.GetLogs(c, db) })
 	r.GET("/archive/:shortid/:type", func(c *gin.Context) { handlers.ServeArchive(c, storageInstance, db) })
 	r.GET("/archive/:shortid/mhtml/html", func(c *gin.Context) { handlers.ServeMHTMLAsHTML(c, storageInstance, db) })
 	r.Any("/git/*path", func(c *gin.Context) { handlers.GitHandler(c, storageInstance, db, cachePath) })
+	r.GET("/:shortid", func(c *gin.Context) { handlers.DisplayGet(c, db) })
+	r.GET("/", func(c *gin.Context) { handlers.AdminGet(c, db) })
 
 	log.Println("Starting server on :8080")
 	r.Run(":8080")

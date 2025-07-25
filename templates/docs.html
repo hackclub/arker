@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Arker API Documentation</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }
+        .container { max-width: 900px; margin: 0 auto; }
+        .nav { margin-bottom: 20px; }
+        .nav a { margin-right: 15px; text-decoration: none; color: #007bff; }
+        .nav a:hover { text-decoration: underline; }
+        .endpoint { background-color: #f8f9fa; padding: 20px; margin: 20px 0; border-radius: 8px; border-left: 4px solid #007bff; }
+        .method { display: inline-block; padding: 4px 8px; border-radius: 4px; color: white; font-weight: bold; margin-right: 10px; }
+        .method-post { background-color: #28a745; }
+        .method-get { background-color: #17a2b8; }
+        .code-block { background-color: #2d3748; color: #e2e8f0; padding: 15px; border-radius: 6px; overflow-x: auto; margin: 10px 0; }
+        .code-block code { font-family: 'Courier New', monospace; }
+        .response { background-color: #f1f3f4; padding: 10px; border-radius: 4px; margin: 10px 0; }
+        .error { background-color: #fee; border-left: 4px solid #dc3545; padding: 10px; margin: 10px 0; }
+        .success { background-color: #f0f9ff; border-left: 4px solid #28a745; padding: 10px; margin: 10px 0; }
+        h1, h2, h3 { color: #333; }
+        table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #f8f9fa; font-weight: bold; }
+        .auth-header { background-color: #fff3cd; padding: 15px; border-radius: 6px; border-left: 4px solid #ffc107; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav">
+            <a href="/">← Back to Admin</a>
+            <a href="/admin/api-keys">Manage API Keys</a>
+        </div>
+
+        <h1>Arker API Documentation</h1>
+        <p>The Arker API allows you to programmatically archive web content including web pages, Git repositories, and YouTube videos.</p>
+
+        <div class="auth-header">
+            <h3>🔐 Authentication Required</h3>
+            <p>All API endpoints require authentication using an API key. Include your API key in the Authorization header:</p>
+            <div class="code-block">
+                <code>Authorization: Bearer your_api_key_here</code>
+            </div>
+            <p>API keys can be generated and managed through the <a href="/admin/api-keys">API Keys Management</a> page.</p>
+        </div>
+
+        <h2>Base URL</h2>
+        <div class="code-block">
+            <code>https://{{.baseURL}}/api/v1</code>
+        </div>
+
+        <h2>Endpoints</h2>
+
+        <div class="endpoint">
+            <h3>
+                <span class="method method-post">POST</span>
+                /archive
+            </h3>
+            <p>Create a new archive for a given URL. The system automatically detects and creates the appropriate archive types based on the URL.</p>
+            
+            <h4>Request Headers</h4>
+            <table>
+                <tr><th>Header</th><th>Value</th><th>Required</th></tr>
+                <tr><td>Authorization</td><td>Bearer &lt;api_key&gt;</td><td>Yes</td></tr>
+                <tr><td>Content-Type</td><td>application/json</td><td>Yes</td></tr>
+            </table>
+
+            <h4>Request Body</h4>
+            <div class="code-block">
+                <code>{
+  "url": "https://example.com"
+}</code>
+            </div>
+
+            <table>
+                <tr><th>Field</th><th>Type</th><th>Description</th><th>Required</th></tr>
+                <tr><td>url</td><td>string</td><td>The URL to archive</td><td>Yes</td></tr>
+            </table>
+
+            <h4>Automatic Archive Type Detection</h4>
+            <ul>
+                <li><strong>Web pages</strong>: Creates MHTML and screenshot archives</li>
+                <li><strong>Git repositories</strong> (github.com, gitlab.com, etc.): Creates Git clone archive</li>
+                <li><strong>YouTube videos</strong> (youtube.com, youtu.be): Downloads video file</li>
+            </ul>
+
+            <h4>Success Response (200)</h4>
+            <div class="success">
+                <div class="code-block">
+                    <code>{
+  "short_id": "a1b2c3d4"
+}</code>
+                </div>
+                <p>Returns a short ID that can be used to access the archived content.</p>
+            </ul>
+
+            <h4>Error Responses</h4>
+            <div class="error">
+                <strong>400 Bad Request</strong>
+                <div class="code-block">
+                    <code>{"error": "Invalid request"}</code>
+                </div>
+            </div>
+            <div class="error">
+                <strong>401 Unauthorized</strong>
+                <div class="code-block">
+                    <code>{"error": "Authorization header required"}</code>
+                </div>
+            </div>
+            <div class="error">
+                <strong>500 Internal Server Error</strong>
+                <div class="code-block">
+                    <code>{"error": "Failed to queue capture"}</code>
+                </div>
+            </div>
+
+            <h4>Example Request</h4>
+            <div class="code-block">
+                <code>curl -X POST https://{{.baseURL}}/api/v1/archive \
+  -H "Authorization: Bearer zrl_orpheus-engine_prod_a1b2c3d4e5f6g7h8" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://hackclub.com"
+  }'</code>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <h3>
+                <span class="method method-get">GET</span>
+                /past-archives
+            </h3>
+            <p>Retrieve past archives for a specific URL.</p>
+            
+            <h4>Request Headers</h4>
+            <table>
+                <tr><th>Header</th><th>Value</th><th>Required</th></tr>
+                <tr><td>Authorization</td><td>Bearer &lt;api_key&gt;</td><td>Yes</td></tr>
+            </table>
+
+            <h4>Query Parameters</h4>
+            <table>
+                <tr><th>Parameter</th><th>Type</th><th>Description</th><th>Required</th></tr>
+                <tr><td>url</td><td>string</td><td>The URL to search for past archives</td><td>Yes</td></tr>
+            </table>
+
+            <h4>Success Response (200)</h4>
+            <div class="success">
+                <div class="code-block">
+                    <code>[
+  {
+    "short_id": "a1b2c3d4",
+    "timestamp": "2024-01-15T10:30:00Z"
+  },
+  {
+    "short_id": "x9y8z7w6",
+    "timestamp": "2024-01-10T15:45:00Z"
+  }
+]</code>
+                </div>
+                <p>Returns an array of past archives for the URL, sorted by most recent first (max 10 results).</p>
+            </div>
+
+            <h4>Example Request</h4>
+            <div class="code-block">
+                <code>curl -X GET "https://{{.baseURL}}/api/v1/past-archives?url=https://hackclub.com" \
+  -H "Authorization: Bearer zrl_orpheus-engine_prod_a1b2c3d4e5f6g7h8"</code>
+            </div>
+        </div>
+
+        <h2>Accessing Archived Content</h2>
+        <p>Once an archive is created, you can access the content using the returned short ID:</p>
+
+        <h3>Archive Display Page</h3>
+        <div class="code-block">
+            <code>https://{{.baseURL}}/&lt;short_id&gt;</code>
+        </div>
+        <p>Shows a web interface with tabs for each archive type created.</p>
+
+        <h3>Direct Archive Downloads</h3>
+        <div class="code-block">
+            <code>https://{{.baseURL}}/archive/&lt;short_id&gt;/&lt;type&gt;</code>
+        </div>
+        <p>Download the archive file directly. Types: <code>mhtml</code>, <code>screenshot</code>, <code>git</code>, <code>youtube</code></p>
+
+        <h3>MHTML as HTML</h3>
+        <div class="code-block">
+            <code>https://{{.baseURL}}/archive/&lt;short_id&gt;/mhtml/html</code>
+        </div>
+        <p>View the MHTML archive rendered as HTML in the browser.</p>
+
+        <h3>Git Repository Access</h3>
+        <div class="code-block">
+            <code>git clone https://{{.baseURL}}/git/&lt;short_id&gt;</code>
+        </div>
+        <p>Clone the archived Git repository.</p>
+
+        <h2>Rate Limits</h2>
+        <p>Currently, there are no enforced rate limits, but please use the API responsibly to ensure good performance for all users.</p>
+
+        <h2>Error Handling</h2>
+        <p>All error responses follow this format:</p>
+        <div class="code-block">
+            <code>{
+  "error": "Error description"
+}</code>
+        </div>
+
+        <h2>Archive Processing</h2>
+        <p>Archives are processed asynchronously. After creating an archive, you can:</p>
+        <ul>
+            <li>Visit the archive display page to see processing status</li>
+            <li>Check processing logs at <code>/logs/&lt;short_id&gt;/&lt;type&gt;</code></li>
+            <li>Download completed archives when processing finishes</li>
+        </ul>
+
+        <h2>Support</h2>
+        <p>For questions or issues with the Arker API, please contact the Hack Club team or create an issue in the project repository.</p>
+    </div>
+</body>
+</html>

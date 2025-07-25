@@ -28,7 +28,7 @@ func LoginPost(c *gin.Context, db *gorm.DB) {
 	session := sessions.Default(c)
 	session.Set("user_id", user.ID)
 	session.Save()
-	c.Redirect(http.StatusFound, "/admin")
+	c.Redirect(http.StatusFound, "/")
 }
 
 func RequireLogin(c *gin.Context) bool {

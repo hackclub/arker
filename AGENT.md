@@ -123,7 +123,7 @@ Arker is a Go-based web archiving server that captures web pages using multiple 
 ### Admin Interface
 - `GET /login` - Admin login page
 - `POST /login` - Authentication endpoint
-- `GET /admin` - Admin dashboard with archive management
+- `GET /` - Admin dashboard with archive management
 - `POST /admin/url/:id/capture` - Request new capture
 - `GET /admin/item/:id/log` - View capture logs
 - `GET /logs/:shortid/:type` - View processing logs

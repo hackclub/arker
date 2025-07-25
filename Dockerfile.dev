@@ -64,7 +64,7 @@ RUN mkdir -p /data /cache
 
 # Create .air.toml configuration for live reloading
 RUN echo '[build]\n\
-  cmd = "go build -o ./tmp/main ."\n\
+  cmd = "go build -o ./tmp/main ./cmd"\n\
   bin = "tmp/main"\n\
   full_bin = "APP_ENV=dev ./tmp/main"\n\
   include_ext = ["go", "tpl", "tmpl", "html"]\n\

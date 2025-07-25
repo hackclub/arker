@@ -44,7 +44,7 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o arker .
+RUN go build -o arker ./cmd
 
 # Install Playwright CLI that matches our library version
 RUN go install github.com/playwright-community/playwright-go/cmd/playwright@v0.4501.1

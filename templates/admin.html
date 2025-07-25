@@ -35,7 +35,11 @@
 <body>
     <div class="header">
         <h1>Arker - Admin Dashboard</h1>
-        <a href="/login" style="color: #dc3545;">Logout</a>
+        <div>
+            <a href="/admin/api-keys" style="margin-right: 15px; color: #007bff;">Manage API Keys</a>
+            <a href="/docs" style="margin-right: 15px; color: #007bff;">API Docs</a>
+            <a href="/login" style="color: #dc3545;">Logout</a>
+        </div>
     </div>
     
     <div class="add-url-form">
@@ -56,6 +60,13 @@
                 <div class="capture-item">
                     <a href="/{{.ShortID}}" class="capture-link">{{.ShortID}}</a> - 
                     <span>{{.Timestamp.Format "2006-01-02 15:04:05"}}</span>
+                    {{if .APIKey}}
+                    <span style="color: #6c757d; font-size: 12px; margin-left: 10px;">
+                        API: {{.APIKey.Username}}/{{.APIKey.AppName}}/{{.APIKey.Environment}}
+                    </span>
+                    {{else}}
+                    <span style="color: #6c757d; font-size: 12px; margin-left: 10px;">(Admin)</span>
+                    {{end}}
                     <div class="archive-items">
                         {{range .ArchiveItems}}
                         <div class="archive-item">
@@ -93,7 +104,7 @@
             const url = document.getElementById('newUrl').value;
             
             try {
-                const response = await fetch('/api/v1/archive', {
+                const response = await fetch('/admin/archive', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ url: url })

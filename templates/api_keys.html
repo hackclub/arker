@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Keys - Arker Admin</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .nav { margin-bottom: 20px; }
+        .nav a { margin-right: 15px; text-decoration: none; color: #007bff; }
+        .nav a:hover { text-decoration: underline; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
+        .form-group input, .form-group select { width: 200px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px; }
+        .btn-primary { background-color: #007bff; color: white; }
+        .btn-danger { background-color: #dc3545; color: white; }
+        .btn-secondary { background-color: #6c757d; color: white; }
+        .btn:hover { opacity: 0.8; }
+        .table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .table th, .table td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+        .table th { background-color: #f8f9fa; }
+        .status-active { color: #28a745; font-weight: bold; }
+        .status-inactive { color: #dc3545; font-weight: bold; }
+        .key-display { font-family: monospace; background-color: #f8f9fa; padding: 10px; border-radius: 4px; margin: 10px 0; }
+        .alert { padding: 10px; border-radius: 4px; margin: 10px 0; }
+        .alert-success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .alert-error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav">
+            <a href="/">← Back to Admin</a>
+            <a href="/docs">API Documentation</a>
+        </div>
+
+        <div class="header">
+            <h1>API Keys Management</h1>
+            <button class="btn btn-primary" onclick="showCreateForm()">Create New API Key</button>
+        </div>
+
+        <div id="createForm" class="hidden">
+            <h3>Create New API Key</h3>
+            <form id="apiKeyForm">
+                <div class="form-group">
+                    <label for="username">Hack Club Staff Username:</label>
+                    <input type="text" id="username" name="username" placeholder="e.g., zrl" required>
+                </div>
+                <div class="form-group">
+                    <label for="appName">App Name:</label>
+                    <input type="text" id="appName" name="appName" placeholder="e.g., orpheus-engine" required>
+                </div>
+                <div class="form-group">
+                    <label for="environment">Environment:</label>
+                    <select id="environment" name="environment" required>
+                        <option value="">Select environment</option>
+                        <option value="dev">Development</option>
+                        <option value="prod">Production</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-primary">Generate API Key</button>
+                <button type="button" class="btn btn-secondary" onclick="hideCreateForm()">Cancel</button>
+            </form>
+            
+            <div id="keyResult" class="hidden">
+                <div class="alert alert-success">
+                    <strong>API Key Generated Successfully!</strong><br>
+                    Please copy this key now - it will not be shown again.
+                </div>
+                <div class="key-display" id="generatedKey"></div>
+            </div>
+        </div>
+
+        <div id="alert" class="hidden"></div>
+
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>App Name</th>
+                    <th>Environment</th>
+                    <th>Key Prefix</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Last Used</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .apiKeys}}
+                <tr>
+                    <td>{{.Username}}</td>
+                    <td>{{.AppName}}</td>
+                    <td>{{.Environment}}</td>
+                    <td><code>{{.KeyPrefix}}</code></td>
+                    <td>
+                        {{if .IsActive}}
+                            <span class="status-active">Active</span>
+                        {{else}}
+                            <span class="status-inactive">Inactive</span>
+                        {{end}}
+                    </td>
+                    <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                    <td>
+                        {{if .LastUsedAt}}
+                            {{.LastUsedAt.Format "2006-01-02 15:04"}}
+                        {{else}}
+                            Never
+                        {{end}}
+                    </td>
+                    <td>
+                        <button class="btn {{if .IsActive}}btn-secondary{{else}}btn-primary{{end}}" 
+                                onclick="toggleKey({{.ID}})">
+                            {{if .IsActive}}Disable{{else}}Enable{{end}}
+                        </button>
+                        <button class="btn btn-danger" onclick="deleteKey({{.ID}})">Delete</button>
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        function showCreateForm() {
+            document.getElementById('createForm').classList.remove('hidden');
+            document.getElementById('keyResult').classList.add('hidden');
+        }
+
+        function hideCreateForm() {
+            document.getElementById('createForm').classList.add('hidden');
+            document.getElementById('apiKeyForm').reset();
+            document.getElementById('keyResult').classList.add('hidden');
+        }
+
+        function showAlert(message, type) {
+            const alert = document.getElementById('alert');
+            alert.className = `alert alert-${type}`;
+            alert.textContent = message;
+            alert.classList.remove('hidden');
+            setTimeout(() => alert.classList.add('hidden'), 5000);
+        }
+
+        document.getElementById('apiKeyForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData(e.target);
+            const data = Object.fromEntries(formData);
+            
+            try {
+                const response = await fetch('/admin/api-keys', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: data.username,
+                        app_name: data.appName,
+                        environment: data.environment
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    document.getElementById('generatedKey').textContent = result.api_key;
+                    document.getElementById('keyResult').classList.remove('hidden');
+                    setTimeout(() => location.reload(), 3000);
+                } else {
+                    showAlert(result.error || 'Failed to create API key', 'error');
+                }
+            } catch (error) {
+                showAlert('Failed to create API key', 'error');
+            }
+        });
+
+        async function toggleKey(id) {
+            try {
+                const response = await fetch(`/admin/api-keys/${id}/toggle`, {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    location.reload();
+                } else {
+                    const result = await response.json();
+                    showAlert(result.error || 'Failed to toggle API key', 'error');
+                }
+            } catch (error) {
+                showAlert('Failed to toggle API key', 'error');
+            }
+        }
+
+        async function deleteKey(id) {
+            if (!confirm('Are you sure you want to delete this API key? This action cannot be undone.')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/admin/api-keys/${id}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    location.reload();
+                } else {
+                    const result = await response.json();
+                    showAlert(result.error || 'Failed to delete API key', 'error');
+                }
+            } catch (error) {
+                showAlert('Failed to delete API key', 'error');
+            }
+        }
+    </script>
+</body>
+</html>

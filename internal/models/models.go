@@ -12,6 +12,18 @@ type User struct {
 	PasswordHash string
 }
 
+// APIKey represents an API key for authentication
+type APIKey struct {
+	gorm.Model
+	Username    string `gorm:"not null"`
+	AppName     string `gorm:"not null"`
+	Environment string `gorm:"not null"`
+	KeyHash     string `gorm:"not null"`
+	KeyPrefix   string `gorm:"unique;not null"`
+	IsActive    bool   `gorm:"default:true"`
+	LastUsedAt  *time.Time
+}
+
 // ArchivedURL represents a URL that has been archived
 type ArchivedURL struct {
 	gorm.Model
@@ -25,6 +37,8 @@ type Capture struct {
 	ArchivedURLID uint
 	Timestamp     time.Time
 	ShortID       string `gorm:"unique"`
+	APIKeyID      *uint     `gorm:"nullable"`
+	APIKey        *APIKey   `gorm:"foreignKey:APIKeyID"`
 	ArchiveItems  []ArchiveItem `gorm:"foreignKey:CaptureID"`
 }
 

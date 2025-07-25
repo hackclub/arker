@@ -1,4 +1,4 @@
-version: '3.8'
+# Remove version as it's obsolete
 
 services:
   db:

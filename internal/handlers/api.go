@@ -53,15 +53,22 @@ func ApiPastArchives(c *gin.Context, db *gorm.DB) {
 
 func ApiArchive(c *gin.Context, db *gorm.DB) {
 	var req struct {
-		URL   string   `json:"url"`
-		Types []string `json:"types"`
+		URL string `json:"url"`
 	}
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 		return
 	}
 	
-	shortID, err := workers.QueueCaptureForURL(db, req.URL, req.Types)
+	// Get API key from context (set by middleware)
+	apiKey, exists := c.Get("api_key")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Authentication context missing"})
+		return
+	}
+	
+	apiKeyID := apiKey.(*models.APIKey).ID
+	shortID, err := workers.QueueCaptureForURLWithAPIKey(db, req.URL, nil, &apiKeyID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue capture"})
 		return

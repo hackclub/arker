@@ -9,11 +9,17 @@ import (
 
 // QueueCapture centralizes the logic for creating captures and queueing jobs
 func QueueCapture(db *gorm.DB, urlID uint, originalURL string, types []string) (string, error) {
+	return QueueCaptureWithAPIKey(db, urlID, originalURL, types, nil)
+}
+
+// QueueCaptureWithAPIKey creates a capture with optional API key tracking
+func QueueCaptureWithAPIKey(db *gorm.DB, urlID uint, originalURL string, types []string, apiKeyID *uint) (string, error) {
 	shortID := utils.GenerateShortID(db)
 	capture := models.Capture{
 		ArchivedURLID: urlID, 
 		Timestamp:     time.Now(), 
 		ShortID:       shortID,
+		APIKeyID:      apiKeyID,
 	}
 	if err := db.Create(&capture).Error; err != nil {
 		return "", err
@@ -42,6 +48,11 @@ func QueueCapture(db *gorm.DB, urlID uint, originalURL string, types []string) (
 
 // QueueCaptureForURL creates or finds an ArchivedURL and queues a capture
 func QueueCaptureForURL(db *gorm.DB, url string, types []string) (string, error) {
+	return QueueCaptureForURLWithAPIKey(db, url, types, nil)
+}
+
+// QueueCaptureForURLWithAPIKey creates or finds an ArchivedURL and queues a capture with API key tracking
+func QueueCaptureForURLWithAPIKey(db *gorm.DB, url string, types []string, apiKeyID *uint) (string, error) {
 	if len(types) == 0 {
 		types = utils.GetArchiveTypes(url)
 	}
@@ -57,5 +68,5 @@ func QueueCaptureForURL(db *gorm.DB, url string, types []string) (string, error)
 		return "", err
 	}
 	
-	return QueueCapture(db, u.ID, url, types)
+	return QueueCaptureWithAPIKey(db, u.ID, url, types, apiKeyID)
 }
