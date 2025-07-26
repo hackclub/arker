@@ -66,8 +66,7 @@ func ServeArchive(c *gin.Context, storage storage.Storage, db *gorm.DB) {
 		c.Header("Content-Length", fmt.Sprintf("%d", item.FileSize))
 	}
 	
-	// Add caching headers for better performance
-	c.Header("Cache-Control", "public, max-age=86400") // Cache for 24 hours
+	// Add ETag for conditional requests
 	c.Header("ETag", fmt.Sprintf("\"%s-%d\"", item.StorageKey, item.FileSize))
 	
 	if attach {
