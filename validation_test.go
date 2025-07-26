@@ -161,6 +161,87 @@ func TestArchiveRequestValidation(t *testing.T) {
 	}
 }
 
+func TestGitURLDetection(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		expected bool
+	}{
+		// Should be detected as Git repositories
+		{"GitHub repo", "https://github.com/gamerwaves/reponame", true},
+		{"GitHub repo with path", "https://github.com/user/repo/tree/main", true},
+		{"GitLab repo", "https://gitlab.com/user/project", true},
+		{"Bitbucket repo", "https://bitbucket.org/user/repo", true},
+		{"Codeberg repo", "https://codeberg.org/user/repo", true},
+		{"Direct git URL", "https://example.com/repo.git", true},
+		{"Git subdomain", "https://git.example.com/repo", true},
+		
+		// Should NOT be detected as Git repositories
+		{"GitHub user profile", "https://github.com/gamerwaves", false},
+		{"GitHub settings", "https://github.com/settings", false},
+		{"GitHub explore", "https://github.com/explore", false},
+		{"GitHub marketplace", "https://github.com/marketplace", false},
+		{"GitHub organizations", "https://github.com/organizations", false},
+		{"GitLab user profile", "https://gitlab.com/username", false},
+		{"Regular website", "https://example.com", false},
+		{"YouTube", "https://youtube.com/watch?v=123", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := utils.IsGitURL(tt.url)
+			if result != tt.expected {
+				t.Errorf("IsGitURL(%q) = %v, expected %v", tt.url, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGetArchiveTypes(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		expected []string
+	}{
+		{
+			name:     "GitHub repository",
+			url:      "https://github.com/user/repo",
+			expected: []string{"mhtml", "screenshot", "git"},
+		},
+		{
+			name:     "GitHub user profile",
+			url:      "https://github.com/gamerwaves",
+			expected: []string{"mhtml", "screenshot"},
+		},
+		{
+			name:     "YouTube video",
+			url:      "https://youtube.com/watch?v=123",
+			expected: []string{"mhtml", "screenshot", "youtube"},
+		},
+		{
+			name:     "Regular website",
+			url:      "https://example.com",
+			expected: []string{"mhtml", "screenshot"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := utils.GetArchiveTypes(tt.url)
+			if len(result) != len(tt.expected) {
+				t.Errorf("GetArchiveTypes(%q) = %v, expected %v", tt.url, result, tt.expected)
+				return
+			}
+			for i, archiveType := range tt.expected {
+				if result[i] != archiveType {
+					t.Errorf("GetArchiveTypes(%q) = %v, expected %v", tt.url, result, tt.expected)
+					break
+				}
+			}
+		})
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && s[:len(substr)] == substr || len(s) > len(substr) && s[len(s)-len(substr):] == substr || 
 		   (len(s) > len(substr) && findSubstring(s, substr))

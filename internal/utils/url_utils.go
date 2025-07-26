@@ -25,12 +25,74 @@ func ExtractRepoName(url string) string {
 // Check if URL is a git repository
 func IsGitURL(url string) bool {
 	lowerURL := strings.ToLower(url)
-	return strings.HasSuffix(lowerURL, ".git") ||
-		strings.Contains(lowerURL, "github.com/") ||
-		strings.Contains(lowerURL, "gitlab.com/") ||
-		strings.Contains(lowerURL, "bitbucket.org/") ||
-		strings.Contains(lowerURL, "codeberg.org/") ||
-		strings.Contains(lowerURL, "git.")
+	
+	// Direct .git URLs
+	if strings.HasSuffix(lowerURL, ".git") {
+		return true
+	}
+	
+	// URLs containing git subdomain
+	if strings.Contains(lowerURL, "git.") {
+		return true
+	}
+	
+	// Check for repository URLs on hosting platforms
+	// These require at least username/reponame format
+	platforms := []string{
+		"github.com/",
+		"gitlab.com/",
+		"bitbucket.org/",
+		"codeberg.org/",
+	}
+	
+	for _, platform := range platforms {
+		if strings.Contains(lowerURL, platform) {
+			// Extract path after platform
+			parts := strings.Split(lowerURL, platform)
+			if len(parts) > 1 {
+				path := strings.Trim(parts[1], "/")
+				pathSegments := strings.Split(path, "/")
+				
+				// Must have at least username/reponame (2 segments)
+				// Exclude common non-repository paths
+				if len(pathSegments) >= 2 && !isNonRepoPath(pathSegments) {
+					return true
+				}
+			}
+		}
+	}
+	
+	return false
+}
+
+// Check if path segments indicate a non-repository URL
+func isNonRepoPath(segments []string) bool {
+	if len(segments) == 0 {
+		return true
+	}
+	
+	// Common non-repository paths on GitHub/GitLab
+	nonRepoPaths := []string{
+		"settings", "notifications", "explore", "marketplace",
+		"pricing", "features", "security", "enterprise",
+		"login", "join", "new", "organizations", "teams",
+		"dashboard", "pulls", "issues", "search", "trending",
+		"collections", "events", "sponsors", "about",
+	}
+	
+	// If first segment is a non-repo path, it's not a repository
+	for _, nonRepo := range nonRepoPaths {
+		if segments[0] == nonRepo {
+			return true
+		}
+	}
+	
+	// If only one segment (just username), it's a profile page
+	if len(segments) == 1 {
+		return true
+	}
+	
+	return false
 }
 
 // Check if URL is a YouTube URL
