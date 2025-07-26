@@ -6,7 +6,7 @@ arker
 *.out
 
 # Data directories  
-storage/
+/storage/
 cache/
 pgdata/
 tmp/
