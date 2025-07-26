@@ -76,6 +76,20 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 	if typ != "mhtml" {
 		if zstdStorage, ok := storageInstance.(*storage.ZSTDStorage); ok {
 			if uncompressedSize, err := zstdStorage.UncompressedSize(item.StorageKey); err == nil {
+				// Validate file integrity by trying to read first few bytes
+				testReader, testErr := storageInstance.Reader(item.StorageKey)
+				if testErr == nil {
+					testBuf := make([]byte, 100)
+					_, testReadErr := testReader.Read(testBuf)
+					testReader.Close()
+					
+					if testReadErr != nil && testReadErr != io.EOF {
+						log.Printf("File integrity check failed for %s: %v", item.StorageKey, testReadErr)
+						c.Status(http.StatusInternalServerError)
+						return
+					}
+				}
+				
 				c.Header("Content-Length", fmt.Sprintf("%d", uncompressedSize))
 				log.Printf("Set Content-Length to %d for %s", uncompressedSize, item.StorageKey)
 			} else {
@@ -87,7 +101,12 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 	}
 	
 	// Stream the file directly
-	io.Copy(c.Writer, r)
+	_, err = io.Copy(c.Writer, r)
+	if err != nil {
+		log.Printf("Error streaming file %s: %v", item.StorageKey, err)
+		// Note: We can't change the response status here since headers are already sent
+		// The connection will be closed which the client will detect
+	}
 }
 
 func ServeMHTMLAsHTML(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
