@@ -66,15 +66,19 @@ func AdminArchive(c *gin.Context, db *gorm.DB) {
 		return
 	}
 
-	var req struct {
-		URL string `json:"url"`
-	}
+	var req utils.ArchiveRequest
 	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
 		return
 	}
 	
-	shortID, err := workers.QueueCaptureForURL(db, req.URL, nil)
+	// Validate the request including SSRF protection
+	if err := req.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	
+	shortID, err := workers.QueueCaptureForURL(db, req.URL, req.Types)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue capture"})
 		return

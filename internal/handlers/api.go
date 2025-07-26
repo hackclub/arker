@@ -16,6 +16,12 @@ func ApiPastArchives(c *gin.Context, db *gorm.DB) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "url parameter is required"})
 		return
 	}
+	
+	// Validate URL to prevent SSRF
+	if err := utils.ValidateURL(url); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid URL: " + err.Error()})
+		return
+	}
 
 	var archivedURL models.ArchivedURL
 	if err := db.Where("original = ?", url).First(&archivedURL).Error; err != nil {
@@ -53,11 +59,15 @@ func ApiPastArchives(c *gin.Context, db *gorm.DB) {
 }
 
 func ApiArchive(c *gin.Context, db *gorm.DB) {
-	var req struct {
-		URL string `json:"url"`
-	}
+	var req utils.ArchiveRequest
 	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		return
+	}
+	
+	// Validate the request including SSRF protection
+	if err := req.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	
@@ -69,7 +79,7 @@ func ApiArchive(c *gin.Context, db *gorm.DB) {
 	}
 	
 	apiKeyID := apiKey.(*models.APIKey).ID
-	shortID, err := workers.QueueCaptureForURLWithAPIKey(db, req.URL, nil, &apiKeyID)
+	shortID, err := workers.QueueCaptureForURLWithAPIKey(db, req.URL, req.Types, &apiKeyID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue capture"})
 		return
@@ -86,6 +96,12 @@ func WebPastArchives(c *gin.Context, db *gorm.DB) {
 	url := c.Query("url")
 	if url == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "url parameter is required"})
+		return
+	}
+	
+	// Validate URL to prevent SSRF
+	if err := utils.ValidateURL(url); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid URL: " + err.Error()})
 		return
 	}
 
