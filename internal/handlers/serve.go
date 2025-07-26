@@ -60,10 +60,22 @@ func ServeArchive(c *gin.Context, storage storage.Storage, db *gorm.DB) {
 		attach = true
 	}
 	c.Header("Content-Type", ct)
+	
+	// Set content length for better streaming performance
+	if item.FileSize > 0 {
+		c.Header("Content-Length", fmt.Sprintf("%d", item.FileSize))
+	}
+	
+	// Add caching headers for better performance
+	c.Header("Cache-Control", "public, max-age=86400") // Cache for 24 hours
+	c.Header("ETag", fmt.Sprintf("\"%s-%d\"", item.StorageKey, item.FileSize))
+	
 	if attach {
 		filename := utils.GenerateArchiveFilename(capture, archivedURL, item.Extension)
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 	}
+	
+	// Stream the file
 	io.Copy(c.Writer, r)
 }
 
