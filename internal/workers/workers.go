@@ -274,10 +274,10 @@ func saveArchiveData(data io.Reader, ext, shortID, jobType string, storage stora
 		})
 		return err
 	}
-	defer w.Close()
 	
 	_, err = io.Copy(w, data)
 	if err != nil {
+		w.Close() // Close on error
 		db.Model(item).Updates(map[string]interface{}{
 			"status": "failed",
 			"logs":   logWriter.String(),

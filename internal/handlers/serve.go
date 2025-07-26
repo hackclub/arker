@@ -12,7 +12,7 @@ import (
 	"arker/internal/utils"
 )
 
-func ServeArchive(c *gin.Context, storage storage.Storage, db *gorm.DB) {
+func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
 	shortID := c.Param("shortid")
 	typ := c.Param("type")
 	var item models.ArchiveItem
@@ -36,7 +36,7 @@ func ServeArchive(c *gin.Context, storage storage.Storage, db *gorm.DB) {
 		c.Status(http.StatusNotFound)
 		return
 	}
-	r, err := storage.Reader(item.StorageKey)
+	r, err := storageInstance.Reader(item.StorageKey)
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
 		return
@@ -61,10 +61,8 @@ func ServeArchive(c *gin.Context, storage storage.Storage, db *gorm.DB) {
 	}
 	c.Header("Content-Type", ct)
 	
-	// Set content length for better streaming performance
-	if item.FileSize > 0 {
-		c.Header("Content-Length", fmt.Sprintf("%d", item.FileSize))
-	}
+	// Explicitly clear any automatic content-encoding detection
+	c.Header("Content-Encoding", "")
 	
 	// Add ETag for conditional requests
 	c.Header("ETag", fmt.Sprintf("\"%s-%d\"", item.StorageKey, item.FileSize))
@@ -74,11 +72,25 @@ func ServeArchive(c *gin.Context, storage storage.Storage, db *gorm.DB) {
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 	}
 	
-	// Stream the file
+	// Try to get uncompressed size efficiently from zstd storage (skip for MHTML since it's served differently)
+	if typ != "mhtml" {
+		if zstdStorage, ok := storageInstance.(*storage.ZSTDStorage); ok {
+			if uncompressedSize, err := zstdStorage.UncompressedSize(item.StorageKey); err == nil {
+				c.Header("Content-Length", fmt.Sprintf("%d", uncompressedSize))
+				log.Printf("Set Content-Length to %d for %s", uncompressedSize, item.StorageKey)
+			} else {
+				log.Printf("Failed to get uncompressed size for %s: %v", item.StorageKey, err)
+			}
+		} else {
+			log.Printf("Storage is not ZSTDStorage type for %s", item.StorageKey)
+		}
+	}
+	
+	// Stream the file directly
 	io.Copy(c.Writer, r)
 }
 
-func ServeMHTMLAsHTML(c *gin.Context, storage storage.Storage, db *gorm.DB) {
+func ServeMHTMLAsHTML(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
 	shortID := c.Param("shortid")
 	var item models.ArchiveItem
 	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
@@ -92,7 +104,7 @@ func ServeMHTMLAsHTML(c *gin.Context, storage storage.Storage, db *gorm.DB) {
 		return
 	}
 	
-	r, err := storage.Reader(item.StorageKey)
+	r, err := storageInstance.Reader(item.StorageKey)
 	if err != nil {
 		log.Printf("Failed to open storage for %s: %v", shortID, err)
 		c.Status(http.StatusInternalServerError)
