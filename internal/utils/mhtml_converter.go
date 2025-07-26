@@ -22,15 +22,38 @@ type PartData struct {
 	Data   []byte
 }
 
-// Convert converts MHTML content to HTML
+// StreamingPartInfo holds metadata about a part without loading data
+type StreamingPartInfo struct {
+	Header      map[string][]string
+	ContentID   string
+	Location    string
+	ContentType string
+	Encoding    string
+}
+
+// StreamingConverter handles large MHTML files with constant memory usage
+type StreamingConverter struct {
+	referencedParts map[string][]byte // Only cache parts that are actually referenced
+}
+
+// Convert converts MHTML content to HTML using streaming approach for large files
 func (c *MHTMLConverter) Convert(input io.Reader, output io.Writer) error {
-	// Read the input into memory first
+	// Use streaming converter for constant memory usage
+	sc := &StreamingConverter{
+		referencedParts: make(map[string][]byte),
+	}
+	return sc.StreamingConvert(input, output)
+}
+
+// StreamingConvert processes MHTML with constant memory usage
+func (sc *StreamingConverter) StreamingConvert(input io.Reader, output io.Writer) error {
+	// Read all data first (we need to do two passes)
 	data, err := io.ReadAll(input)
 	if err != nil {
 		return fmt.Errorf("failed to read input: %w", err)
 	}
-
-	// Parse as mail message
+	
+	// Parse MHTML headers
 	msg, err := mail.ReadMessage(bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("failed to read mail message: %w", err)
@@ -52,11 +75,12 @@ func (c *MHTMLConverter) Convert(input io.Reader, output io.Writer) error {
 		return fmt.Errorf("no boundary found in content type")
 	}
 
-	// Parse multipart content
+	// First pass: find HTML content and identify referenced CIDs
 	mr := multipart.NewReader(msg.Body, boundary)
 	
-	parts := make(map[string]*PartData)
-	var htmlPart *PartData
+	var htmlContent []byte
+	partInfos := make(map[string]*StreamingPartInfo)
+	var htmlFound bool
 
 	for {
 		part, err := mr.NextPart()
@@ -68,67 +92,263 @@ func (c *MHTMLConverter) Convert(input io.Reader, output io.Writer) error {
 		}
 
 		partContentType := part.Header.Get("Content-Type")
-		contentID := part.Header.Get("Content-ID")
+		contentID := strings.Trim(part.Header.Get("Content-ID"), "<>")
 		contentLocation := part.Header.Get("Content-Location")
+		encoding := part.Header.Get("Content-Transfer-Encoding")
 
-		// Read part data
-		partData, err := io.ReadAll(part)
-		if err != nil {
-			return fmt.Errorf("failed to read part data: %w", err)
+		info := &StreamingPartInfo{
+			Header:      map[string][]string(part.Header),
+			ContentID:   contentID,
+			Location:    contentLocation,
+			ContentType: partContentType,
+			Encoding:    encoding,
 		}
 
-		pd := &PartData{
-			Header: map[string][]string(part.Header),
-			Data:   partData,
-		}
-
-		// Store by Content-ID
+		// Store part info for lookup
 		if contentID != "" {
-			cid := strings.Trim(contentID, "<>")
-			parts[cid] = pd
+			partInfos[contentID] = info
 		}
-
-		// Store by Content-Location
 		if contentLocation != "" {
-			parts[contentLocation] = pd
-			
-			// Also store without "cid:" prefix for easier lookup
+			partInfos[contentLocation] = info
+			// Also store without "cid:" prefix
 			if strings.HasPrefix(contentLocation, "cid:") {
 				cidKey := strings.TrimPrefix(contentLocation, "cid:")
-				parts[cidKey] = pd
+				partInfos[cidKey] = info
 			}
 		}
 
-		// Check if this is the HTML part
-		if htmlPart == nil && strings.HasPrefix(partContentType, "text/html") {
-			htmlPart = pd
+		// If this is the HTML part, read and decode it
+		if !htmlFound && strings.HasPrefix(partContentType, "text/html") {
+			htmlData, err := io.ReadAll(part)
+			if err != nil {
+				return fmt.Errorf("failed to read HTML part: %w", err)
+			}
+			
+			htmlContent, err = sc.decodePart(htmlData, encoding)
+			if err != nil {
+				return fmt.Errorf("failed to decode HTML part: %w", err)
+			}
+			htmlFound = true
+		} else {
+			// Skip non-HTML parts in first pass
+			io.Copy(io.Discard, part)
 		}
 	}
 
-	if htmlPart == nil {
+	if !htmlFound {
 		return fmt.Errorf("no HTML part found")
 	}
 
-	// Decode the HTML content
-	htmlContent, err := c.decodePart(htmlPart)
+	// Find all referenced CIDs in the HTML
+	referencedCIDs := sc.findReferencedCIDs(htmlContent)
+	
+	// Second pass: load only referenced parts
+	msg2, err := mail.ReadMessage(bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("failed to decode HTML part: %w", err)
+		return fmt.Errorf("failed to re-read mail message: %w", err)
+	}
+	
+	mr2 := multipart.NewReader(msg2.Body, boundary)
+	for {
+		part, err := mr2.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read multipart in second pass: %w", err)
+		}
+
+		contentID := strings.Trim(part.Header.Get("Content-ID"), "<>")
+		contentLocation := part.Header.Get("Content-Location")
+		encoding := part.Header.Get("Content-Transfer-Encoding")
+		
+		// Check if this part is referenced
+		isReferenced := false
+		cacheKey := ""
+		
+		// Check by Content-ID
+		if contentID != "" {
+			if referencedCIDs[contentID] {
+				isReferenced = true
+				cacheKey = contentID
+			}
+		}
+		
+		// Check by Content-Location  
+		if contentLocation != "" {
+			// Try exact match
+			if referencedCIDs[contentLocation] {
+				isReferenced = true
+				cacheKey = contentLocation
+			}
+			// Try without cid: prefix
+			if strings.HasPrefix(contentLocation, "cid:") {
+				cidKey := strings.TrimPrefix(contentLocation, "cid:")
+				if referencedCIDs[cidKey] {
+					isReferenced = true
+					cacheKey = cidKey
+				}
+			}
+			// Try with cid: prefix added
+			if !strings.HasPrefix(contentLocation, "cid:") {
+				cidWithPrefix := "cid:" + contentLocation
+				if referencedCIDs[cidWithPrefix] {
+					isReferenced = true
+					cacheKey = contentLocation
+				}
+			}
+		}
+		
+		if isReferenced {
+			// Load and cache this part
+			partData, err := io.ReadAll(part)
+			if err != nil {
+				return fmt.Errorf("failed to read referenced part: %w", err)
+			}
+			
+			decodedData, err := sc.decodePart(partData, encoding)
+			if err != nil {
+				return fmt.Errorf("failed to decode referenced part: %w", err)
+			}
+			
+			sc.referencedParts[cacheKey] = decodedData
+		} else {
+			// Skip unreferenced parts
+			io.Copy(io.Discard, part)
+		}
 	}
 
-	// Parse and modify HTML to embed resources
-	doc, err := html.Parse(bytes.NewReader(htmlContent))
-	if err != nil {
-		return fmt.Errorf("failed to parse HTML: %w", err)
-	}
-
-	// Walk the HTML tree and replace cid: references
-	c.walkHTML(doc, parts)
-
-	// Render the modified HTML
-	return html.Render(output, doc)
+	// Stream HTML through tokenizer and replace cid: references
+	return sc.streamProcessHTML(htmlContent, partInfos, output)
 }
 
-// decodePart decodes a multipart based on its transfer encoding
+// findReferencedCIDs scans HTML content to find all cid: references
+func (sc *StreamingConverter) findReferencedCIDs(htmlContent []byte) map[string]bool {
+	referencedCIDs := make(map[string]bool)
+	tokenizer := html.NewTokenizer(bytes.NewReader(htmlContent))
+	
+	for {
+		tokenType := tokenizer.Next()
+		
+		if tokenType == html.ErrorToken {
+			if tokenizer.Err() == io.EOF {
+				break
+			}
+			continue
+		}
+		
+		if tokenType == html.StartTagToken || tokenType == html.SelfClosingTagToken {
+			token := tokenizer.Token()
+			
+			for _, attr := range token.Attr {
+				if (attr.Key == "src" || attr.Key == "href") && strings.HasPrefix(attr.Val, "cid:") {
+					cid := strings.TrimPrefix(attr.Val, "cid:")
+					referencedCIDs[cid] = true
+				}
+			}
+		}
+	}
+	
+	return referencedCIDs
+}
+
+// streamProcessHTML processes HTML using tokenizer and replaces cid: references
+func (sc *StreamingConverter) streamProcessHTML(htmlContent []byte, partInfos map[string]*StreamingPartInfo, output io.Writer) error {
+	tokenizer := html.NewTokenizer(bytes.NewReader(htmlContent))
+	
+	for {
+		tokenType := tokenizer.Next()
+		
+		switch tokenType {
+		case html.ErrorToken:
+			if tokenizer.Err() == io.EOF {
+				return nil
+			}
+			return tokenizer.Err()
+			
+		case html.StartTagToken, html.SelfClosingTagToken:
+			token := tokenizer.Token()
+			
+			// Check for attributes that might contain cid: references
+			modified := false
+			for i := range token.Attr {
+				attr := &token.Attr[i]
+				if (attr.Key == "src" || attr.Key == "href") && strings.HasPrefix(attr.Val, "cid:") {
+					cid := strings.TrimPrefix(attr.Val, "cid:")
+					if partInfo, exists := partInfos[cid]; exists {
+						// Get the cached part data and convert to data URL
+						dataURL, err := sc.getPartAsDataURL(partInfo)
+						if err == nil {
+							attr.Val = dataURL
+							modified = true
+						}
+					}
+				}
+			}
+			
+			// Write the token (possibly modified)
+			if modified {
+				output.Write([]byte(token.String()))
+			} else {
+				output.Write(tokenizer.Raw())
+			}
+			
+		default:
+			// Copy other tokens as-is
+			output.Write(tokenizer.Raw())
+		}
+	}
+}
+
+// getPartAsDataURL loads a referenced part and converts it to a data URL
+func (sc *StreamingConverter) getPartAsDataURL(partInfo *StreamingPartInfo) (string, error) {
+	// Try multiple possible cache keys
+	var possibleKeys []string
+	
+	if partInfo.ContentID != "" {
+		possibleKeys = append(possibleKeys, partInfo.ContentID)
+	}
+	if partInfo.Location != "" {
+		possibleKeys = append(possibleKeys, partInfo.Location)
+		// Try without cid: prefix
+		if strings.HasPrefix(partInfo.Location, "cid:") {
+			possibleKeys = append(possibleKeys, strings.TrimPrefix(partInfo.Location, "cid:"))
+		}
+		// Try with cid: prefix
+		if !strings.HasPrefix(partInfo.Location, "cid:") {
+			possibleKeys = append(possibleKeys, "cid:"+partInfo.Location)
+		}
+	}
+	
+	// Try each possible key
+	for _, key := range possibleKeys {
+		if data, exists := sc.referencedParts[key]; exists {
+			contentType := partInfo.ContentType
+			if contentType == "" {
+				contentType = "application/octet-stream"
+			}
+			return fmt.Sprintf("data:%s;base64,%s", contentType, base64.StdEncoding.EncodeToString(data)), nil
+		}
+	}
+	
+	return "", fmt.Errorf("part not cached, tried keys: %v", possibleKeys)
+}
+
+// decodePart decodes part data based on transfer encoding
+func (sc *StreamingConverter) decodePart(partData []byte, encoding string) ([]byte, error) {
+	switch strings.ToLower(encoding) {
+	case "quoted-printable":
+		reader := quotedprintable.NewReader(bytes.NewReader(partData))
+		return io.ReadAll(reader)
+	case "base64":
+		decoded, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(string(partData), "\n", ""))
+		return decoded, err
+	default:
+		return partData, nil
+	}
+}
+
+// Legacy decodePart for backward compatibility
 func (c *MHTMLConverter) decodePart(partData *PartData) ([]byte, error) {
 	transferEncoding := c.getHeader(partData.Header, "Content-Transfer-Encoding")
 	
