@@ -42,8 +42,12 @@ WORKDIR /app
 
 # Copy source and build application
 COPY . .
-# Build the application
-RUN go build -o arker ./cmd
+# Check if storage directory exists in Docker image
+RUN echo "=== Checking internal directory ===" && \
+    ls -la internal/ && \
+    echo "=== Checking if storage exists ===" && \
+    ls -la internal/storage/ || echo "storage directory missing!" && \
+    echo "=== Done checking ==="
 
 # Install Playwright CLI that matches our library version
 RUN go install github.com/playwright-community/playwright-go/cmd/playwright@v0.4501.1
