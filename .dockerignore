@@ -10,7 +10,6 @@ tmp/
 
 # Data directories (for production build)
 pgdata/
-/storage/
 cache/
 
 # Go build artifacts
