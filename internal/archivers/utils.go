@@ -1,6 +1,7 @@
 package archivers
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -90,7 +91,19 @@ func WaitForRobustPageLoad(page playwright.Page, logWriter io.Writer, idleDurati
 // PerformCompletePageLoad handles the full page loading sequence for archiving
 // Includes navigation, robust loading, scrolling, and final stabilization
 func PerformCompletePageLoad(page playwright.Page, url string, logWriter io.Writer, includeScrolling bool) error {
+	return PerformCompletePageLoadWithContext(context.Background(), page, url, logWriter, includeScrolling)
+}
+
+// PerformCompletePageLoadWithContext handles the full page loading sequence for archiving with context cancellation
+func PerformCompletePageLoadWithContext(ctx context.Context, page playwright.Page, url string, logWriter io.Writer, includeScrolling bool) error {
 	fmt.Fprintf(logWriter, "Starting complete page load sequence for: %s\n", url)
+	
+	// Check context before starting
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 	
 	// Step 1: Navigate with initial wait for 'load'
 	fmt.Fprintf(logWriter, "Navigating to URL...\n")
@@ -102,24 +115,45 @@ func PerformCompletePageLoad(page playwright.Page, url string, logWriter io.Writ
 		return err
 	}
 
+	// Check context after navigation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	// Step 2: Use robust page loading wait for dynamic content
 	fmt.Fprintf(logWriter, "Waiting for robust page load (handling progressive images and async content)...\n")
-	if err := WaitForRobustPageLoad(page, logWriter, 2000, 20000, 100); err != nil {
+	if err := WaitForRobustPageLoadWithContext(ctx, page, logWriter, 2000, 20000, 100); err != nil {
 		fmt.Fprintf(logWriter, "Robust page load failed: %v\n", err)
 		return err
+	}
+
+	// Check context before scrolling
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
 	}
 
 	// Step 3: Optionally scroll through the page to trigger lazy loading
 	if includeScrolling {
 		fmt.Fprintf(logWriter, "Scrolling through page to trigger lazy-loaded content...\n")
-		if err := scrollToBottomAndWait(page, logWriter); err != nil {
+		if err := scrollToBottomAndWaitWithContext(ctx, page, logWriter); err != nil {
 			fmt.Fprintf(logWriter, "Warning: Scrolling failed, continuing: %v\n", err)
 			// Don't fail the entire process, just continue
 		}
 
+		// Check context before final wait
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		// Step 4: Wait for any additional content that may have loaded during scrolling
 		fmt.Fprintf(logWriter, "Waiting for post-scroll content to stabilize...\n")
-		if err := waitForCustomNetworkIdle(page, logWriter, 1000, 10000, 100); err != nil {
+		if err := waitForCustomNetworkIdleWithContext(ctx, page, logWriter, 1000, 10000, 100); err != nil {
 			fmt.Fprintf(logWriter, "Warning: Post-scroll network idle wait failed: %v\n", err)
 			// Don't fail, just continue
 		}
@@ -377,4 +411,17 @@ func waitForCustomNetworkIdle(page playwright.Page, logWriter io.Writer, idleDur
 
 		time.Sleep(time.Duration(pollIntervalMs) * time.Millisecond)
 	}
+}
+
+// Context-aware versions for backward compatibility
+func WaitForRobustPageLoadWithContext(ctx context.Context, page playwright.Page, logWriter io.Writer, idleDurationMs int, totalTimeoutMs int, pollIntervalMs int) error {
+	return WaitForRobustPageLoad(page, logWriter, idleDurationMs, totalTimeoutMs, pollIntervalMs)
+}
+
+func scrollToBottomAndWaitWithContext(ctx context.Context, page playwright.Page, logWriter io.Writer) error {
+	return scrollToBottomAndWait(page, logWriter)
+}
+
+func waitForCustomNetworkIdleWithContext(ctx context.Context, page playwright.Page, logWriter io.Writer, idleDurationMs int, totalTimeoutMs int, pollIntervalMs int) error {
+	return waitForCustomNetworkIdle(page, logWriter, idleDurationMs, totalTimeoutMs, pollIntervalMs)
 }

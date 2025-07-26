@@ -96,6 +96,11 @@ func ProcessCombinedBrowserJob(job models.Job, storage storage.Storage, db *gorm
 	mhtmlArch := archiversMap["mhtml"].(*archivers.MHTMLArchiver)
 	screenshotArch := archiversMap["screenshot"].(*archivers.ScreenshotArchiver)
 	
+	// Create context with timeout for combined job
+	timeoutConfig := utils.DefaultTimeoutConfig()
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutConfig.ArchiveTimeout)
+	defer cancel()
+	
 	// Create shared page with screenshot settings (need viewport for screenshots)
 	page, err := mhtmlArch.Browser.NewPage(playwright.BrowserNewPageOptions{
 		Viewport: &playwright.Size{
@@ -127,7 +132,7 @@ func ProcessCombinedBrowserJob(job models.Job, storage storage.Storage, db *gorm
 	fmt.Fprintf(sharedLogWriter, "Starting combined browser job for MHTML and screenshot\n")
 	
 	// Single page load for both
-	if err := archivers.PerformCompletePageLoad(page, job.URL, sharedLogWriter, true); err != nil {
+	if err := archivers.PerformCompletePageLoadWithContext(ctx, page, job.URL, sharedLogWriter, true); err != nil {
 		fmt.Fprintf(sharedLogWriter, "Shared page load failed: %v\n", err)
 		// Mark both as failed with shared logs
 		sharedLogs := sharedLogWriter.String()
@@ -146,7 +151,7 @@ func ProcessCombinedBrowserJob(job models.Job, storage storage.Storage, db *gorm
 	mhtmlLogWriter := utils.NewDBLogWriter(db, mhtmlItem.ID)
 	fmt.Fprintf(mhtmlLogWriter, "%s\n--- Starting MHTML capture on shared page ---\n", sharedLogWriter.String())
 	
-	mhtmlData, mhtmlExt, _, _, err := mhtmlArch.ArchiveWithPage(page, job.URL, mhtmlLogWriter)
+	mhtmlData, mhtmlExt, _, _, err := mhtmlArch.ArchiveWithPageContext(ctx, page, job.URL, mhtmlLogWriter)
 	if err != nil {
 		fmt.Fprintf(mhtmlLogWriter, "MHTML capture failed: %v\n", err)
 		db.Model(&mhtmlItem).Updates(map[string]interface{}{
@@ -164,7 +169,7 @@ func ProcessCombinedBrowserJob(job models.Job, storage storage.Storage, db *gorm
 	screenshotLogWriter := utils.NewDBLogWriter(db, screenshotItem.ID)
 	fmt.Fprintf(screenshotLogWriter, "%s\n--- Starting screenshot capture on shared page ---\n", sharedLogWriter.String())
 	
-	screenshotData, screenshotExt, _, _, err := screenshotArch.ArchiveWithPage(page, job.URL, screenshotLogWriter, nil)
+	screenshotData, screenshotExt, _, _, err := screenshotArch.ArchiveWithPageContext(ctx, page, job.URL, screenshotLogWriter, nil)
 	if err != nil {
 		fmt.Fprintf(screenshotLogWriter, "Screenshot capture failed: %v\n", err)
 		db.Model(&screenshotItem).Updates(map[string]interface{}{
@@ -230,14 +235,14 @@ func ProcessSingleJob(job models.Job, storage storage.Storage, db *gorm.DB, arch
 		timeout = timeoutConfig.ArchiveTimeout
 	}
 	
-	err := utils.WithRetryConfig(func() error {
-		// Wrap archive operation with timeout
-		return utils.WithTimeout(timeout, func(ctx context.Context) error {
-			var archiveErr error
-			data, ext, _, cleanup, archiveErr = arch.Archive(job.URL, dbLogWriter, db, item.ID)
-			// TODO: Update archiver interface to support context cancellation
-			return archiveErr
-		})
+	// Create context with timeout for the entire operation
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	
+	err := utils.WithRetryConfigContext(ctx, func() error {
+		var archiveErr error
+		data, ext, _, cleanup, archiveErr = arch.Archive(ctx, job.URL, dbLogWriter, db, item.ID)
+		return archiveErr
 	}, dbLogWriter, &currentRetryCount, retryConfig)
 	
 	log.Printf("Archive job returned: %s %s, error: %v", job.ShortID, job.Type, err)

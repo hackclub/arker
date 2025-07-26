@@ -1,6 +1,7 @@
 package archivers
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -11,12 +12,19 @@ import (
 // YTArchiver (streams directly from yt-dlp stdout)
 type YTArchiver struct{}
 
-func (a *YTArchiver) Archive(url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
+func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
 	fmt.Fprintf(logWriter, "Starting YouTube archive for: %s\n", url)
+	
+	// Check context before starting
+	select {
+	case <-ctx.Done():
+		return nil, "", "", nil, ctx.Err()
+	default:
+	}
 	
 	// First, test if yt-dlp can access the video
 	fmt.Fprintf(logWriter, "Testing video accessibility with yt-dlp...\n")
-	testCmd := exec.Command("yt-dlp", "--print", "title,duration,uploader", url)
+	testCmd := exec.CommandContext(ctx, "yt-dlp", "--print", "title,duration,uploader", url)
 	testOutput, err := testCmd.CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(logWriter, "yt-dlp test failed: %v\nOutput: %s\n", err, string(testOutput))
@@ -24,7 +32,14 @@ func (a *YTArchiver) Archive(url string, logWriter io.Writer, db *gorm.DB, itemI
 	}
 	fmt.Fprintf(logWriter, "Video info:\n%s\n", string(testOutput))
 	
-	cmd := exec.Command("yt-dlp", "-f", "bestvideo+bestaudio/best", "--no-playlist", "--no-write-thumbnail", "--verbose", "-o", "-", url)
+	// Check context before main download
+	select {
+	case <-ctx.Done():
+		return nil, "", "", nil, ctx.Err()
+	default:
+	}
+	
+	cmd := exec.CommandContext(ctx, "yt-dlp", "-f", "bestvideo+bestaudio/best", "--no-playlist", "--no-write-thumbnail", "--verbose", "-o", "-", url)
 	pr, err := cmd.StdoutPipe()
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to create stdout pipe: %v\n", err)

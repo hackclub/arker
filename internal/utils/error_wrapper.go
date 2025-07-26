@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"time"
@@ -65,6 +66,39 @@ func WithRetryConfig(fn func() error, logWriter io.Writer, retryCount *int, conf
 				delay := calculateBackoff(*retryCount, config)
 				fmt.Fprintf(logWriter, "Retrying in %v...\n", delay)
 				time.Sleep(delay)
+			}
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("max retries (%d) exceeded", config.MaxRetries)
+}
+
+// WithRetryConfigContext wraps a function with configurable retry behavior and context cancellation
+func WithRetryConfigContext(ctx context.Context, fn func() error, logWriter io.Writer, retryCount *int, config RetryConfig) error {
+	for *retryCount < config.MaxRetries {
+		// Check if context is cancelled before attempting
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		
+		err := fn()
+		if err != nil {
+			fmt.Fprintf(logWriter, "Error (attempt %d/%d): %v\n", *retryCount+1, config.MaxRetries, err)
+			*retryCount++
+			if *retryCount < config.MaxRetries {
+				delay := calculateBackoff(*retryCount, config)
+				fmt.Fprintf(logWriter, "Retrying in %v...\n", delay)
+				
+				// Use context-aware sleep
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(delay):
+					// Continue to next retry
+				}
 			}
 			continue
 		}

@@ -2,6 +2,7 @@ package archivers
 
 import (
 	"archive/tar"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -14,8 +15,15 @@ import (
 // GitArchiver
 type GitArchiver struct{}
 
-func (a *GitArchiver) Archive(url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
+func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
 	fmt.Fprintf(logWriter, "Starting git archive for: %s\n", url)
+	
+	// Check context before starting
+	select {
+	case <-ctx.Done():
+		return nil, "", "", nil, ctx.Err()
+	default:
+	}
 	
 	// Extract repository URL for GitHub URLs with extra paths
 	repoURL := extractGitRepoURL(url)
@@ -31,7 +39,7 @@ func (a *GitArchiver) Archive(url string, logWriter io.Writer, db *gorm.DB, item
 	cleanup := func() { os.RemoveAll(tempDir) }
 
 	fmt.Fprintf(logWriter, "Cloning repository to: %s\n", tempDir)
-	_, err = git.PlainClone(tempDir, true, &git.CloneOptions{
+	_, err = git.PlainCloneContext(ctx, tempDir, true, &git.CloneOptions{
 		URL:      repoURL,
 		Progress: logWriter,
 	})

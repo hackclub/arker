@@ -2,6 +2,7 @@ package archivers
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -17,8 +18,15 @@ type ScreenshotArchiver struct {
 	Browser playwright.Browser
 }
 
-func (a *ScreenshotArchiver) Archive(url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
+func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
 	fmt.Fprintf(logWriter, "Starting screenshot archive for: %s\n", url)
+	
+	// Check context before creating page
+	select {
+	case <-ctx.Done():
+		return nil, "", "", nil, ctx.Err()
+	default:
+	}
 	
 	page, err := a.Browser.NewPage(playwright.BrowserNewPageOptions{
 		Viewport: &playwright.Size{
@@ -42,16 +50,28 @@ func (a *ScreenshotArchiver) Archive(url string, logWriter io.Writer, db *gorm.D
 	})
 
 	// Use the common complete page load sequence (with scrolling for full-page screenshots)
-	if err = PerformCompletePageLoad(page, url, logWriter, true); err != nil {
+	if err = PerformCompletePageLoadWithContext(ctx, page, url, logWriter, true); err != nil {
 		fmt.Fprintf(logWriter, "Complete page load failed: %v\n", err)
 		cleanup()
 		return nil, "", "", nil, err
 	}
 
-	return a.ArchiveWithPage(page, url, logWriter, cleanup)
+	return a.ArchiveWithPageContext(ctx, page, url, logWriter, cleanup)
 }
 
 func (a *ScreenshotArchiver) ArchiveWithPage(page playwright.Page, url string, logWriter io.Writer, cleanup func()) (io.Reader, string, string, func(), error) {
+	// For backward compatibility, create a background context
+	return a.ArchiveWithPageContext(context.Background(), page, url, logWriter, cleanup)
+}
+
+func (a *ScreenshotArchiver) ArchiveWithPageContext(ctx context.Context, page playwright.Page, url string, logWriter io.Writer, cleanup func()) (io.Reader, string, string, func(), error) {
+	// Check context before screenshot operations
+	select {
+	case <-ctx.Done():
+		return nil, "", "", nil, ctx.Err()
+	default:
+	}
+	
 	// Ensure we're at the top of the page before taking screenshot
 	fmt.Fprintf(logWriter, "Ensuring page is scrolled to top before screenshot...\n")
 	_, err := page.Evaluate(`
@@ -65,6 +85,13 @@ func (a *ScreenshotArchiver) ArchiveWithPage(page playwright.Page, url string, l
 	`)
 	if err != nil {
 		fmt.Fprintf(logWriter, "Warning: Could not scroll to top before screenshot: %v\n", err)
+	}
+
+	// Check context before taking screenshot
+	select {
+	case <-ctx.Done():
+		return nil, "", "", nil, ctx.Err()
+	default:
 	}
 
 	fmt.Fprintf(logWriter, "Taking full-page screenshot...\n")
