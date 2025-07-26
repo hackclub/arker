@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"gorm.io/gorm"
 	"github.com/go-git/go-git/v5"
 )
@@ -16,6 +17,12 @@ type GitArchiver struct{}
 func (a *GitArchiver) Archive(url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
 	fmt.Fprintf(logWriter, "Starting git archive for: %s\n", url)
 	
+	// Extract repository URL for GitHub URLs with extra paths
+	repoURL := extractGitRepoURL(url)
+	if repoURL != url {
+		fmt.Fprintf(logWriter, "Extracted repository URL: %s\n", repoURL)
+	}
+	
 	tempDir, err := os.MkdirTemp("", "git-archive-")
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to create temp directory: %v\n", err)
@@ -25,7 +32,7 @@ func (a *GitArchiver) Archive(url string, logWriter io.Writer, db *gorm.DB, item
 
 	fmt.Fprintf(logWriter, "Cloning repository to: %s\n", tempDir)
 	_, err = git.PlainClone(tempDir, true, &git.CloneOptions{
-		URL:      url,
+		URL:      repoURL,
 		Progress: logWriter,
 	})
 	if err != nil {
@@ -52,6 +59,26 @@ func (a *GitArchiver) Archive(url string, logWriter io.Writer, db *gorm.DB, item
 	}()
 
 	return pr, ".tar", "application/x-tar", cleanup, nil
+}
+
+// extractGitRepoURL extracts the repository URL from GitHub URLs with extra paths
+func extractGitRepoURL(url string) string {
+	// GitHub repository URL pattern: https://github.com/owner/repo
+	githubPattern := regexp.MustCompile(`^(https?://github\.com/[^/]+/[^/]+)(/.*)?$`)
+	
+	if matches := githubPattern.FindStringSubmatch(url); len(matches) > 1 {
+		return matches[1] // Return just the repo part
+	}
+	
+	// GitLab repository URL pattern: https://gitlab.com/owner/repo
+	gitlabPattern := regexp.MustCompile(`^(https?://gitlab\.com/[^/]+/[^/]+)(/.*)?$`)
+	
+	if matches := gitlabPattern.FindStringSubmatch(url); len(matches) > 1 {
+		return matches[1] // Return just the repo part
+	}
+	
+	// For other URLs, return as-is
+	return url
 }
 
 // Helper to tar dir streaming
