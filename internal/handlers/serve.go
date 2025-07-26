@@ -136,8 +136,8 @@ func ServeMHTMLAsHTML(c *gin.Context, storageInstance storage.Storage, db *gorm.
 	log.Printf("Converting MHTML to HTML for %s", shortID)
 	
 	// Use the MHTML converter with streaming (decompression now handled by storage)
-	converter := &utils.MHTMLConverter{}
-	if err := converter.Convert(r, c.Writer); err != nil {
+	converter := utils.NewStreamingConverter()
+	if err := converter.ConvertMHTMLToHTML(r, c.Writer); err != nil {
 		log.Printf("MHTML conversion error for %s: %v", shortID, err)
 		c.String(http.StatusInternalServerError, "MHTML conversion failed: %v", err)
 		return
