@@ -42,12 +42,14 @@ WORKDIR /app
 
 # Copy source and build application
 COPY . .
-# Debug and force clean module build
-RUN rm -f go.work go.work.sum && \
-    go mod tidy && \
-    go list -m && \
-    go mod why arker/internal/storage && \
-    GO111MODULE=on GOPATH=/tmp/empty go build -mod=mod -v -o arker ./cmd
+# Debug module setup step by step
+RUN rm -f go.work go.work.sum
+RUN go mod tidy
+RUN go list -m
+RUN go mod why arker/internal/storage || echo "go mod why failed"
+RUN ls -la internal/
+RUN GO111MODULE=on GOPATH=/tmp/empty go env
+RUN GO111MODULE=on GOPATH=/tmp/empty go build -mod=mod -v -o arker ./cmd
 
 # Install Playwright CLI that matches our library version
 RUN go install github.com/playwright-community/playwright-go/cmd/playwright@v0.4501.1
