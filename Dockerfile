@@ -40,14 +40,11 @@ RUN pip3 install --break-system-packages yt-dlp[default]
 
 WORKDIR /app
 
-# Copy source (excluding runtime storage but including internal/storage)
+# Copy and build application first
 COPY go.mod go.sum ./
-COPY cmd/ ./cmd/
-COPY internal/ ./internal/
-COPY templates/ ./templates/
-# Verify storage directory exists and build
-RUN ls -la internal/storage/ && \
-    go build -o arker ./cmd
+RUN go mod download
+COPY . .
+RUN go build -o arker ./cmd
 
 # Install Playwright CLI that matches our library version
 RUN go install github.com/playwright-community/playwright-go/cmd/playwright@v0.4501.1
