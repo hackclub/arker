@@ -10,17 +10,7 @@ import (
 	"github.com/playwright-community/playwright-go"
 )
 
-// PageWrapper wraps a playwright.Page to release semaphore on close
-type PageWrapper struct {
-	playwright.Page
-	semaphore chan struct{}
-}
 
-func (pw *PageWrapper) Close(opts ...playwright.PageCloseOptions) error {
-	err := pw.Page.Close(opts...)
-	<-pw.semaphore // Release semaphore
-	return err
-}
 
 type Manager struct {
 	mu            sync.RWMutex
@@ -30,12 +20,15 @@ type Manager struct {
 	restarting    bool
 	unhealthy     atomic.Bool
 	pageSemaphore chan struct{}
+	activePagesmu sync.Mutex
+	activePages   map[playwright.Page]bool
 }
 
 func New(launchOpts playwright.BrowserTypeLaunchOptions, maxWorkers int) (*Manager, error) {
 	m := &Manager{
 		launchOpts:    launchOpts,
 		pageSemaphore: make(chan struct{}, maxWorkers),
+		activePages:   make(map[playwright.Page]bool),
 	}
 	if err := m.start(); err != nil {
 		return nil, err
@@ -142,7 +135,9 @@ func (m *Manager) Browser() (playwright.Browser, error) {
 
 func (m *Manager) NewPage(opts ...playwright.BrowserNewPageOptions) (playwright.Page, error) {
 	// Acquire semaphore to limit concurrent pages
+	log.Printf("[browser] acquiring page semaphore (capacity: %d)", cap(m.pageSemaphore))
 	m.pageSemaphore <- struct{}{}
+	log.Printf("[browser] page semaphore acquired (available: %d)", cap(m.pageSemaphore)-len(m.pageSemaphore))
 	
 	br, err := m.Browser()
 	if err != nil {
@@ -156,11 +151,29 @@ func (m *Manager) NewPage(opts ...playwright.BrowserNewPageOptions) (playwright.
 		return nil, err
 	}
 	
-	// Return wrapped page that releases semaphore on close
-	return &PageWrapper{
-		Page:      page,
-		semaphore: m.pageSemaphore,
-	}, nil
+	// Track active page
+	m.activePagesmu.Lock()
+	m.activePages[page] = true
+	m.activePagesmu.Unlock()
+	
+	return page, nil
+}
+
+// ClosePage manually closes a page and releases semaphore
+func (m *Manager) ClosePage(page playwright.Page) error {
+	m.activePagesmu.Lock()
+	defer m.activePagesmu.Unlock()
+	
+	if !m.activePages[page] {
+		log.Printf("[browser] page not tracked or already closed")
+		return nil // Page not tracked or already closed
+	}
+	
+	delete(m.activePages, page)
+	err := page.Close()
+	<-m.pageSemaphore // Release semaphore
+	log.Printf("[browser] page closed and semaphore released (available: %d)", cap(m.pageSemaphore)-len(m.pageSemaphore))
+	return err
 }
 
 func (m *Manager) heartbeat() {

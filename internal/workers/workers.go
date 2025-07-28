@@ -115,7 +115,7 @@ func ProcessCombinedBrowserJob(job models.Job, storage storage.Storage, db *gorm
 		db.Model(&screenshotItem).Update("status", "failed")
 		return fmt.Errorf("failed to create shared browser page: %v", err)
 	}
-	defer page.Close()
+	defer mhtmlArch.BrowserMgr.ClosePage(page)
 	
 	// Create shared log writer for page load
 	sharedLogWriter := utils.NewDBLogWriter(db, 0) // Use 0 since we'll update both items separately

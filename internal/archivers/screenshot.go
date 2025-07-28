@@ -40,7 +40,7 @@ func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter 
 		fmt.Fprintf(logWriter, "Failed to create browser page: %v\n", err)
 		return nil, "", "", nil, err
 	}
-	cleanup := func() { page.Close() }
+	cleanup := func() { a.BrowserMgr.ClosePage(page) }
 
 	// Log console messages and errors
 	page.On("console", func(msg playwright.ConsoleMessage) {
