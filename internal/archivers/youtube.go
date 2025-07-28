@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"gorm.io/gorm"
 )
@@ -21,9 +22,22 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	default:
 	}
 	
+	// Prepare command arguments
+	testArgs := []string{"--print", "title,duration,uploader"}
+	dlArgs := []string{"-f", "bestvideo+bestaudio/best", "--no-playlist", "--no-write-thumbnail", "--verbose", "-o", "-"}
+	
+	// Add SOCKS5 proxy configuration if SOCKS5_PROXY is set
+	if socks5Proxy := os.Getenv("SOCKS5_PROXY"); socks5Proxy != "" {
+		fmt.Fprintf(logWriter, "Using SOCKS5 proxy for yt-dlp: %s\n", socks5Proxy)
+		testArgs = append([]string{"--proxy", socks5Proxy}, testArgs...)
+		dlArgs = append([]string{"--proxy", socks5Proxy}, dlArgs...)
+	}
+	
 	// First, test if yt-dlp can access the video
 	fmt.Fprintf(logWriter, "Testing video accessibility with yt-dlp...\n")
-	testCmd := exec.CommandContext(ctx, "yt-dlp", "--print", "title,duration,uploader", url)
+	testCmd := exec.CommandContext(ctx, "yt-dlp")
+	testCmd.Args = append(testCmd.Args, testArgs...)
+	testCmd.Args = append(testCmd.Args, url)
 	testOutput, err := testCmd.CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(logWriter, "yt-dlp test failed: %v\nOutput: %s\n", err, string(testOutput))
@@ -38,7 +52,9 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	default:
 	}
 	
-	cmd := exec.CommandContext(ctx, "yt-dlp", "-f", "bestvideo+bestaudio/best", "--no-playlist", "--no-write-thumbnail", "--verbose", "-o", "-", url)
+	cmd := exec.CommandContext(ctx, "yt-dlp")
+	cmd.Args = append(cmd.Args, dlArgs...)
+	cmd.Args = append(cmd.Args, url)
 	
 	pr, err := cmd.StdoutPipe()
 	if err != nil {

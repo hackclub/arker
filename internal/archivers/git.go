@@ -5,11 +5,16 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"gorm.io/gorm"
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/transport/client"
+	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
+	"golang.org/x/net/proxy"
 )
 
 // GitArchiver
@@ -23,6 +28,35 @@ func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 	case <-ctx.Done():
 		return nil, "", "", nil, ctx.Err()
 	default:
+	}
+	
+	// Configure SOCKS5 proxy if SOCKS5_PROXY is set
+	if socks5Proxy := os.Getenv("SOCKS5_PROXY"); socks5Proxy != "" {
+		fmt.Fprintf(logWriter, "Using SOCKS5 proxy for git operations: %s\n", socks5Proxy)
+		
+		proxyURL, err := url.Parse(socks5Proxy)
+		if err != nil {
+			fmt.Fprintf(logWriter, "Failed to parse proxy URL: %v\n", err)
+			return nil, "", "", nil, err
+		}
+		
+		// Create SOCKS5 dialer
+		dialer, err := proxy.FromURL(proxyURL, proxy.Direct)
+		if err != nil {
+			fmt.Fprintf(logWriter, "Failed to create proxy dialer: %v\n", err)
+			return nil, "", "", nil, err
+		}
+		
+		// Create HTTP client with SOCKS5 proxy
+		httpClient := &http.Client{
+			Transport: &http.Transport{
+				Dial: dialer.Dial,
+			},
+		}
+		
+		// Install custom HTTP client for git operations
+		client.InstallProtocol("https", githttp.NewClient(httpClient))
+		client.InstallProtocol("http", githttp.NewClient(httpClient))
 	}
 	
 	// Extract repository URL for GitHub URLs with extra paths

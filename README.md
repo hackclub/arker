@@ -65,6 +65,7 @@ Environment variables:
 - `STORAGE_PATH`: Path for archive storage (default: `./storage`)
 - `CACHE_PATH`: Path for git clone cache (default: `./cache`)
 - `MAX_WORKERS`: Number of archive workers (default: `5`)
+- `SOCKS5_PROXY`: SOCKS5 proxy for archiving traffic (e.g., `socks5://localhost:1080`)
 
 ## Development
 

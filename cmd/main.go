@@ -196,19 +196,27 @@ func main() {
 	}
 
 	// Create browser manager with launch options
+	launchArgs := []string{
+		"--no-sandbox",
+		"--disable-setuid-sandbox",
+		"--disable-dev-shm-usage",
+		"--disable-extensions",
+		"--disable-plugins",
+		"--disable-images",
+		"--disable-background-timer-throttling",
+		"--disable-backgrounding-occluded-windows",
+		"--disable-renderer-backgrounding",
+	}
+	
+	// Add SOCKS5 proxy configuration if SOCKS5_PROXY is set
+	if socks5Proxy := os.Getenv("SOCKS5_PROXY"); socks5Proxy != "" {
+		launchArgs = append(launchArgs, "--proxy-server="+socks5Proxy)
+		log.Printf("Using SOCKS5 proxy for browser: %s", socks5Proxy)
+	}
+	
 	launchOpts := playwright.BrowserTypeLaunchOptions{
 		Headless: playwright.Bool(true),
-		Args: []string{
-			"--no-sandbox",
-			"--disable-setuid-sandbox",
-			"--disable-dev-shm-usage",
-			"--disable-extensions",
-			"--disable-plugins",
-			"--disable-images",
-			"--disable-background-timer-throttling",
-			"--disable-backgrounding-occluded-windows",
-			"--disable-renderer-backgrounding",
-		},
+		Args:     launchArgs,
 	}
 	
 	bm, err := browsermgr.New(launchOpts)
