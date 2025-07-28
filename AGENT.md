@@ -143,14 +143,21 @@ git clone http://localhost:8080/git/{shortid}
 - `GIN_MODE` - Gin framework mode (`debug` for development)
 
 ### Default Credentials
-- **Username**: `admin`
-- **Password**: `admin`
+- **Username**: `admin` (set via `ADMIN_USERNAME` env var)
+- **Password**: `admin` (set via `ADMIN_PASSWORD` env var)
 - **⚠️ Change in production!**
 
+### Session Security
+- **Session Secret**: Automatically generated and stored in database on first run
+- **Override**: Set `SESSION_SECRET` environment variable to use custom value
+- **Persistence**: Session secret persists across restarts via database storage
+- **Regeneration**: Delete the `session_secret` config entry from database to regenerate
+
 ### Security Notes
-- Update session secret in production (currently: "secret-key-change-in-production")
-- Configure proper PostgreSQL credentials
+- Session secret is automatically generated with cryptographically secure random bytes
+- Configure proper PostgreSQL credentials for production
 - Consider rate limiting for API endpoints
+- Use strong admin passwords via environment variables
 
 ## Testing
 

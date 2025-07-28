@@ -225,9 +225,9 @@ func main() {
 	}
 
 	os.MkdirAll(cfg.CachePath, 0755)
-	// Resume pending archives on startup
+	// Resume pending archives on startup and handle stuck jobs from previous run
 	var pendingItems []models.ArchiveItem
-	db.Where("status IN (?, ?) AND retry_count < ?", "pending", "processing", 3).Find(&pendingItems)
+	db.Where("status = 'pending' AND retry_count < ?", 3).Find(&pendingItems)
 	for _, item := range pendingItems {
 		var capture models.Capture
 		db.First(&capture, item.CaptureID)
@@ -236,10 +236,28 @@ func main() {
 		workers.JobChan <- models.Job{CaptureID: capture.ID, ShortID: capture.ShortID, Type: item.Type, URL: au.Original}
 		log.Printf("Resuming pending job: %s %s", capture.ShortID, item.Type)
 	}
+	
+	// Handle jobs that were stuck in "processing" status (likely from server restart)
+	var stuckItems []models.ArchiveItem
+	db.Where("status = 'processing'").Find(&stuckItems)
+	for _, item := range stuckItems {
+		// Mark as failed with explanation, they'll be retried if under limit
+		failureMsg := "\n--- RECOVERY FROM SERVER RESTART ---\nJob was processing when server restarted\nMarking as failed for automatic retry\n"
+		db.Model(&item).Updates(map[string]interface{}{
+			"status": "failed", 
+			"logs": item.Logs + failureMsg,
+		})
+		log.Printf("Marked stuck job as failed for retry: ID=%d, Type=%s", item.ID, item.Type)
+	}
 
 	for i := 1; i <= cfg.MaxWorkers; i++ {
 		go workers.Worker(i, workers.JobChan, storageInstance, db, archiversMap)
 	}
+
+	// Start job monitor for stuck job detection and cleanup
+	jobMonitor := workers.NewJobMonitor(db)
+	jobMonitor.Start()
+	defer jobMonitor.Stop()
 
 	// Start log cleanup routine
 	go func() {
@@ -265,6 +283,7 @@ func main() {
 	r.POST("/admin/api-keys", func(c *gin.Context) { handlers.ApiKeysCreate(c, db) })
 	r.POST("/admin/api-keys/:id/toggle", func(c *gin.Context) { handlers.ApiKeysToggle(c, db) })
 	r.DELETE("/admin/api-keys/:id", func(c *gin.Context) { handlers.ApiKeysDelete(c, db) })
+	r.POST("/admin/retry-failed", func(c *gin.Context) { handlers.RetryAllFailedJobs(c, db) })
 	r.POST("/admin/url/:id/capture", func(c *gin.Context) { handlers.RequestCapture(c, db) })
 	r.POST("/admin/archive", func(c *gin.Context) { handlers.AdminArchive(c, db) })
 	r.GET("/admin/item/:id/log", func(c *gin.Context) { handlers.GetItemLog(c, db) })

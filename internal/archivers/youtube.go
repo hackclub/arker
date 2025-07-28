@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"gorm.io/gorm"
 )
@@ -40,6 +39,7 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	}
 	
 	cmd := exec.CommandContext(ctx, "yt-dlp", "-f", "bestvideo+bestaudio/best", "--no-playlist", "--no-write-thumbnail", "--verbose", "-o", "-", url)
+	
 	pr, err := cmd.StdoutPipe()
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to create stdout pipe: %v\n", err)
@@ -60,8 +60,6 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 			n, err := stderrPipe.Read(buf)
 			if n > 0 {
 				logWriter.Write(buf[:n])
-				// Also write to stdout for immediate debugging
-				os.Stdout.Write(buf[:n])
 			}
 			if err != nil {
 				break

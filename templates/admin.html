@@ -57,8 +57,20 @@
         </div>
     </div>
     
-    <div class="add-url-form">
-        <h3>Archive New URL</h3>
+    <div class="add-url-form" style="position: relative;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <h3>Archive New URL</h3>
+            {{if .queueSummary}}
+            <div style="font-size: 12px; color: #666; text-align: right; margin-top: 2px;">
+                <strong>Queue Status:</strong>
+                {{if gt .queueSummary.QueueSize 0}}<span style="color: #6c757d;">{{.queueSummary.QueueSize}} in memory</span>{{end}}
+                {{if gt .queueSummary.Pending 0}}{{if gt .queueSummary.QueueSize 0}} • {{end}}<span style="color: #856404;">{{.queueSummary.Pending}} pending</span>{{end}}
+                {{if gt .queueSummary.Processing 0}}{{if or (gt .queueSummary.QueueSize 0) (gt .queueSummary.Pending 0)}} • {{end}}<span style="color: #0c5460;">{{.queueSummary.Processing}} processing</span>{{end}}
+                {{if gt .queueSummary.Failed 0}}{{if or (gt .queueSummary.QueueSize 0) (gt .queueSummary.Pending 0) (gt .queueSummary.Processing 0)}} • {{end}}<span style="color: #721c24;">{{.queueSummary.Failed}} failed</span>{{end}}
+                {{if and (eq .queueSummary.QueueSize 0) (eq .queueSummary.Pending 0) (eq .queueSummary.Processing 0)}}<span style="color: #155724;">All caught up!</span>{{end}}
+            </div>
+            {{end}}
+        </div>
         <form id="addUrlForm">
             <input type="url" id="newUrl" placeholder="Enter URL to archive" required>
             <button type="submit">Archive</button>
@@ -337,6 +349,41 @@
                 stopLogPolling();
             }
         }
+
+        async function retryAllFailedJobs() {
+            if (!confirm('Are you sure you want to retry all failed archive jobs? This may take some time.')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/admin/retry-failed', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const result = await response.json();
+                if (response.ok) {
+                    showNotification(result.message, 'success');
+                    // Reload after delay to show updated queue status
+                    setTimeout(() => location.reload(), 2000);
+                } else {
+                    showNotification('Error: ' + result.error, 'error');
+                }
+            } catch (error) {
+                showNotification('Error retrying failed jobs: ' + error.message, 'error');
+            }
+        }
     </script>
+
+    {{if .queueSummary}}{{if gt .queueSummary.Failed 0}}
+    <div style="margin-top: 40px; padding: 20px; border-top: 2px solid #ddd; text-align: center;">
+        <p style="color: #721c24; margin-bottom: 15px; font-size: 14px;">
+            <strong>{{.queueSummary.Failed}} failed archive jobs</strong> need attention
+        </p>
+        <button onclick="retryAllFailedJobs()" class="view-logs-btn" style="background: #dc3545;">
+            🔄 Retry All Failed Jobs
+        </button>
+    </div>
+    {{end}}{{end}}
 </body>
 </html>
