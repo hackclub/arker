@@ -299,7 +299,7 @@
             {{end}}
         {{else if eq .current_item.Status "pending"}}
             <div class="processing-header">
-                <h3>⏳ Archive Queued</h3>
+                <h3>⏳ Archive Queued{{if gt .queue_position 0}} (#{{.queue_position}} in line){{end}}</h3>
                 <p>This {{.current_type}} archive is waiting to be processed...</p>
             </div>
             <div id="logs-{{.current_type}}" class="log-container">Waiting for processing to start...</div>
