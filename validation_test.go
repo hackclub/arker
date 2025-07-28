@@ -65,10 +65,14 @@ func TestURLValidation(t *testing.T) {
 			errorMsg:    "only HTTP and HTTPS protocols are allowed",
 		},
 		{
-			name:        "Invalid URL format",
-			url:         "not-a-url",
-			shouldError: true,
-			errorMsg:    "only HTTP and HTTPS protocols are allowed",
+			name:        "URL without protocol - should auto-add",
+			url:         "example.com",
+			shouldError: false,
+		},
+		{
+			name:        "URL without protocol with path",
+			url:         "example.com/path",
+			shouldError: false,
 		},
 		{
 			name:        "URL with suspicious pattern",
