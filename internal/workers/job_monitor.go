@@ -158,7 +158,9 @@ func (jm *JobMonitor) attemptRequeue(job models.ArchiveItem, capture models.Capt
 	case JobChan <- newJob:
 		log.Printf("Successfully requeued stuck job %d", job.ID)
 	default:
-		log.Printf("Queue full, job %d marked as pending for later pickup", job.ID)
+		// Queue is full - reset job to failed status since we can't queue it
+		log.Printf("Queue full, marking job %d as failed (will retry on next monitor cycle)", job.ID)
+		jm.db.Model(&job).Update("status", "failed")
 	}
 }
 

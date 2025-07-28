@@ -38,15 +38,39 @@ func New(launchOpts playwright.BrowserTypeLaunchOptions, maxWorkers int) (*Manag
 }
 
 func (m *Manager) start() error {
-	// Clean up old instances first
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.startWithoutLock()
+}
+
+func (m *Manager) startWithoutLock() error {
+	// Clean up old instances first
 	if m.browser != nil {
 		m.browser.Close()
 	}
 	if m.pw != nil {
 		m.pw.Stop()
 	}
-	m.mu.Unlock()
+	
+	// Clean up semaphore from lost pages during restart
+	m.activePagesmu.Lock()
+	lostPages := len(m.activePages)
+	if lostPages > 0 {
+		log.Printf("[browser] cleaning up %d lost pages during restart", lostPages)
+		// Drain semaphore slots for lost pages
+		for i := 0; i < lostPages; i++ {
+			select {
+			case <-m.pageSemaphore:
+				// Successfully drained a slot
+			default:
+				log.Printf("[browser] warning: fewer semaphore slots than expected during cleanup")
+				break
+			}
+		}
+		// Clear active pages map
+		m.activePages = make(map[playwright.Page]bool)
+	}
+	m.activePagesmu.Unlock()
 
 	pw, err := playwright.Run()
 	if err != nil {
@@ -65,10 +89,8 @@ func (m *Manager) start() error {
 		go m.restart()
 	})
 
-	m.mu.Lock()
 	m.pw, m.browser = pw, br
 	m.unhealthy.Store(false)
-	m.mu.Unlock()
 	
 	log.Println("[browser] started successfully")
 	return nil
@@ -81,7 +103,11 @@ func (m *Manager) restart() {
 		return
 	}
 	m.restarting = true
-	m.mu.Unlock()
+	// Keep lock held during restart to prevent concurrent restarts
+	defer func() {
+		m.restarting = false
+		m.mu.Unlock()
+	}()
 
 	backoff := []time.Duration{0, 2 * time.Second, 5 * time.Second, 10 * time.Second}
 	for i, d := range backoff {
@@ -90,10 +116,7 @@ func (m *Manager) restart() {
 			time.Sleep(d)
 		}
 		log.Printf("[browser] restarting attempt %d...", i+1)
-		if err := m.start(); err == nil {
-			m.mu.Lock()
-			m.restarting = false
-			m.mu.Unlock()
+		if err := m.startWithoutLock(); err == nil {
 			log.Println("[browser] restart successful")
 			return
 		} else {
@@ -103,9 +126,6 @@ func (m *Manager) restart() {
 	
 	log.Println("[browser] unrecoverable - manager marked unhealthy")
 	m.unhealthy.Store(true)
-	m.mu.Lock()
-	m.restarting = false
-	m.mu.Unlock()
 }
 
 func (m *Manager) Browser() (playwright.Browser, error) {
