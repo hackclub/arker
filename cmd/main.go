@@ -233,17 +233,6 @@ func main() {
 	}
 
 	os.MkdirAll(cfg.CachePath, 0755)
-	// Resume pending archives on startup and handle stuck jobs from previous run
-	var pendingItems []models.ArchiveItem
-	db.Where("status = 'pending' AND retry_count < ?", 3).Find(&pendingItems)
-	for _, item := range pendingItems {
-		var capture models.Capture
-		db.First(&capture, item.CaptureID)
-		var au models.ArchivedURL
-		db.First(&au, capture.ArchivedURLID)
-		workers.JobChan <- models.Job{CaptureID: capture.ID, ShortID: capture.ShortID, Type: item.Type, URL: au.Original}
-		log.Printf("Resuming pending job: %s %s", capture.ShortID, item.Type)
-	}
 	
 	// Handle jobs that were stuck in "processing" status (likely from server restart)
 	var stuckItems []models.ArchiveItem
@@ -261,6 +250,24 @@ func main() {
 	for i := 1; i <= cfg.MaxWorkers; i++ {
 		go workers.Worker(i, workers.JobChan, storageInstance, db, archiversMap)
 	}
+	
+	// Resume pending archives on startup (in background to avoid blocking server startup)
+	go func() {
+		var pendingItems []models.ArchiveItem
+		db.Where("status = 'pending' AND retry_count < ?", 3).Find(&pendingItems)
+		log.Printf("Resuming %d pending jobs...", len(pendingItems))
+		for _, item := range pendingItems {
+			var capture models.Capture
+			db.First(&capture, item.CaptureID)
+			var au models.ArchivedURL
+			db.First(&au, capture.ArchivedURLID)
+			workers.JobChan <- models.Job{CaptureID: capture.ID, ShortID: capture.ShortID, Type: item.Type, URL: au.Original}
+			log.Printf("Resuming pending job: %s %s", capture.ShortID, item.Type)
+		}
+		if len(pendingItems) > 0 {
+			log.Printf("Finished resuming %d pending jobs", len(pendingItems))
+		}
+	}()
 
 	// Start job monitor for stuck job detection and cleanup
 	jobMonitor := workers.NewJobMonitor(db)
