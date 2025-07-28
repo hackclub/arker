@@ -3,8 +3,10 @@ package utils
 import (
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 )
@@ -16,13 +18,20 @@ func init() {
 }
 
 // ValidateURL validates and sanitizes a URL to prevent SSRF attacks
+// Automatically adds protocol if missing, preferring HTTPS
 func ValidateURL(rawURL string) error {
 	if strings.TrimSpace(rawURL) == "" {
 		return fmt.Errorf("URL cannot be empty")
 	}
 
+	// Add protocol if missing
+	finalURL, err := addProtocolIfMissing(rawURL)
+	if err != nil {
+		return fmt.Errorf("failed to add protocol: %v", err)
+	}
+
 	// Parse the URL
-	parsedURL, err := url.Parse(rawURL)
+	parsedURL, err := url.Parse(finalURL)
 	if err != nil {
 		return fmt.Errorf("invalid URL format: %v", err)
 	}
@@ -43,11 +52,56 @@ func ValidateURL(rawURL string) error {
 	}
 
 	// Additional checks for malicious patterns
-	if err := checkMaliciousPatterns(rawURL); err != nil {
+	if err := checkMaliciousPatterns(finalURL); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// addProtocolIfMissing adds protocol to URL if missing, preferring HTTPS
+func addProtocolIfMissing(rawURL string) (string, error) {
+	// If URL already has a protocol, return as-is
+	if strings.Contains(rawURL, "://") {
+		return rawURL, nil
+	}
+
+	// Try HTTPS first
+	httpsURL := "https://" + rawURL
+	if isURLAccessible(httpsURL) {
+		return httpsURL, nil
+	}
+
+	// Fall back to HTTP
+	httpURL := "http://" + rawURL
+	return httpURL, nil
+}
+
+// isURLAccessible checks if a URL is accessible via HEAD request
+func isURLAccessible(url string) bool {
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+		},
+	}
+
+	req, err := http.NewRequest("HEAD", url, nil)
+	if err != nil {
+		return false
+	}
+
+	// Set a generic User-Agent to avoid bot detection
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	// Consider 2xx and 3xx status codes as accessible
+	return resp.StatusCode >= 200 && resp.StatusCode < 400
 }
 
 // checkSSRFProtection prevents requests to private/internal networks

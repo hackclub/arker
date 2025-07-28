@@ -219,7 +219,7 @@ func main() {
 		Args:     launchArgs,
 	}
 	
-	bm, err := browsermgr.New(launchOpts)
+	bm, err := browsermgr.New(launchOpts, cfg.MaxWorkers)
 	if err != nil {
 		log.Fatal("Failed to start browser manager:", err)
 	}

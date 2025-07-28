@@ -10,17 +10,33 @@ import (
 	"github.com/playwright-community/playwright-go"
 )
 
-type Manager struct {
-	mu          sync.RWMutex
-	pw          *playwright.Playwright
-	browser     playwright.Browser
-	launchOpts  playwright.BrowserTypeLaunchOptions
-	restarting  bool
-	unhealthy   atomic.Bool
+// PageWrapper wraps a playwright.Page to release semaphore on close
+type PageWrapper struct {
+	playwright.Page
+	semaphore chan struct{}
 }
 
-func New(launchOpts playwright.BrowserTypeLaunchOptions) (*Manager, error) {
-	m := &Manager{launchOpts: launchOpts}
+func (pw *PageWrapper) Close(opts ...playwright.PageCloseOptions) error {
+	err := pw.Page.Close(opts...)
+	<-pw.semaphore // Release semaphore
+	return err
+}
+
+type Manager struct {
+	mu            sync.RWMutex
+	pw            *playwright.Playwright
+	browser       playwright.Browser
+	launchOpts    playwright.BrowserTypeLaunchOptions
+	restarting    bool
+	unhealthy     atomic.Bool
+	pageSemaphore chan struct{}
+}
+
+func New(launchOpts playwright.BrowserTypeLaunchOptions, maxWorkers int) (*Manager, error) {
+	m := &Manager{
+		launchOpts:    launchOpts,
+		pageSemaphore: make(chan struct{}, maxWorkers),
+	}
 	if err := m.start(); err != nil {
 		return nil, err
 	}
@@ -125,11 +141,26 @@ func (m *Manager) Browser() (playwright.Browser, error) {
 }
 
 func (m *Manager) NewPage(opts ...playwright.BrowserNewPageOptions) (playwright.Page, error) {
+	// Acquire semaphore to limit concurrent pages
+	m.pageSemaphore <- struct{}{}
+	
 	br, err := m.Browser()
 	if err != nil {
+		<-m.pageSemaphore // Release on error
 		return nil, err
 	}
-	return br.NewPage(opts...)
+	
+	page, err := br.NewPage(opts...)
+	if err != nil {
+		<-m.pageSemaphore // Release on error
+		return nil, err
+	}
+	
+	// Return wrapped page that releases semaphore on close
+	return &PageWrapper{
+		Page:      page,
+		semaphore: m.pageSemaphore,
+	}, nil
 }
 
 func (m *Manager) heartbeat() {
