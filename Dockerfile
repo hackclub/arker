@@ -33,6 +33,11 @@ RUN apt-get update && apt-get install -y \
     lsb-release \
     xdg-utils \
     wget \
+    vainfo \
+    mesa-va-drivers \
+    va-driver-all \
+    libva2 \
+    libva-drm2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install yt-dlp

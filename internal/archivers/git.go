@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,7 +34,7 @@ func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 	if socks5Proxy := os.Getenv("SOCKS5_PROXY"); socks5Proxy != "" {
 		fmt.Fprintf(logWriter, "Using SOCKS5 proxy for git operations: %s\n", socks5Proxy)
 		
-		proxyURL, err := url.Parse(socks5Proxy)
+		proxyURL, err := neturl.Parse(socks5Proxy)
 		if err != nil {
 			fmt.Fprintf(logWriter, "Failed to parse proxy URL: %v\n", err)
 			return nil, "", "", nil, err
