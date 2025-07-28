@@ -26,15 +26,20 @@ func AdminGet(c *gin.Context, db *gorm.DB) {
 	
 	// Add queue status summary for dashboard
 	var queueSummary struct {
-		Pending    int64
-		Processing int64
-		Failed     int64
-		QueueSize  int
+		Pending         int64
+		Processing      int64
+		Failed          int64
+		QueueSize       int
+		RecentCompleted int64
 	}
 	db.Model(&models.ArchiveItem{}).Where("status = 'pending'").Count(&queueSummary.Pending)
 	db.Model(&models.ArchiveItem{}).Where("status = 'processing'").Count(&queueSummary.Processing)
 	db.Model(&models.ArchiveItem{}).Where("status = 'failed'").Count(&queueSummary.Failed)
 	queueSummary.QueueSize = len(workers.JobChan)
+	
+	// Count jobs completed in the past 5 minutes
+	fiveMinutesAgo := time.Now().Add(-5 * time.Minute)
+	db.Model(&models.ArchiveItem{}).Where("status = 'completed' AND updated_at > ?", fiveMinutesAgo).Count(&queueSummary.RecentCompleted)
 	
 	c.HTML(http.StatusOK, "admin.html", gin.H{
 		"urls": urls,

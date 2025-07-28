@@ -62,12 +62,12 @@
             <h3>Archive New URL</h3>
             {{if .queueSummary}}
             <div style="font-size: 12px; color: #666; text-align: right; margin-top: 2px;">
-                <strong>Queue Status:</strong>
-                {{if gt .queueSummary.QueueSize 0}}<span style="color: #6c757d;">{{.queueSummary.QueueSize}} in memory</span>{{end}}
-                {{if gt .queueSummary.Pending 0}}{{if gt .queueSummary.QueueSize 0}} • {{end}}<span style="color: #856404;">{{.queueSummary.Pending}} pending</span>{{end}}
-                {{if gt .queueSummary.Processing 0}}{{if or (gt .queueSummary.QueueSize 0) (gt .queueSummary.Pending 0)}} • {{end}}<span style="color: #0c5460;">{{.queueSummary.Processing}} processing</span>{{end}}
-                {{if gt .queueSummary.Failed 0}}{{if or (gt .queueSummary.QueueSize 0) (gt .queueSummary.Pending 0) (gt .queueSummary.Processing 0)}} • {{end}}<span style="color: #721c24;">{{.queueSummary.Failed}} failed</span>{{end}}
-                {{if and (eq .queueSummary.QueueSize 0) (eq .queueSummary.Pending 0) (eq .queueSummary.Processing 0)}}<span style="color: #155724;">All caught up!</span>{{end}}
+                <strong>Processing Status:</strong>
+                {{if gt .queueSummary.Pending 0}}<span style="color: #856404;">{{.queueSummary.Pending}} queued</span>{{end}}
+                {{if gt .queueSummary.Processing 0}}{{if gt .queueSummary.Pending 0}} → {{else}}<span style="color: #856404;">0 queued</span> → {{end}}<span style="color: #0c5460;">{{.queueSummary.Processing}} active</span>{{end}}
+                {{if gt .queueSummary.Failed 0}}{{if or (gt .queueSummary.Pending 0) (gt .queueSummary.Processing 0)}} → {{else}}<span style="color: #856404;">0 queued</span> → <span style="color: #0c5460;">0 active</span> → {{end}}<span style="color: #721c24;">{{.queueSummary.Failed}} failed</span>{{end}}
+                {{if gt .queueSummary.RecentCompleted 0}}{{if or (gt .queueSummary.Pending 0) (gt .queueSummary.Processing 0) (gt .queueSummary.Failed 0)}} • {{end}}<span style="color: #155724;">{{.queueSummary.RecentCompleted}} completed (5min)</span>{{end}}
+                {{if and (eq .queueSummary.Pending 0) (eq .queueSummary.Processing 0) (eq .queueSummary.Failed 0)}}<span style="color: #155724;">All caught up!</span>{{end}}
             </div>
             {{end}}
         </div>
