@@ -103,8 +103,13 @@ func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 	return pr, ".tar", "application/x-tar", cleanup, nil
 }
 
-// extractGitRepoURL extracts the repository URL from GitHub URLs with extra paths
+// extractGitRepoURL extracts the repository URL from GitHub URLs with extra paths and fragments
 func extractGitRepoURL(url string) string {
+	// First, strip any fragment (part after #)
+	if fragmentIndex := regexp.MustCompile(`#.*$`).FindStringIndex(url); fragmentIndex != nil {
+		url = url[:fragmentIndex[0]]
+	}
+	
 	// GitHub repository URL pattern: https://github.com/owner/repo
 	githubPattern := regexp.MustCompile(`^(https?://github\.com/[^/]+/[^/]+)(/.*)?$`)
 	
