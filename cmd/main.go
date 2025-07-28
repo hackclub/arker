@@ -307,6 +307,6 @@ func main() {
 	r.GET("/:shortid", func(c *gin.Context) { handlers.DisplayDefault(c, db) })
 	r.GET("/", func(c *gin.Context) { handlers.AdminGet(c, db) })
 
-	log.Printf("Starting server on :%s", cfg.Port)
-	r.Run(":" + cfg.Port)
+	log.Printf("Starting server on 0.0.0.0:%s", cfg.Port)
+	r.Run("0.0.0.0:" + cfg.Port)
 }
