@@ -102,7 +102,7 @@ func ProcessCombinedBrowserJob(job models.Job, storage storage.Storage, db *gorm
 	defer cancel()
 	
 	// Create shared page with screenshot settings (need viewport for screenshots)
-	page, err := mhtmlArch.Browser.NewPage(playwright.BrowserNewPageOptions{
+	page, err := mhtmlArch.BrowserMgr.NewPage(playwright.BrowserNewPageOptions{
 		Viewport: &playwright.Size{
 			Width:  1500,
 			Height: 1080,

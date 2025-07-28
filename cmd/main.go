@@ -16,6 +16,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"arker/internal/archivers"
+	"arker/internal/browsermgr"
 	"arker/internal/handlers"
 	"arker/internal/models"
 	"arker/internal/storage"
@@ -42,7 +43,25 @@ func generateRandomSecret() string {
 	return hex.EncodeToString(bytes)
 }
 
-func healthCheckHandler(db *gorm.DB) gin.HandlerFunc {
+// getOrCreateConfigValue retrieves a config value from database or creates it with a default
+func getOrCreateConfigValue(db *gorm.DB, key string, defaultValue string) (string, error) {
+	var config models.Config
+	if err := db.Where("key = ?", key).First(&config).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			// Create new config entry
+			config = models.Config{Key: key, Value: defaultValue}
+			if err := db.Create(&config).Error; err != nil {
+				return "", err
+			}
+			log.Printf("Created new config entry: %s", key)
+			return defaultValue, nil
+		}
+		return "", err
+	}
+	return config.Value, nil
+}
+
+func healthCheckHandler(db *gorm.DB, bm *browsermgr.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Check database connectivity
 		sqlDB, err := db.DB()
@@ -58,6 +77,15 @@ func healthCheckHandler(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"status": "unhealthy",
 				"error":  "database ping failed",
+			})
+			return
+		}
+
+		// Check browser manager health
+		if !bm.Healthy() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"status": "unhealthy",
+				"error":  "browser unavailable",
 			})
 			return
 		}
@@ -110,17 +138,34 @@ func main() {
 		log.Fatal("Failed to process config:", err)
 	}
 
-	// Generate random session secret if not provided
-	if cfg.SessionSecret == "" {
-		cfg.SessionSecret = generateRandomSecret()
-		log.Println("Generated random session secret (consider setting SESSION_SECRET environment variable)")
-	}
+	// Note: Session secret is now handled after database connection
 
 	db, err := gorm.Open(postgres.Open(cfg.DBURL), &gorm.Config{})
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{})
+	db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.Config{})
+
+	// Get or generate session secret from database (overrides environment variable if not set)
+	var sessionSecret string
+	if cfg.SessionSecret != "" {
+		// Use environment variable if provided
+		sessionSecret = cfg.SessionSecret
+		log.Println("Using session secret from environment variable")
+	} else {
+		// Get or create session secret in database
+		generatedSecret := generateRandomSecret()
+		dbSecret, err := getOrCreateConfigValue(db, "session_secret", generatedSecret)
+		if err != nil {
+			log.Fatal("Failed to get/create session secret:", err)
+		}
+		sessionSecret = dbSecret
+		if dbSecret == generatedSecret {
+			log.Println("Generated new session secret and stored in database")
+		} else {
+			log.Println("Using existing session secret from database")
+		}
+	}
 
 	fsStorage := storage.NewFSStorage(cfg.StoragePath)
 	storageInstance := storage.NewZSTDStorage(fsStorage)
@@ -150,13 +195,8 @@ func main() {
 		log.Printf("Created default admin user: %s/%s", cfg.AdminUsername, cfg.AdminPassword)
 	}
 
-	pw, err := playwright.Run()
-	if err != nil {
-		log.Fatal("Failed to start Playwright:", err)
-	}
-	defer pw.Stop()
-	
-	browser, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
+	// Create browser manager with launch options
+	launchOpts := playwright.BrowserTypeLaunchOptions{
 		Headless: playwright.Bool(true),
 		Args: []string{
 			"--no-sandbox",
@@ -169,15 +209,17 @@ func main() {
 			"--disable-backgrounding-occluded-windows",
 			"--disable-renderer-backgrounding",
 		},
-	})
-	if err != nil {
-		log.Fatal("Failed to launch Chromium:", err)
 	}
-	defer browser.Close()
+	
+	bm, err := browsermgr.New(launchOpts)
+	if err != nil {
+		log.Fatal("Failed to start browser manager:", err)
+	}
+	defer bm.Close()
 
 	archiversMap := map[string]archivers.Archiver{
-		"mhtml":      &archivers.MHTMLArchiver{Browser: browser},
-		"screenshot": &archivers.ScreenshotArchiver{Browser: browser},
+		"mhtml":      &archivers.MHTMLArchiver{BrowserMgr: bm},
+		"screenshot": &archivers.ScreenshotArchiver{BrowserMgr: bm},
 		"git":        &archivers.GitArchiver{},
 		"youtube":    &archivers.YTArchiver{},
 	}
@@ -212,11 +254,11 @@ func main() {
 
 	r := gin.Default()
 	r.LoadHTMLGlob("templates/*.html")
-	store := cookie.NewStore([]byte(cfg.SessionSecret))
+	store := cookie.NewStore([]byte(sessionSecret))
 	r.Use(sessions.Sessions("session", store))
 
 	// Setup routes
-	r.GET("/health", healthCheckHandler(db))
+	r.GET("/health", healthCheckHandler(db, bm))
 	r.GET("/login", handlers.LoginGet)
 	r.POST("/login", func(c *gin.Context) { handlers.LoginPost(c, db) })
 	r.GET("/admin/api-keys", func(c *gin.Context) { handlers.ApiKeysGet(c, db) })

@@ -12,6 +12,13 @@ type User struct {
 	PasswordHash string
 }
 
+// Config represents persistent application configuration
+type Config struct {
+	gorm.Model
+	Key   string `gorm:"unique;not null"`
+	Value string `gorm:"not null"`
+}
+
 // APIKey represents an API key for authentication
 type APIKey struct {
 	gorm.Model

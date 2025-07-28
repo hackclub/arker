@@ -7,11 +7,12 @@ import (
 	"strings"
 	"gorm.io/gorm"
 	"github.com/playwright-community/playwright-go"
+	"arker/internal/browsermgr"
 )
 
 // MHTMLArchiver
 type MHTMLArchiver struct {
-	Browser playwright.Browser
+	BrowserMgr *browsermgr.Manager
 }
 
 func (a *MHTMLArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
@@ -24,7 +25,7 @@ func (a *MHTMLArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 	default:
 	}
 	
-	page, err := a.Browser.NewPage()
+	page, err := a.BrowserMgr.NewPage()
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to create browser page: %v\n", err)
 		return nil, "", "", nil, err

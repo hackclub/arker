@@ -11,11 +11,12 @@ import (
 	"gorm.io/gorm"
 	"github.com/HugoSmits86/nativewebp"
 	"github.com/playwright-community/playwright-go"
+	"arker/internal/browsermgr"
 )
 
 // ScreenshotArchiver
 type ScreenshotArchiver struct {
-	Browser playwright.Browser
+	BrowserMgr *browsermgr.Manager
 }
 
 func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
@@ -28,7 +29,7 @@ func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter 
 	default:
 	}
 	
-	page, err := a.Browser.NewPage(playwright.BrowserNewPageOptions{
+	page, err := a.BrowserMgr.NewPage(playwright.BrowserNewPageOptions{
 		Viewport: &playwright.Size{
 			Width:  1500,
 			Height: 1080,
