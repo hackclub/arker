@@ -1,13 +1,14 @@
 FROM golang:1.24-bookworm
 
-# Install required packages and Playwright dependencies
-RUN apt-get update && apt-get install -y \
+# Install system dependencies in a single layer with aggressive cleanup
+RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     python3 \
     python3-pip \
     curl \
     ca-certificates \
     ffmpeg \
+    # Playwright browser dependencies
     libnss3 \
     libnspr4 \
     libatk1.0-0 \
@@ -38,34 +39,33 @@ RUN apt-get update && apt-get install -y \
     va-driver-all \
     libva2 \
     libva-drm2 \
-    && rm -rf /var/lib/apt/lists/*
+    && pip3 install --break-system-packages --no-cache-dir yt-dlp[default] \
+    && apt-get autoremove -y \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /root/.cache
 
-# Install yt-dlp
-RUN pip3 install --break-system-packages yt-dlp[default]
-
-WORKDIR /app
-
-# Copy and build application first
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN go build -o arker ./cmd
-
-# Install Playwright CLI that matches our library version
+# Install Playwright CLI early for better caching
 RUN go install github.com/playwright-community/playwright-go/cmd/playwright@v0.4501.1
 ENV PATH="/root/go/bin:${PATH}"
 
-# Ensure Playwright driver is installed
-RUN playwright install-deps
-RUN playwright install --with-deps chromium
+# Install Playwright browser in separate layer (cached unless Playwright version changes)
+RUN playwright install-deps && \
+    playwright install --with-deps chromium && \
+    playwright --version
 
-# Verify installation
-RUN playwright --version
+WORKDIR /app
+
+# Copy go.mod and go.sum first for dependency caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code and build (this layer rebuilds on code changes)
+COPY . .
+RUN go build -o arker ./cmd
 
 # Create necessary directories
 RUN mkdir -p /data /cache
 
-# Expose port
 EXPOSE 8080
 
 CMD ["./arker"]
