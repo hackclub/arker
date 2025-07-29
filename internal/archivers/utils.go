@@ -415,13 +415,153 @@ func waitForCustomNetworkIdle(page playwright.Page, logWriter io.Writer, idleDur
 
 // Context-aware versions for backward compatibility
 func WaitForRobustPageLoadWithContext(ctx context.Context, page playwright.Page, logWriter io.Writer, idleDurationMs int, totalTimeoutMs int, pollIntervalMs int) error {
-	return WaitForRobustPageLoad(page, logWriter, idleDurationMs, totalTimeoutMs, pollIntervalMs)
+	fmt.Fprintf(logWriter, "Starting robust page load wait with context (idle: %dms, timeout: %dms)...\n", idleDurationMs, totalTimeoutMs)
+	
+	// Check context before starting
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	
+	// Step 1: Disable animations for instant loads
+	_, err := page.Evaluate(`
+		() => {
+			const style = document.createElement('style');
+			style.innerHTML = '* { transition: none !important; animation: none !important; }';
+			document.head.appendChild(style);
+		}
+	`)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Warning: Failed to disable animations: %v\n", err)
+	}
+
+	// Check context after step 1
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	// Step 2: Force lazy images to eager load
+	_, err = page.Evaluate(`
+		() => {
+			document.querySelectorAll('img[loading="lazy"]').forEach(img => {
+				img.setAttribute('loading', 'eager');
+			});
+			// Also trigger any intersection observers by scrolling briefly
+			const images = document.querySelectorAll('img[data-src], img[data-lazy-src]');
+			images.forEach(img => {
+				if (img.dataset.src) {
+					img.src = img.dataset.src;
+				}
+				if (img.dataset.lazySrc) {
+					img.src = img.dataset.lazySrc;
+				}
+			});
+		}
+	`)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Warning: Failed to force lazy images: %v\n", err)
+	}
+
+	// Check context after step 2
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	// Step 3: Custom network idle wait with context
+	fmt.Fprintf(logWriter, "Waiting for network idle with context...\n")
+	err = waitForCustomNetworkIdleWithContext(ctx, page, logWriter, idleDurationMs, totalTimeoutMs, pollIntervalMs)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Network idle wait failed: %v\n", err)
+		return err
+	}
+
+	// Check context after network idle
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	// Step 4: Final check for images/videos loaded with context timeout
+	fmt.Fprintf(logWriter, "Checking all media resources are loaded...\n")
+	
+	// Create a done channel for the WaitForFunction operation
+	done := make(chan error, 1)
+	go func() {
+		_, err := page.WaitForFunction(`
+			() => {
+				const images = Array.from(document.querySelectorAll('img'));
+				const videos = Array.from(document.querySelectorAll('video'));
+				
+				const imagesLoaded = images.every(img => {
+					// Skip images that haven't started loading or are decorative
+					if (!img.src || img.src === '' || img.naturalWidth === 0) {
+						return img.complete; // Consider complete if no src or still loading
+					}
+					return img.complete && img.naturalWidth > 0;
+				});
+				
+				const videosLoaded = videos.every(video => video.readyState >= 2); // HAVE_CURRENT_DATA
+				
+				return imagesLoaded && videosLoaded;
+			}
+		`, playwright.PageWaitForFunctionOptions{
+			Timeout: playwright.Float(10000), // 10s timeout for this check
+		})
+		done <- err
+	}()
+	
+	// Wait for either completion or context cancellation
+	select {
+	case <-ctx.Done():
+		fmt.Fprintf(logWriter, "Context cancelled during media resource check\n")
+		return ctx.Err()
+	case err := <-done:
+		if err != nil {
+			fmt.Fprintf(logWriter, "Warning: Not all media resources loaded: %v\n", err)
+			// Don't fail, just warn - some images may be broken or slow
+		}
+	}
+
+	fmt.Fprintf(logWriter, "Robust page load completed successfully with context\n")
+	return nil
 }
 
 func scrollToBottomAndWaitWithContext(ctx context.Context, page playwright.Page, logWriter io.Writer) error {
-	return scrollToBottomAndWait(page, logWriter)
+	fmt.Fprintf(logWriter, "Starting context-aware scroll to bottom\n")
+	
+	done := make(chan error, 1)
+	go func() {
+		done <- scrollToBottomAndWait(page, logWriter)
+	}()
+	
+	select {
+	case <-ctx.Done():
+		fmt.Fprintf(logWriter, "Context cancelled during scroll operation\n")
+		return ctx.Err()
+	case err := <-done:
+		return err
+	}
 }
 
 func waitForCustomNetworkIdleWithContext(ctx context.Context, page playwright.Page, logWriter io.Writer, idleDurationMs int, totalTimeoutMs int, pollIntervalMs int) error {
-	return waitForCustomNetworkIdle(page, logWriter, idleDurationMs, totalTimeoutMs, pollIntervalMs)
+	fmt.Fprintf(logWriter, "Starting context-aware network idle wait (idle: %dms, timeout: %dms)\n", idleDurationMs, totalTimeoutMs)
+	
+	done := make(chan error, 1)
+	go func() {
+		done <- waitForCustomNetworkIdle(page, logWriter, idleDurationMs, totalTimeoutMs, pollIntervalMs)
+	}()
+	
+	select {
+	case <-ctx.Done():
+		fmt.Fprintf(logWriter, "Context cancelled during network idle wait\n")
+		return ctx.Err()
+	case err := <-done:
+		return err
+	}
 }

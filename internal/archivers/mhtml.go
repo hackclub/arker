@@ -71,7 +71,7 @@ func (a *MHTMLArchiver) ArchiveWithPageContext(ctx context.Context, page playwri
 		return nil, "", "", nil, err
 	}
 
-	fmt.Fprintf(logWriter, "Capturing MHTML snapshot...\n")
+	fmt.Fprintf(logWriter, "Capturing MHTML snapshot with context awareness...\n")
 	
 	// Check context before MHTML capture
 	select {
@@ -80,7 +80,29 @@ func (a *MHTMLArchiver) ArchiveWithPageContext(ctx context.Context, page playwri
 	default:
 	}
 	
-	result, err := session.Send("Page.captureSnapshot", map[string]interface{}{"format": "mhtml"})
+	// Make the CDP call context-aware
+	type cdpResult struct {
+		result interface{}
+		err    error
+	}
+	
+	resultChan := make(chan cdpResult, 1)
+	go func() {
+		result, err := session.Send("Page.captureSnapshot", map[string]interface{}{"format": "mhtml"})
+		resultChan <- cdpResult{result: result, err: err}
+	}()
+	
+	// Wait for either completion or context cancellation
+	var result interface{}
+	select {
+	case <-ctx.Done():
+		fmt.Fprintf(logWriter, "Context cancelled during MHTML capture\n")
+		return nil, "", "", nil, ctx.Err()
+	case cdpRes := <-resultChan:
+		result = cdpRes.result
+		err = cdpRes.err
+	}
+	
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to capture MHTML snapshot: %v\n", err)
 		return nil, "", "", nil, err
