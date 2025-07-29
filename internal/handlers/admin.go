@@ -103,7 +103,6 @@ func RetryAllFailedJobs(c *gin.Context, db *gorm.DB) {
 	}
 	
 	retriedCount := 0
-	queuedCount := 0
 	
 	for _, item := range failedItems {
 		// Get the capture and URL information
@@ -121,30 +120,13 @@ func RetryAllFailedJobs(c *gin.Context, db *gorm.DB) {
 			continue // Skip this item if we can't save
 		}
 		
-		// Try to re-queue the job
-		job := models.Job{
-			CaptureID: item.CaptureID,
-			ShortID:   capture.ShortID,
-			Type:      item.Type,
-			URL:       capture.ArchivedURL.Original,
-		}
-		
-		select {
-		case workers.JobChan <- job:
-			retriedCount++
-		default:
-			// Queue is full, but item is marked as pending so it will be picked up eventually
-			queuedCount++
-		}
+		// Job is now pending and will be picked up by dispatcher
+		retriedCount++
 	}
 	
 	var message string
-	if retriedCount > 0 && queuedCount > 0 {
-		message = fmt.Sprintf("Retried %d jobs immediately, %d jobs queued for retry", retriedCount, queuedCount)
-	} else if retriedCount > 0 {
-		message = fmt.Sprintf("Successfully retried %d failed jobs", retriedCount)
-	} else if queuedCount > 0 {
-		message = fmt.Sprintf("Queued %d jobs for retry (memory queue full)", queuedCount)
+	if retriedCount > 0 {
+		message = fmt.Sprintf("Successfully queued %d failed jobs for retry", retriedCount)
 	} else {
 		message = "No jobs were retried due to errors"
 	}

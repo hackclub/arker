@@ -234,45 +234,28 @@ func main() {
 
 	os.MkdirAll(cfg.CachePath, 0755)
 	
-	// Handle jobs that were stuck in "processing" status (likely from server restart)
+	// Reset any stuck processing jobs to failed (they'll be retried by dispatcher)
 	var stuckItems []models.ArchiveItem
 	db.Where("status = 'processing'").Find(&stuckItems)
 	for _, item := range stuckItems {
-		// Mark as failed with explanation, they'll be retried if under limit
-		failureMsg := "\n--- RECOVERY FROM SERVER RESTART ---\nJob was processing when server restarted\nMarking as failed for automatic retry\n"
 		db.Model(&item).Updates(map[string]interface{}{
-			"status": "failed", 
-			"logs": item.Logs + failureMsg,
+			"status": "failed",
+			"logs": item.Logs + "\n--- SERVER RESTART RECOVERY ---\nJob was processing during restart, marked for retry\n",
 		})
-		log.Printf("Marked stuck job as failed for retry: ID=%d, Type=%s", item.ID, item.Type)
+	}
+	if len(stuckItems) > 0 {
+		log.Printf("Reset %d stuck processing jobs to failed for retry", len(stuckItems))
 	}
 
+	// Start workers
 	for i := 1; i <= cfg.MaxWorkers; i++ {
 		go workers.Worker(i, workers.JobChan, storageInstance, db, archiversMap)
 	}
 	
-	// Resume pending archives on startup (in background to avoid blocking server startup)
-	go func() {
-		var pendingItems []models.ArchiveItem
-		db.Where("status = 'pending' AND retry_count < ?", 3).Find(&pendingItems)
-		log.Printf("Resuming %d pending jobs...", len(pendingItems))
-		for _, item := range pendingItems {
-			var capture models.Capture
-			db.First(&capture, item.CaptureID)
-			var au models.ArchivedURL
-			db.First(&au, capture.ArchivedURLID)
-			workers.JobChan <- models.Job{CaptureID: capture.ID, ShortID: capture.ShortID, Type: item.Type, URL: au.Original}
-			log.Printf("Resuming pending job: %s %s", capture.ShortID, item.Type)
-		}
-		if len(pendingItems) > 0 {
-			log.Printf("Finished resuming %d pending jobs", len(pendingItems))
-		}
-	}()
-
-	// Start job monitor for stuck job detection and cleanup
-	jobMonitor := workers.NewJobMonitor(db)
-	jobMonitor.Start()
-	defer jobMonitor.Stop()
+	// Start job dispatcher (replaces complex startup recovery and monitoring)
+	dispatcher := workers.NewDispatcher(db, workers.JobChan)
+	dispatcher.Start()
+	defer dispatcher.Stop()
 
 	// Start log cleanup routine
 	go func() {

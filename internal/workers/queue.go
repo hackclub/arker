@@ -34,13 +34,7 @@ func QueueCaptureWithAPIKey(db *gorm.DB, urlID uint, originalURL string, types [
 		if err := db.Create(&item).Error; err != nil {
 			return "", err
 		}
-		
-		JobChan <- models.Job{
-			CaptureID: capture.ID, 
-			ShortID:   shortID, 
-			Type:      t, 
-			URL:       originalURL,
-		}
+		// Job will be picked up by dispatcher - no need to push to channel
 	}
 	
 	return shortID, nil
