@@ -49,7 +49,12 @@ func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter 
 		return nil, "", "", nil, err
 	}
 	
-	cleanup := CreateSafeCleanupFunc(page, browser, pw, logWriter)
+	cleanup := func() { 
+		page.Close()
+		browser.Close()
+		pw.Stop()
+		fmt.Fprintf(logWriter, "Browser instance cleaned up\n")
+	}
 
 	// Log console messages and errors
 	page.On("console", func(msg playwright.ConsoleMessage) {
