@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"sync"
 	"time"
 	"gorm.io/gorm"
 	"github.com/playwright-community/playwright-go"
@@ -18,13 +19,39 @@ import (
 // Queue channel
 var JobChan = make(chan models.Job, 100)
 
+// Worker heartbeat tracking
+var workerHeartbeats = make(map[int]time.Time)
+var heartbeatMutex sync.RWMutex
+
 // Worker
 func Worker(id int, jobChan <-chan models.Job, storage storage.Storage, db *gorm.DB, archiversMap map[string]archivers.Archiver) {
 	logger := slog.With("worker_id", id)
 	logger.Info("Worker started")
 	
+	// Initialize heartbeat
+	heartbeatMutex.Lock()
+	workerHeartbeats[id] = time.Now()
+	heartbeatMutex.Unlock()
+	
+	// Start heartbeat ticker for idle workers
+	heartbeatTicker := time.NewTicker(30 * time.Second)
+	defer heartbeatTicker.Stop()
+	
+	go func() {
+		for range heartbeatTicker.C {
+			heartbeatMutex.Lock()
+			workerHeartbeats[id] = time.Now()
+			heartbeatMutex.Unlock()
+		}
+	}()
+	
 	for job := range jobChan {
 		jobStart := time.Now()
+		
+		// Update worker heartbeat
+		heartbeatMutex.Lock()
+		workerHeartbeats[id] = time.Now()
+		heartbeatMutex.Unlock()
 		
 		logger.Info("Processing job",
 			"short_id", job.ShortID,
@@ -50,9 +77,56 @@ func Worker(id int, jobChan <-chan models.Job, storage storage.Storage, db *gorm
 				"url", job.URL,
 				"duration", duration.Round(time.Millisecond))
 		}
+		
+		// Update heartbeat after job completion
+		heartbeatMutex.Lock()
+		workerHeartbeats[id] = time.Now()
+		heartbeatMutex.Unlock()
 	}
 	
 	logger.Info("Worker stopped")
+}
+
+// GetWorkerStatus returns the status of all workers
+func GetWorkerStatus() map[string]interface{} {
+	heartbeatMutex.RLock()
+	defer heartbeatMutex.RUnlock()
+	
+	now := time.Now()
+	activeWorkers := 0
+	stuckWorkers := 0
+	oldestHeartbeat := now
+	var workerDetails []map[string]interface{}
+	
+	for workerID, lastSeen := range workerHeartbeats {
+		timeSinceHeartbeat := now.Sub(lastSeen)
+		isStuck := timeSinceHeartbeat > 60*time.Second // Consider stuck if no heartbeat for 1 minute
+		
+		if isStuck {
+			stuckWorkers++
+		} else {
+			activeWorkers++
+		}
+		
+		if lastSeen.Before(oldestHeartbeat) {
+			oldestHeartbeat = lastSeen
+		}
+		
+		workerDetails = append(workerDetails, map[string]interface{}{
+			"worker_id":   workerID,
+			"last_seen":   lastSeen.Format("15:04:05"),
+			"idle_time":   timeSinceHeartbeat.Round(time.Second),
+			"stuck":       isStuck,
+		})
+	}
+	
+	return map[string]interface{}{
+		"total_workers":      len(workerHeartbeats),
+		"active_workers":     activeWorkers,
+		"stuck_workers":      stuckWorkers,
+		"oldest_heartbeat":   now.Sub(oldestHeartbeat).Round(time.Second),
+		"worker_details":     workerDetails,
+	}
 }
 
 // Process job (streams to zstd/FS)

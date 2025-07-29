@@ -161,10 +161,18 @@ func (d *Dispatcher) dispatchPendingJobs() {
 				"age", time.Since(item.CreatedAt).Round(time.Second))
 			dispatched++
 		default:
-			// Channel is full, workers are busy - we'll try again next cycle
-			slog.Info("Worker channel full, deferring remaining jobs",
+			// Channel is full, workers are busy - investigate why
+			slog.Warn("Worker channel full - workers may be stuck",
+				"first_blocked_job", job.ShortID,
+				"first_blocked_type", job.Type,
+				"channel_used", len(d.jobChan),
+				"channel_capacity", cap(d.jobChan),
 				"deferred_count", len(pendingItems)-dispatched,
-				"channel_capacity", cap(d.jobChan))
+				"pending_types", d.getPendingJobTypes(pendingItems))
+			
+			// Log details about stuck processing jobs and worker status
+			d.logStuckProcessingJobs()
+			d.logWorkerStatus()
 			break // Exit loop, try again in 2 seconds
 		}
 	}
@@ -174,5 +182,82 @@ func (d *Dispatcher) dispatchPendingJobs() {
 			"dispatched", dispatched,
 			"skipped", skipped,
 			"duration", time.Since(startTime).Round(time.Millisecond))
+	}
+}
+
+// getPendingJobTypes returns a summary of job types being dispatched
+func (d *Dispatcher) getPendingJobTypes(items []models.ArchiveItem) map[string]int {
+	typeCount := make(map[string]int)
+	for _, item := range items {
+		typeCount[item.Type]++
+	}
+	return typeCount
+}
+
+// logStuckProcessingJobs logs details about jobs that have been processing too long
+func (d *Dispatcher) logStuckProcessingJobs() {
+	var processingJobs []struct {
+		ID        uint
+		Type      string
+		ShortID   string
+		URL       string
+		UpdatedAt time.Time
+		Duration  time.Duration
+	}
+	
+	// Get processing jobs with capture info
+	d.db.Table("archive_items").
+		Select("archive_items.id, archive_items.type, captures.short_id, archived_urls.original as url, archive_items.updated_at, ? - archive_items.updated_at as duration", time.Now()).
+		Joins("JOIN captures ON archive_items.capture_id = captures.id").
+		Joins("JOIN archived_urls ON captures.archived_url_id = archived_urls.id").
+		Where("archive_items.status = 'processing'").
+		Order("archive_items.updated_at ASC").
+		Limit(10).
+		Find(&processingJobs)
+	
+	if len(processingJobs) > 0 {
+		slog.Warn("Found stuck processing jobs",
+			"count", len(processingJobs),
+			"oldest_job", processingJobs[0].ShortID,
+			"oldest_type", processingJobs[0].Type,
+			"oldest_duration", time.Since(processingJobs[0].UpdatedAt).Round(time.Second))
+		
+		// Log details for each stuck job
+		for _, job := range processingJobs {
+			slog.Warn("Stuck processing job details",
+				"short_id", job.ShortID,
+				"type", job.Type,
+				"url", job.URL,
+				"stuck_duration", time.Since(job.UpdatedAt).Round(time.Second),
+				"last_update", job.UpdatedAt.Format("15:04:05"))
+		}
+	}
+}
+
+// logWorkerStatus logs the current status of all workers
+func (d *Dispatcher) logWorkerStatus() {
+	status := GetWorkerStatus()
+	
+	slog.Warn("Worker status during channel congestion",
+		"total_workers", status["total_workers"],
+		"active_workers", status["active_workers"],
+		"stuck_workers", status["stuck_workers"],
+		"oldest_heartbeat", status["oldest_heartbeat"])
+	
+	// Log details for each worker
+	if workerDetails, ok := status["worker_details"].([]map[string]interface{}); ok {
+		for _, worker := range workerDetails {
+			if stuck, ok := worker["stuck"].(bool); ok && stuck {
+				slog.Error("Worker appears stuck",
+					"worker_id", worker["worker_id"],
+					"last_seen", worker["last_seen"],
+					"idle_time", worker["idle_time"])
+			} else {
+				slog.Debug("Worker status",
+					"worker_id", worker["worker_id"],
+					"last_seen", worker["last_seen"],
+					"idle_time", worker["idle_time"])
+			}
+		}
 	}
 }
