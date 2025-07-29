@@ -61,15 +61,31 @@ func Worker(id int, jobChan <-chan models.Job, storage storage.Storage, db *gorm
 	workerHeartbeats[id] = time.Now()
 	heartbeatMutex.Unlock()
 	
-	// Start heartbeat ticker for idle workers
+	// Start heartbeat ticker for idle workers with proper cleanup
 	heartbeatTicker := time.NewTicker(30 * time.Second)
 	defer heartbeatTicker.Stop()
 	
+	// Create a context for the heartbeat goroutine to enable cancellation
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(context.Background())
+	defer cancelHeartbeat()
+	
 	go func() {
-		for range heartbeatTicker.C {
+		defer func() {
+			// Clean up worker from heartbeats map when goroutine exits
 			heartbeatMutex.Lock()
-			workerHeartbeats[id] = time.Now()
+			delete(workerHeartbeats, id)
 			heartbeatMutex.Unlock()
+		}()
+		
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-heartbeatTicker.C:
+				heartbeatMutex.Lock()
+				workerHeartbeats[id] = time.Now()
+				heartbeatMutex.Unlock()
+			}
 		}
 	}()
 	

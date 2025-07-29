@@ -86,18 +86,43 @@ func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 
 	pr, pw := io.Pipe()
 
+	// Start context-aware tar creation in a goroutine
 	go func() {
 		defer pw.Close()
+		
+		// Check context before starting tar creation
+		select {
+		case <-ctx.Done():
+			fmt.Fprintf(logWriter, "Context cancelled during git tar creation\n")
+			pw.CloseWithError(ctx.Err())
+			return
+		default:
+		}
+		
 		tw := tar.NewWriter(pw)
 		defer tw.Close()
 		
 		fmt.Fprintf(logWriter, "Creating tar archive...\n")
-		if err := AddDirToTar(tw, tempDir, ""); err != nil {
-			fmt.Fprintf(logWriter, "Failed to create tar archive: %v\n", err)
-			pw.CloseWithError(err)
-			return
+		
+		// Use a channel to signal completion
+		done := make(chan error, 1)
+		go func() {
+			done <- AddDirToTar(tw, tempDir, "")
+		}()
+		
+		// Wait for either completion or context cancellation
+		select {
+		case <-ctx.Done():
+			fmt.Fprintf(logWriter, "Context cancelled during git tar creation\n")
+			pw.CloseWithError(ctx.Err())
+		case err := <-done:
+			if err != nil {
+				fmt.Fprintf(logWriter, "Failed to create tar archive: %v\n", err)
+				pw.CloseWithError(err)
+			} else {
+				fmt.Fprintf(logWriter, "Git archive completed successfully\n")
+			}
 		}
-		fmt.Fprintf(logWriter, "Git archive completed successfully\n")
 	}()
 
 	return pr, ".tar", "application/x-tar", cleanup, nil

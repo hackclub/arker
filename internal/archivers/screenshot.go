@@ -136,22 +136,43 @@ func (a *ScreenshotArchiver) ArchiveWithPageContext(ctx context.Context, page pl
 	// Use io.Pipe for streaming encoding
 	pipeReader, pipeWriter := io.Pipe()
 	
-	// Start encoding in a goroutine
+	// Start context-aware encoding in a goroutine
 	go func() {
 		defer pipeWriter.Close()
 		
-		var encodeErr error
-		if format == "jpeg" {
-			encodeErr = jpeg.Encode(pipeWriter, img, &jpeg.Options{Quality: 85})
-		} else {
-			encodeErr = nativewebp.Encode(pipeWriter, img, nil)
+		// Check context before starting encoding
+		select {
+		case <-ctx.Done():
+			fmt.Fprintf(logWriter, "Context cancelled during screenshot encoding\n")
+			pipeWriter.CloseWithError(ctx.Err())
+			return
+		default:
 		}
 		
-		if encodeErr != nil {
-			fmt.Fprintf(logWriter, "Failed to encode %s: %v\n", format, encodeErr)
-			pipeWriter.CloseWithError(encodeErr)
-		} else {
-			fmt.Fprintf(logWriter, "Screenshot %s encoding completed successfully\n", format)
+		// Use a channel to signal completion
+		done := make(chan error, 1)
+		go func() {
+			var encodeErr error
+			if format == "jpeg" {
+				encodeErr = jpeg.Encode(pipeWriter, img, &jpeg.Options{Quality: 85})
+			} else {
+				encodeErr = nativewebp.Encode(pipeWriter, img, nil)
+			}
+			done <- encodeErr
+		}()
+		
+		// Wait for either completion or context cancellation
+		select {
+		case <-ctx.Done():
+			fmt.Fprintf(logWriter, "Context cancelled during screenshot encoding\n")
+			pipeWriter.CloseWithError(ctx.Err())
+		case encodeErr := <-done:
+			if encodeErr != nil {
+				fmt.Fprintf(logWriter, "Failed to encode %s: %v\n", format, encodeErr)
+				pipeWriter.CloseWithError(encodeErr)
+			} else {
+				fmt.Fprintf(logWriter, "Screenshot %s encoding completed successfully\n", format)
+			}
 		}
 	}()
 

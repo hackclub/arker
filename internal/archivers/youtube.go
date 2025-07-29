@@ -69,16 +69,47 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 		return nil, "", "", nil, err
 	}
 	
-	// Start capturing stderr in a goroutine
+	// Start context-aware stderr capturing in a goroutine
 	go func() {
+		defer stderrPipe.Close()
 		buf := make([]byte, 1024)
+		
 		for {
-			n, err := stderrPipe.Read(buf)
-			if n > 0 {
-				logWriter.Write(buf[:n])
+			// Check context before each read
+			select {
+			case <-ctx.Done():
+				fmt.Fprintf(logWriter, "Context cancelled during yt-dlp stderr capture\n")
+				return
+			default:
 			}
-			if err != nil {
-				break
+			
+			// Use a timeout for the read operation to avoid blocking indefinitely
+			type readResult struct {
+				n   int
+				err error
+			}
+			
+			readChan := make(chan readResult, 1)
+			go func() {
+				n, err := stderrPipe.Read(buf)
+				readChan <- readResult{n: n, err: err}
+			}()
+			
+			// Wait for either read completion or context cancellation
+			select {
+			case <-ctx.Done():
+				fmt.Fprintf(logWriter, "Context cancelled during yt-dlp stderr capture\n")
+				return
+			case result := <-readChan:
+				if result.n > 0 {
+					logWriter.Write(buf[:result.n])
+				}
+				if result.err != nil {
+					if result.err != io.EOF {
+						fmt.Fprintf(logWriter, "yt-dlp stderr read error: %v\n", result.err)
+					}
+					return
+				}
 			}
 		}
 	}()
