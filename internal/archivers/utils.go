@@ -178,7 +178,7 @@ func scrollToBottomAndWait(page playwright.Page, logWriter io.Writer) error {
 	
 	// Scroll in chunks with pauses to allow content to load
 	_, err = page.Evaluate(`
-		async () => {
+		async (initialHeight) => {
 			const scrollStep = window.innerHeight * 0.8; // Scroll 80% of viewport height at a time
 			const scrollDelay = 500; // Wait 500ms between scrolls
 			
@@ -219,7 +219,7 @@ func scrollToBottomAndWait(page playwright.Page, logWriter io.Writer) error {
 			
 			return {
 				finalHeight: document.body.scrollHeight,
-				initialHeight: arguments[0]
+				initialHeight: initialHeight
 			};
 		}
 	`, initialHeight)
