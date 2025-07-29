@@ -61,15 +61,15 @@ func (a *MHTMLArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 		return nil, "", "", nil, err
 	}
 
-	return a.ArchiveWithPageContext(ctx, page, url, logWriter)
+	return a.ArchiveWithPageContext(ctx, page, url, logWriter, cleanup)
 }
 
 func (a *MHTMLArchiver) ArchiveWithPage(page playwright.Page, url string, logWriter io.Writer) (io.Reader, string, string, func(), error) {
 	// For backward compatibility, create a background context
-	return a.ArchiveWithPageContext(context.Background(), page, url, logWriter)
+	return a.ArchiveWithPageContext(context.Background(), page, url, logWriter, nil)
 }
 
-func (a *MHTMLArchiver) ArchiveWithPageContext(ctx context.Context, page playwright.Page, url string, logWriter io.Writer) (io.Reader, string, string, func(), error) {
+func (a *MHTMLArchiver) ArchiveWithPageContext(ctx context.Context, page playwright.Page, url string, logWriter io.Writer, cleanup func()) (io.Reader, string, string, func(), error) {
 	fmt.Fprintf(logWriter, "Creating CDP session for MHTML capture...\n")
 	
 	// Check context before creating CDP session
@@ -124,5 +124,5 @@ func (a *MHTMLArchiver) ArchiveWithPageContext(ctx context.Context, page playwri
 
 	dataStr := result.(map[string]interface{})["data"].(string)
 	fmt.Fprintf(logWriter, "MHTML archive completed successfully, size: %d bytes\n", len(dataStr))
-	return strings.NewReader(dataStr), ".mhtml", "application/x-mhtml", nil, nil
+	return strings.NewReader(dataStr), ".mhtml", "application/x-mhtml", cleanup, nil
 }
