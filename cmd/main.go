@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -132,11 +133,23 @@ func populateFileSizes(db *gorm.DB, storage storage.Storage) {
 }
 
 func main() {
+	// Initialize structured logging
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+		AddSource: false,
+	})))
+	
 	var cfg Config
 	err := envconfig.Process("", &cfg)
 	if err != nil {
+		slog.Error("Failed to process environment variables", "error", err)
 		log.Fatal("Failed to process config:", err)
 	}
+	
+	slog.Info("Starting Arker archive server",
+		"max_workers", cfg.MaxWorkers,
+		"storage_path", cfg.StoragePath,
+		"cache_path", cfg.CachePath)
 
 	// Note: Session secret is now handled after database connection
 
@@ -248,6 +261,7 @@ func main() {
 	}
 
 	// Start workers
+	slog.Info("Starting worker pool", "worker_count", cfg.MaxWorkers)
 	for i := 1; i <= cfg.MaxWorkers; i++ {
 		go workers.Worker(i, workers.JobChan, storageInstance, db, archiversMap)
 	}
@@ -297,6 +311,6 @@ func main() {
 	r.GET("/:shortid", func(c *gin.Context) { handlers.DisplayDefault(c, db) })
 	r.GET("/", func(c *gin.Context) { handlers.AdminGet(c, db) })
 
-	log.Printf("Starting server on 0.0.0.0:%s", cfg.Port)
+	slog.Info("Starting HTTP server", "port", cfg.Port, "address", "0.0.0.0:"+cfg.Port)
 	r.Run("0.0.0.0:" + cfg.Port)
 }

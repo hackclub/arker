@@ -1,7 +1,7 @@
 package workers
 
 import (
-	"log"
+	"log/slog"
 	"time"
 	"gorm.io/gorm"
 	"arker/internal/models"
@@ -27,12 +27,15 @@ func NewDispatcher(db *gorm.DB, jobChan chan models.Job) *Dispatcher {
 
 // Start begins the dispatcher loop
 func (d *Dispatcher) Start() {
-	log.Println("Starting job dispatcher...")
+	slog.Info("Starting job dispatcher", 
+		"poll_interval", d.interval,
+		"channel_capacity", cap(d.jobChan))
 	go d.dispatchLoop()
 }
 
 // Stop stops the dispatcher
 func (d *Dispatcher) Stop() {
+	slog.Info("Stopping job dispatcher")
 	d.shutdown <- true
 }
 
@@ -41,12 +44,14 @@ func (d *Dispatcher) dispatchLoop() {
 	ticker := time.NewTicker(d.interval)
 	defer ticker.Stop()
 	
+	slog.Info("Job dispatcher loop started")
+	
 	for {
 		select {
 		case <-ticker.C:
 			d.dispatchPendingJobs()
 		case <-d.shutdown:
-			log.Println("Job dispatcher shutting down...")
+			slog.Info("Job dispatcher shutting down")
 			return
 		}
 	}
@@ -54,17 +59,43 @@ func (d *Dispatcher) dispatchLoop() {
 
 // dispatchPendingJobs finds pending jobs and sends them to workers
 func (d *Dispatcher) dispatchPendingJobs() {
+	startTime := time.Now()
+	
 	// First, handle failed jobs that should be retried (failed > 30 seconds ago)
 	retryTime := time.Now().Add(-30 * time.Second)
-	d.db.Model(&models.ArchiveItem{}).
+	retryResult := d.db.Model(&models.ArchiveItem{}).
 		Where("status = 'failed' AND retry_count < ? AND updated_at < ?", 3, retryTime).
 		Update("status", "pending")
 	
+	if retryResult.RowsAffected > 0 {
+		slog.Info("Auto-retrying failed jobs",
+			"count", retryResult.RowsAffected,
+			"retry_delay", "30s")
+	}
+	
 	// Also handle stuck processing jobs (processing > 5 minutes)
 	stuckTime := time.Now().Add(-5 * time.Minute)
-	d.db.Model(&models.ArchiveItem{}).
+	stuckResult := d.db.Model(&models.ArchiveItem{}).
 		Where("status = 'processing' AND updated_at < ?", stuckTime).
 		Update("status", "failed")
+	
+	if stuckResult.RowsAffected > 0 {
+		slog.Warn("Marked stuck processing jobs as failed",
+			"count", stuckResult.RowsAffected,
+			"stuck_threshold", "5m")
+	}
+	
+	// Get queue statistics for logging
+	var queueStats struct {
+		Pending    int64
+		Processing int64
+		Failed     int64
+		Completed  int64
+	}
+	d.db.Model(&models.ArchiveItem{}).Where("status = 'pending'").Count(&queueStats.Pending)
+	d.db.Model(&models.ArchiveItem{}).Where("status = 'processing'").Count(&queueStats.Processing)
+	d.db.Model(&models.ArchiveItem{}).Where("status = 'failed'").Count(&queueStats.Failed)
+	d.db.Model(&models.ArchiveItem{}).Where("status = 'completed'").Count(&queueStats.Completed)
 	
 	var pendingItems []models.ArchiveItem
 	err := d.db.Where("status = 'pending' AND retry_count < ?", 3).
@@ -73,21 +104,41 @@ func (d *Dispatcher) dispatchPendingJobs() {
 		Find(&pendingItems).Error
 	
 	if err != nil {
-		log.Printf("Error fetching pending jobs: %v", err)
+		slog.Error("Error fetching pending jobs", "error", err)
 		return
 	}
 	
-	if len(pendingItems) == 0 {
-		return // No pending jobs
+	// Log queue state every 10 cycles (20 seconds) or if there are jobs to dispatch
+	if len(pendingItems) > 0 || time.Now().Unix()%20 == 0 {
+		slog.Info("Queue status",
+			"pending", queueStats.Pending,
+			"processing", queueStats.Processing,
+			"failed", queueStats.Failed,
+			"completed", queueStats.Completed,
+			"worker_channel_used", len(d.jobChan),
+			"worker_channel_capacity", cap(d.jobChan))
 	}
 	
-	log.Printf("Dispatching %d pending jobs...", len(pendingItems))
+	if len(pendingItems) == 0 {
+		return // No pending jobs to dispatch
+	}
+	
+	slog.Info("Dispatching pending jobs",
+		"count", len(pendingItems),
+		"channel_available", cap(d.jobChan)-len(d.jobChan))
+	
+	dispatched := 0
+	skipped := 0
 	
 	for _, item := range pendingItems {
 		// Load capture and URL info
 		var capture models.Capture
 		if err := d.db.Preload("ArchivedURL").First(&capture, item.CaptureID).Error; err != nil {
-			log.Printf("Failed to load capture %d: %v", item.CaptureID, err)
+			slog.Error("Failed to load capture for job",
+				"capture_id", item.CaptureID,
+				"item_id", item.ID,
+				"error", err)
+			skipped++
 			continue
 		}
 		
@@ -102,11 +153,26 @@ func (d *Dispatcher) dispatchPendingJobs() {
 		// Try to send to worker channel (non-blocking)
 		select {
 		case d.jobChan <- job:
-			log.Printf("Dispatched job: %s %s", job.ShortID, job.Type)
+			slog.Debug("Dispatched job to worker",
+				"short_id", job.ShortID,
+				"type", job.Type,
+				"url", job.URL,
+				"retry_count", item.RetryCount,
+				"age", time.Since(item.CreatedAt).Round(time.Second))
+			dispatched++
 		default:
 			// Channel is full, workers are busy - we'll try again next cycle
-			log.Printf("Worker channel full, will retry job %s %s next cycle", job.ShortID, job.Type)
-			return // Don't overwhelm, try again in 2 seconds
+			slog.Info("Worker channel full, deferring remaining jobs",
+				"deferred_count", len(pendingItems)-dispatched,
+				"channel_capacity", cap(d.jobChan))
+			break // Exit loop, try again in 2 seconds
 		}
+	}
+	
+	if dispatched > 0 || skipped > 0 {
+		slog.Info("Dispatch cycle completed",
+			"dispatched", dispatched,
+			"skipped", skipped,
+			"duration", time.Since(startTime).Round(time.Millisecond))
 	}
 }

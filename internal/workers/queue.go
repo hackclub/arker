@@ -1,6 +1,7 @@
 package workers
 
 import (
+	"log/slog"
 	"time"
 	"gorm.io/gorm"
 	"arker/internal/models"
@@ -22,9 +23,14 @@ func QueueCaptureWithAPIKey(db *gorm.DB, urlID uint, originalURL string, types [
 		APIKeyID:      apiKeyID,
 	}
 	if err := db.Create(&capture).Error; err != nil {
+		slog.Error("Failed to create capture",
+			"url", originalURL,
+			"types", types,
+			"error", err)
 		return "", err
 	}
 	
+	createdItems := 0
 	for _, t := range types {
 		item := models.ArchiveItem{
 			CaptureID: capture.ID, 
@@ -32,10 +38,20 @@ func QueueCaptureWithAPIKey(db *gorm.DB, urlID uint, originalURL string, types [
 			Status:    "pending",
 		}
 		if err := db.Create(&item).Error; err != nil {
+			slog.Error("Failed to create archive item",
+				"short_id", shortID,
+				"type", t,
+				"error", err)
 			return "", err
 		}
-		// Job will be picked up by dispatcher - no need to push to channel
+		createdItems++
 	}
+	
+	slog.Info("Queued new capture",
+		"short_id", shortID,
+		"url", originalURL,
+		"types", types,
+		"items_created", createdItems)
 	
 	return shortID, nil
 }

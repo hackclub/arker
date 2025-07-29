@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"time"
 	"gorm.io/gorm"
 	"github.com/playwright-community/playwright-go"
@@ -19,15 +20,39 @@ var JobChan = make(chan models.Job, 100)
 
 // Worker
 func Worker(id int, jobChan <-chan models.Job, storage storage.Storage, db *gorm.DB, archiversMap map[string]archivers.Archiver) {
+	logger := slog.With("worker_id", id)
+	logger.Info("Worker started")
+	
 	for job := range jobChan {
+		jobStart := time.Now()
+		
+		logger.Info("Processing job",
+			"short_id", job.ShortID,
+			"type", job.Type,
+			"url", job.URL,
+			"capture_id", job.CaptureID)
+		
 		err := ProcessJob(job, storage, db, archiversMap)
+		duration := time.Since(jobStart)
+		
 		if err != nil {
-			log.Printf("Worker %d failed job %s %s: %v", id, job.ShortID, job.Type, err)
+			logger.Error("Job processing failed",
+				"short_id", job.ShortID,
+				"type", job.Type,
+				"url", job.URL,
+				"duration", duration.Round(time.Millisecond),
+				"error", err)
 			db.Model(&models.ArchiveItem{}).Where("capture_id = ? AND type = ?", job.CaptureID, job.Type).Update("status", "failed")
 		} else {
-			log.Printf("Worker %d completed %s %s", id, job.ShortID, job.Type)
+			logger.Info("Job processing completed",
+				"short_id", job.ShortID,
+				"type", job.Type,
+				"url", job.URL,
+				"duration", duration.Round(time.Millisecond))
 		}
 	}
+	
+	logger.Info("Worker stopped")
 }
 
 // Process job (streams to zstd/FS)
@@ -49,10 +74,16 @@ func ProcessCombinedBrowserJob(job models.Job, storage storage.Storage, db *gorm
 	
 	if len(pendingBrowserTypes) < 2 {
 		// Only one type is pending, fallback to single processing
+		slog.Debug("Combined job optimization not available, using single processing",
+			"short_id", job.ShortID,
+			"pending_types", pendingBrowserTypes)
 		return ProcessSingleJob(job, storage, db, archiversMap)
 	}
 	
-	log.Printf("Processing combined browser job for %s: %v", job.ShortID, pendingBrowserTypes)
+	slog.Info("Starting combined browser job optimization",
+		"short_id", job.ShortID,
+		"types", pendingBrowserTypes,
+		"url", job.URL)
 	
 	// Get both items and update their status
 	var mhtmlItem, screenshotItem models.ArchiveItem
@@ -128,7 +159,9 @@ func ProcessCombinedBrowserJob(job models.Job, storage storage.Storage, db *gorm
 		fmt.Fprintf(sharedLogWriter, "Page error: %v\n", err)
 	})
 	
-	log.Printf("Starting shared page load for combined job: %s", job.ShortID)
+	slog.Info("Starting shared page load for combined job",
+		"short_id", job.ShortID,
+		"url", job.URL)
 	fmt.Fprintf(sharedLogWriter, "Starting combined browser job for MHTML and screenshot\n")
 	
 	// Single page load for both
@@ -183,7 +216,9 @@ func ProcessCombinedBrowserJob(job models.Job, storage storage.Storage, db *gorm
 		}
 	}
 	
-	log.Printf("Completed combined browser job for %s", job.ShortID)
+	slog.Info("Completed combined browser job",
+		"short_id", job.ShortID,
+		"types", pendingBrowserTypes)
 	return nil
 }
 
@@ -212,7 +247,12 @@ func ProcessSingleJob(job models.Job, storage storage.Storage, db *gorm.DB, arch
 	}
 	
 	dbLogWriter := utils.NewDBLogWriter(db, item.ID)
-	log.Printf("Starting archive job: %s %s", job.ShortID, job.Type)
+	
+	slog.Info("Starting single job processing",
+		"short_id", job.ShortID,
+		"type", job.Type,
+		"url", job.URL,
+		"retry_count", item.RetryCount)
 	
 	// Use error handling wrapper with timeout for the archiving operation
 	var data io.Reader
@@ -245,8 +285,13 @@ func ProcessSingleJob(job models.Job, storage storage.Storage, db *gorm.DB, arch
 		return archiveErr
 	}, dbLogWriter, &currentRetryCount, retryConfig)
 	
-	log.Printf("Archive job returned: %s %s, error: %v", job.ShortID, job.Type, err)
 	if err != nil {
+		slog.Error("Archive operation failed",
+			"short_id", job.ShortID,
+			"type", job.Type,
+			"url", job.URL,
+			"retry_count", item.RetryCount,
+			"error", err)
 		if cleanup != nil {
 			cleanup()
 		}
@@ -314,5 +359,12 @@ func saveArchiveData(data io.Reader, ext, shortID, jobType string, storage stora
 		"file_size":   fileSize,
 		"logs":        logWriter.String(),
 	})
+	
+	slog.Info("Archive saved successfully",
+		"short_id", shortID,
+		"type", jobType,
+		"file_size", fileSize,
+		"storage_key", key)
+	
 	return nil
 }
