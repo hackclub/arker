@@ -6,6 +6,8 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"os"
+	"strings"
 	"sync"
 	"time"
 	"gorm.io/gorm"
@@ -14,6 +16,33 @@ import (
 	"arker/internal/storage"
 	"arker/internal/utils"
 )
+
+// prefixWriter wraps stdout with a prefix for each line
+type prefixWriter struct {
+	prefix string
+}
+
+func (pw *prefixWriter) Write(p []byte) (n int, err error) {
+	// Convert to string and add prefix to each line
+	s := string(p)
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		if i == len(lines)-1 && line == "" {
+			// Don't add prefix to trailing empty line
+			continue
+		}
+		prefixedLine := pw.prefix + line
+		if i < len(lines)-1 {
+			prefixedLine += "\n"
+		}
+		fmt.Fprint(os.Stdout, prefixedLine)
+		if i == len(lines)-1 && line != "" {
+			// Add newline if the last line doesn't end with one
+			fmt.Fprint(os.Stdout, "\n")
+		}
+	}
+	return len(p), nil
+}
 
 // Queue channel
 var JobChan = make(chan models.Job, 100)
@@ -163,6 +192,11 @@ func ProcessSingleJob(job models.Job, storage storage.Storage, db *gorm.DB, arch
 	
 	dbLogWriter := utils.NewDBLogWriter(db, item.ID)
 	
+	// Create a multi-writer that writes to both database and stdout with job context
+	stdoutPrefix := fmt.Sprintf("[%s-%s] ", job.ShortID, job.Type)
+	prefixedStdout := &prefixWriter{prefix: stdoutPrefix}
+	multiWriter := io.MultiWriter(dbLogWriter, prefixedStdout)
+	
 	slog.Info("Starting single job processing",
 		"short_id", job.ShortID,
 		"type", job.Type,
@@ -196,9 +230,9 @@ func ProcessSingleJob(job models.Job, storage storage.Storage, db *gorm.DB, arch
 	
 	err := utils.WithRetryConfigContext(ctx, func() error {
 		var archiveErr error
-		data, ext, _, cleanup, archiveErr = arch.Archive(ctx, job.URL, dbLogWriter, db, item.ID)
+		data, ext, _, cleanup, archiveErr = arch.Archive(ctx, job.URL, multiWriter, db, item.ID)
 		return archiveErr
-	}, dbLogWriter, &currentRetryCount, retryConfig)
+	}, multiWriter, &currentRetryCount, retryConfig)
 	
 	if err != nil {
 		slog.Error("Archive operation failed",
