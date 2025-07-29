@@ -7,30 +7,44 @@ import (
 	"strings"
 	"gorm.io/gorm"
 	"github.com/playwright-community/playwright-go"
-	"arker/internal/browsermgr"
 )
 
 // MHTMLArchiver
 type MHTMLArchiver struct {
-	BrowserMgr *browsermgr.Manager
 }
 
 func (a *MHTMLArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
 	fmt.Fprintf(logWriter, "Starting MHTML archive for: %s\n", url)
 	
-	// Check context before creating page
+	// Check context before creating browser
 	select {
 	case <-ctx.Done():
 		return nil, "", "", nil, ctx.Err()
 	default:
 	}
 	
-	page, err := a.BrowserMgr.NewPage()
+	// Create a fresh browser instance for this job
+	fmt.Fprintf(logWriter, "Creating fresh browser instance for MHTML job...\n")
+	pw, browser, err := CreateBrowserInstance()
 	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to create browser instance: %v\n", err)
+		return nil, "", "", nil, err
+	}
+	
+	page, err := browser.NewPage()
+	if err != nil {
+		browser.Close()
+		pw.Stop()
 		fmt.Fprintf(logWriter, "Failed to create browser page: %v\n", err)
 		return nil, "", "", nil, err
 	}
-	cleanup := func() { a.BrowserMgr.ClosePage(page) }
+	
+	cleanup := func() { 
+		page.Close()
+		browser.Close()
+		pw.Stop()
+		fmt.Fprintf(logWriter, "Browser instance cleaned up\n")
+	}
 
 	// Log console messages and errors
 	page.On("console", func(msg playwright.ConsoleMessage) {

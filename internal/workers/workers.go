@@ -87,7 +87,7 @@ func Worker(id int, jobChan <-chan models.Job, storage storage.Storage, db *gorm
 			"url", job.URL,
 			"capture_id", job.CaptureID)
 		
-		err := ProcessJob(job, storage, db, archiversMap)
+		err := ProcessSingleJob(job, storage, db, archiversMap)
 		duration := time.Since(jobStart)
 		
 		if err != nil {
@@ -157,16 +157,10 @@ func GetWorkerStatus() map[string]interface{} {
 	}
 }
 
-// Process job (streams to zstd/FS)
-func ProcessJob(job models.Job, storage storage.Storage, db *gorm.DB, archiversMap map[string]archivers.Archiver) error {
-	// Simple: one browser per job, no sharing optimization
-	return ProcessSingleJob(job, storage, db, archiversMap)
-}
-
 // REMOVED: ProcessCombinedBrowserJob - too complex, causing hangs
 // Each job now gets its own fresh browser instance for maximum reliability
 
-// ProcessSingleJob handles individual job processing (original logic)
+// ProcessSingleJob handles individual job processing
 func ProcessSingleJob(job models.Job, storage storage.Storage, db *gorm.DB, archiversMap map[string]archivers.Archiver) error {
 	var item models.ArchiveItem
 	if err := db.Where("capture_id = ? AND type = ?", job.CaptureID, job.Type).First(&item).Error; err != nil {

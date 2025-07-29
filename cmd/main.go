@@ -12,12 +12,10 @@ import (
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/kelseyhightower/envconfig"
-	"github.com/playwright-community/playwright-go"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"arker/internal/archivers"
-	"arker/internal/browsermgr"
 	"arker/internal/handlers"
 	"arker/internal/models"
 	"arker/internal/storage"
@@ -62,7 +60,7 @@ func getOrCreateConfigValue(db *gorm.DB, key string, defaultValue string) (strin
 	return config.Value, nil
 }
 
-func healthCheckHandler(db *gorm.DB, bm *browsermgr.Manager) gin.HandlerFunc {
+func healthCheckHandler(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Check database connectivity
 		sqlDB, err := db.DB()
@@ -82,15 +80,7 @@ func healthCheckHandler(db *gorm.DB, bm *browsermgr.Manager) gin.HandlerFunc {
 			return
 		}
 
-		// Check browser manager health
-		if !bm.Healthy() {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"status": "unhealthy",
-				"error":  "browser unavailable",
-			})
-			return
-		}
-
+		// Browser health is checked per-job, no global browser manager
 		// App is ready
 		c.JSON(http.StatusOK, gin.H{
 			"status": "healthy",
@@ -208,39 +198,10 @@ func main() {
 		log.Printf("Created default admin user: %s/%s", cfg.AdminUsername, cfg.AdminPassword)
 	}
 
-	// Create browser manager with launch options
-	launchArgs := []string{
-		"--no-sandbox",
-		"--disable-setuid-sandbox",
-		"--disable-dev-shm-usage",
-		"--disable-extensions",
-		"--disable-plugins",
-		"--disable-images",
-		"--disable-background-timer-throttling",
-		"--disable-backgrounding-occluded-windows",
-		"--disable-renderer-backgrounding",
-	}
-	
-	// Add SOCKS5 proxy configuration if SOCKS5_PROXY is set
-	if socks5Proxy := os.Getenv("SOCKS5_PROXY"); socks5Proxy != "" {
-		launchArgs = append(launchArgs, "--proxy-server="+socks5Proxy)
-		log.Printf("Using SOCKS5 proxy for browser: %s", socks5Proxy)
-	}
-	
-	launchOpts := playwright.BrowserTypeLaunchOptions{
-		Headless: playwright.Bool(true),
-		Args:     launchArgs,
-	}
-	
-	bm, err := browsermgr.New(launchOpts, cfg.MaxWorkers)
-	if err != nil {
-		log.Fatal("Failed to start browser manager:", err)
-	}
-	defer bm.Close()
-
+	// No shared browser manager - each job creates its own browser instance
 	archiversMap := map[string]archivers.Archiver{
-		"mhtml":      &archivers.MHTMLArchiver{BrowserMgr: bm},
-		"screenshot": &archivers.ScreenshotArchiver{BrowserMgr: bm},
+		"mhtml":      &archivers.MHTMLArchiver{},
+		"screenshot": &archivers.ScreenshotArchiver{},
 		"git":        &archivers.GitArchiver{},
 		"youtube":    &archivers.YTArchiver{},
 	}
@@ -288,7 +249,7 @@ func main() {
 	r.Use(sessions.Sessions("session", store))
 
 	// Setup routes
-	r.GET("/health", healthCheckHandler(db, bm))
+	r.GET("/health", healthCheckHandler(db))
 	r.GET("/login", handlers.LoginGet)
 	r.POST("/login", func(c *gin.Context) { handlers.LoginPost(c, db) })
 	r.GET("/admin/api-keys", func(c *gin.Context) { handlers.ApiKeysGet(c, db) })

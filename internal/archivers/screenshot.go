@@ -11,25 +11,31 @@ import (
 	"gorm.io/gorm"
 	"github.com/HugoSmits86/nativewebp"
 	"github.com/playwright-community/playwright-go"
-	"arker/internal/browsermgr"
 )
 
 // ScreenshotArchiver
 type ScreenshotArchiver struct {
-	BrowserMgr *browsermgr.Manager
 }
 
 func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
 	fmt.Fprintf(logWriter, "Starting screenshot archive for: %s\n", url)
 	
-	// Check context before creating page
+	// Check context before creating browser
 	select {
 	case <-ctx.Done():
 		return nil, "", "", nil, ctx.Err()
 	default:
 	}
 	
-	page, err := a.BrowserMgr.NewPage(playwright.BrowserNewPageOptions{
+	// Create a fresh browser instance for this job
+	fmt.Fprintf(logWriter, "Creating fresh browser instance for screenshot job...\n")
+	pw, browser, err := CreateBrowserInstance()
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to create browser instance: %v\n", err)
+		return nil, "", "", nil, err
+	}
+	
+	page, err := browser.NewPage(playwright.BrowserNewPageOptions{
 		Viewport: &playwright.Size{
 			Width:  1500,
 			Height: 1080,
@@ -37,10 +43,18 @@ func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter 
 		DeviceScaleFactor: playwright.Float(2.0), // Retina quality
 	})
 	if err != nil {
+		browser.Close()
+		pw.Stop()
 		fmt.Fprintf(logWriter, "Failed to create browser page: %v\n", err)
 		return nil, "", "", nil, err
 	}
-	cleanup := func() { a.BrowserMgr.ClosePage(page) }
+	
+	cleanup := func() { 
+		page.Close()
+		browser.Close()
+		pw.Stop()
+		fmt.Fprintf(logWriter, "Browser instance cleaned up\n")
+	}
 
 	// Log console messages and errors
 	page.On("console", func(msg playwright.ConsoleMessage) {
