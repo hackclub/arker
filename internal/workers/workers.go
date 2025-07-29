@@ -183,17 +183,10 @@ func ProcessSingleJob(job models.Job, storage storage.Storage, db *gorm.DB, arch
 		return err
 	}
 	
-	// Check retry limit (3 total attempts = initial + 2 retries)
-	if item.RetryCount >= 3 {
-		db.Model(&item).Update("status", "failed")
-		return fmt.Errorf("max retries exceeded for %s %s", job.ShortID, job.Type)
-	}
+	// Workers process jobs independently - no retry logic here
 	
-	// Update status to processing and increment retry count
-	db.Model(&item).Updates(map[string]interface{}{
-		"status":      "processing",
-		"retry_count": gorm.Expr("retry_count + 1"),
-	})
+	// Update status to processing 
+	db.Model(&item).Update("status", "processing")
 	
 	arch, ok := archiversMap[job.Type]
 	if !ok {
@@ -229,11 +222,12 @@ func ProcessSingleJob(job models.Job, storage storage.Storage, db *gorm.DB, arch
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	
-	// Single attempt - no retries within worker
-	// If this fails, we'll re-queue the job for another attempt
+	// Single attempt only - worker is completely isolated
+	// Create browser, process job, clean up browser, done
 	data, ext, _, cleanup, err := arch.Archive(ctx, job.URL, multiWriter, db, item.ID)
 	
-	// Always defer cleanup immediately after getting it
+	// CRITICAL: Always defer cleanup immediately after getting it
+	// This ensures browser cleanup happens regardless of success/failure
 	if cleanup != nil {
 		defer cleanup()
 	}
@@ -246,35 +240,13 @@ func ProcessSingleJob(job models.Job, storage storage.Storage, db *gorm.DB, arch
 			"retry_count", item.RetryCount,
 			"error", err)
 		
-		// If we haven't exceeded max retries, re-queue the job
-		if item.RetryCount < 2 { // Allow 2 retries (3 total attempts)
-			slog.Info("Re-queueing job for retry",
-				"short_id", job.ShortID,
-				"type", job.Type,
-				"retry_count", item.RetryCount+1)
-			
-			// Update retry count and reset status to queued
-			db.Model(&item).Updates(map[string]interface{}{
-				"status":      "queued",
-				"retry_count": gorm.Expr("retry_count + 1"),
-				"logs":        dbLogWriter.String(),
-			})
-			
-			// Re-queue the job with slight delay to avoid immediate retry
-			go func() {
-				time.Sleep(time.Second * time.Duration(item.RetryCount+1)) // Progressive delay
-				JobChan <- job
-			}()
-			
-			return nil // Don't treat as error since we're retrying
-		} else {
-			// Max retries exceeded, mark as failed
-			db.Model(&item).Updates(map[string]interface{}{
-				"status": "failed",
-				"logs":   dbLogWriter.String(),
-			})
-			return err
-		}
+		// Worker just marks job as failed and cleans up
+		// No retries, no re-queueing - complete isolation
+		db.Model(&item).Updates(map[string]interface{}{
+			"status": "failed",
+			"logs":   dbLogWriter.String(),
+		})
+		return err
 	}
 	
 	return saveArchiveData(data, ext, job.ShortID, job.Type, storage, db, &item, dbLogWriter)
