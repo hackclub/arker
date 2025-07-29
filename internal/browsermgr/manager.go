@@ -25,9 +25,15 @@ type Manager struct {
 }
 
 func New(launchOpts playwright.BrowserTypeLaunchOptions, maxWorkers int) (*Manager, error) {
+	pageSemaphore := make(chan struct{}, maxWorkers)
+	// Pre-fill semaphore with permits
+	for i := 0; i < maxWorkers; i++ {
+		pageSemaphore <- struct{}{}
+	}
+	
 	m := &Manager{
 		launchOpts:    launchOpts,
-		pageSemaphore: make(chan struct{}, maxWorkers),
+		pageSemaphore: pageSemaphore,
 		activePages:   make(map[playwright.Page]bool),
 	}
 	if err := m.start(); err != nil {
@@ -57,15 +63,9 @@ func (m *Manager) startWithoutLock() error {
 	lostPages := len(m.activePages)
 	if lostPages > 0 {
 		log.Printf("[browser] cleaning up %d lost pages during restart", lostPages)
-		// Release semaphore slots for lost pages (send, not receive!)
+		// Release semaphore slots for lost pages
 		for i := 0; i < lostPages; i++ {
-			select {
-			case m.pageSemaphore <- struct{}{}:
-				// Successfully released a slot
-			default:
-				log.Printf("[browser] warning: semaphore channel full during restart cleanup")
-				break
-			}
+			m.pageSemaphore <- struct{}{}
 		}
 		// Clear active pages map
 		m.activePages = make(map[playwright.Page]bool)
@@ -156,26 +156,20 @@ func (m *Manager) Browser() (playwright.Browser, error) {
 func (m *Manager) NewPage(opts ...playwright.BrowserNewPageOptions) (playwright.Page, error) {
 	// Acquire semaphore to limit concurrent pages
 	log.Printf("[browser] acquiring page semaphore (capacity: %d)", cap(m.pageSemaphore))
-	m.pageSemaphore <- struct{}{}
+	<-m.pageSemaphore
 	log.Printf("[browser] page semaphore acquired (available: %d)", cap(m.pageSemaphore)-len(m.pageSemaphore))
 	
 	br, err := m.Browser()
 	if err != nil {
 		// Release semaphore on error
-		select {
-		case m.pageSemaphore <- struct{}{}:
-		default:
-		}
+		m.pageSemaphore <- struct{}{}
 		return nil, err
 	}
 	
 	page, err := br.NewPage(opts...)
 	if err != nil {
 		// Release semaphore on error
-		select {
-		case m.pageSemaphore <- struct{}{}:
-		default:
-		}
+		m.pageSemaphore <- struct{}{}
 		return nil, err
 	}
 	
@@ -200,13 +194,10 @@ func (m *Manager) ClosePage(page playwright.Page) error {
 	delete(m.activePages, page)
 	err := page.Close()
 	
-	// Release semaphore slot by sending to channel (not receiving!)
-	select {
-	case m.pageSemaphore <- struct{}{}:
-		log.Printf("[browser] page closed and semaphore released (available: %d)", cap(m.pageSemaphore)-len(m.pageSemaphore))
-	default:
-		log.Printf("[browser] warning: semaphore channel full during release - possible double release")
-	}
+	// Release semaphore slot
+	m.pageSemaphore <- struct{}{}
+	log.Printf("[browser] page closed and semaphore released (available: %d)", cap(m.pageSemaphore)-len(m.pageSemaphore))
+	
 	return err
 }
 
