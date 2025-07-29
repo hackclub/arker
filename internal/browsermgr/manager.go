@@ -57,13 +57,13 @@ func (m *Manager) startWithoutLock() error {
 	lostPages := len(m.activePages)
 	if lostPages > 0 {
 		log.Printf("[browser] cleaning up %d lost pages during restart", lostPages)
-		// Drain semaphore slots for lost pages
+		// Release semaphore slots for lost pages (send, not receive!)
 		for i := 0; i < lostPages; i++ {
 			select {
-			case <-m.pageSemaphore:
-				// Successfully drained a slot
+			case m.pageSemaphore <- struct{}{}:
+				// Successfully released a slot
 			default:
-				log.Printf("[browser] warning: fewer semaphore slots than expected during cleanup")
+				log.Printf("[browser] warning: semaphore channel full during restart cleanup")
 				break
 			}
 		}
@@ -161,13 +161,21 @@ func (m *Manager) NewPage(opts ...playwright.BrowserNewPageOptions) (playwright.
 	
 	br, err := m.Browser()
 	if err != nil {
-		<-m.pageSemaphore // Release on error
+		// Release semaphore on error
+		select {
+		case m.pageSemaphore <- struct{}{}:
+		default:
+		}
 		return nil, err
 	}
 	
 	page, err := br.NewPage(opts...)
 	if err != nil {
-		<-m.pageSemaphore // Release on error
+		// Release semaphore on error
+		select {
+		case m.pageSemaphore <- struct{}{}:
+		default:
+		}
 		return nil, err
 	}
 	
@@ -191,8 +199,14 @@ func (m *Manager) ClosePage(page playwright.Page) error {
 	
 	delete(m.activePages, page)
 	err := page.Close()
-	<-m.pageSemaphore // Release semaphore
-	log.Printf("[browser] page closed and semaphore released (available: %d)", cap(m.pageSemaphore)-len(m.pageSemaphore))
+	
+	// Release semaphore slot by sending to channel (not receiving!)
+	select {
+	case m.pageSemaphore <- struct{}{}:
+		log.Printf("[browser] page closed and semaphore released (available: %d)", cap(m.pageSemaphore)-len(m.pageSemaphore))
+	default:
+		log.Printf("[browser] warning: semaphore channel full during release - possible double release")
+	}
 	return err
 }
 
