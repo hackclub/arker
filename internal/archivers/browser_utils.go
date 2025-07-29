@@ -1,6 +1,8 @@
 package archivers
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"github.com/playwright-community/playwright-go"
 )
@@ -36,4 +38,53 @@ func CreateBrowserInstance() (*playwright.Playwright, playwright.Browser, error)
 	}
 	
 	return pw, browser, nil
+}
+
+// CreateSafeCleanupFunc creates a panic-safe cleanup function for browser resources
+func CreateSafeCleanupFunc(page playwright.Page, browser playwright.Browser, pw *playwright.Playwright, logWriter io.Writer) func() {
+	return func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(logWriter, "Warning: panic during browser cleanup: %v\n", r)
+			}
+		}()
+		
+		// Try to close page first
+		if page != nil {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Fprintf(logWriter, "Warning: panic during page close: %v\n", r)
+					}
+				}()
+				page.Close()
+			}()
+		}
+		
+		// Try to close browser
+		if browser != nil {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Fprintf(logWriter, "Warning: panic during browser close: %v\n", r)
+					}
+				}()
+				browser.Close()
+			}()
+		}
+		
+		// Try to stop playwright
+		if pw != nil {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Fprintf(logWriter, "Warning: panic during playwright stop: %v\n", r)
+					}
+				}()
+				pw.Stop()
+			}()
+		}
+		
+		fmt.Fprintf(logWriter, "Browser instance cleaned up safely\n")
+	}
 }
