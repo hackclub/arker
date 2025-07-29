@@ -202,12 +202,11 @@ func (d *Dispatcher) logStuckProcessingJobs() {
 		ShortID   string
 		URL       string
 		UpdatedAt time.Time
-		Duration  time.Duration
 	}
 	
 	// Get processing jobs with capture info
 	d.db.Table("archive_items").
-		Select("archive_items.id, archive_items.type, captures.short_id, archived_urls.original as url, archive_items.updated_at, ? - archive_items.updated_at as duration", time.Now()).
+		Select("archive_items.id, archive_items.type, captures.short_id, archived_urls.original as url, archive_items.updated_at").
 		Joins("JOIN captures ON archive_items.capture_id = captures.id").
 		Joins("JOIN archived_urls ON captures.archived_url_id = archived_urls.id").
 		Where("archive_items.status = 'processing'").

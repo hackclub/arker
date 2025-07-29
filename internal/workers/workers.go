@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 	"gorm.io/gorm"
-	"github.com/playwright-community/playwright-go"
 	"arker/internal/archivers"
 	"arker/internal/models"
 	"arker/internal/storage"
@@ -131,170 +130,12 @@ func GetWorkerStatus() map[string]interface{} {
 
 // Process job (streams to zstd/FS)
 func ProcessJob(job models.Job, storage storage.Storage, db *gorm.DB, archiversMap map[string]archivers.Archiver) error {
-	// Check if this job could benefit from page reuse (browser-based jobs)
-	if job.Type == "mhtml" || job.Type == "screenshot" {
-		return ProcessCombinedBrowserJob(job, storage, db, archiversMap)
-	}
-	
+	// Simple: one browser per job, no sharing optimization
 	return ProcessSingleJob(job, storage, db, archiversMap)
 }
 
-// ProcessCombinedBrowserJob handles MHTML and screenshot on the same page if both are needed
-func ProcessCombinedBrowserJob(job models.Job, storage storage.Storage, db *gorm.DB, archiversMap map[string]archivers.Archiver) error {
-	// Check if both mhtml and screenshot are pending for this capture
-	var pendingBrowserTypes []string
-	db.Model(&models.ArchiveItem{}).Where("capture_id = ? AND type IN (?) AND status = ?", 
-		job.CaptureID, []string{"mhtml", "screenshot"}, "pending").Pluck("type", &pendingBrowserTypes)
-	
-	if len(pendingBrowserTypes) < 2 {
-		// Only one type is pending, fallback to single processing
-		slog.Debug("Combined job optimization not available, using single processing",
-			"short_id", job.ShortID,
-			"pending_types", pendingBrowserTypes)
-		return ProcessSingleJob(job, storage, db, archiversMap)
-	}
-	
-	slog.Info("Starting combined browser job optimization",
-		"short_id", job.ShortID,
-		"types", pendingBrowserTypes,
-		"url", job.URL)
-	
-	// Get both items and update their status
-	var mhtmlItem, screenshotItem models.ArchiveItem
-	if err := db.Where("capture_id = ? AND type = ?", job.CaptureID, "mhtml").First(&mhtmlItem).Error; err != nil {
-		return fmt.Errorf("failed to get mhtml item: %v", err)
-	}
-	if err := db.Where("capture_id = ? AND type = ?", job.CaptureID, "screenshot").First(&screenshotItem).Error; err != nil {
-		return fmt.Errorf("failed to get screenshot item: %v", err)
-	}
-	
-	// Check retry limits
-	if mhtmlItem.RetryCount >= 3 || screenshotItem.RetryCount >= 3 {
-		// Mark failed items and process the other one normally
-		if mhtmlItem.RetryCount >= 3 {
-			db.Model(&mhtmlItem).Update("status", "failed")
-		}
-		if screenshotItem.RetryCount >= 3 {
-			db.Model(&screenshotItem).Update("status", "failed")
-		}
-		// Process whichever one can still be retried
-		if mhtmlItem.RetryCount < 3 && job.Type == "mhtml" {
-			return ProcessSingleJob(job, storage, db, archiversMap)
-		}
-		if screenshotItem.RetryCount < 3 && job.Type == "screenshot" {
-			return ProcessSingleJob(job, storage, db, archiversMap)
-		}
-		return fmt.Errorf("max retries exceeded for combined job %s", job.ShortID)
-	}
-	
-	// Update both to processing and increment retry counts
-	db.Model(&mhtmlItem).Updates(map[string]interface{}{
-		"status":      "processing",
-		"retry_count": gorm.Expr("retry_count + 1"),
-	})
-	db.Model(&screenshotItem).Updates(map[string]interface{}{
-		"status":      "processing", 
-		"retry_count": gorm.Expr("retry_count + 1"),
-	})
-	
-	// Get archivers
-	mhtmlArch := archiversMap["mhtml"].(*archivers.MHTMLArchiver)
-	screenshotArch := archiversMap["screenshot"].(*archivers.ScreenshotArchiver)
-	
-	// Create context with timeout for combined job
-	timeoutConfig := utils.DefaultTimeoutConfig()
-	ctx, cancel := context.WithTimeout(context.Background(), timeoutConfig.ArchiveTimeout)
-	defer cancel()
-	
-	// Create shared page with screenshot settings (need viewport for screenshots)
-	page, err := mhtmlArch.BrowserMgr.NewPage(playwright.BrowserNewPageOptions{
-		Viewport: &playwright.Size{
-			Width:  1500,
-			Height: 1080,
-		},
-		DeviceScaleFactor: playwright.Float(2.0), // Retina quality
-	})
-	if err != nil {
-		// Mark both as failed
-		db.Model(&mhtmlItem).Update("status", "failed")
-		db.Model(&screenshotItem).Update("status", "failed")
-		return fmt.Errorf("failed to create shared browser page: %v", err)
-	}
-	defer mhtmlArch.BrowserMgr.ClosePage(page)
-	
-	// Create shared log writer for page load
-	sharedLogWriter := utils.NewDBLogWriter(db, 0) // Use 0 since we'll update both items separately
-	
-	// Log console messages and errors
-	page.On("console", func(msg playwright.ConsoleMessage) {
-		fmt.Fprintf(sharedLogWriter, "Console [%s]: %s\n", msg.Type(), msg.Text())
-	})
-	page.On("pageerror", func(err error) {
-		fmt.Fprintf(sharedLogWriter, "Page error: %v\n", err)
-	})
-	
-	slog.Info("Starting shared page load for combined job",
-		"short_id", job.ShortID,
-		"url", job.URL)
-	fmt.Fprintf(sharedLogWriter, "Starting combined browser job for MHTML and screenshot\n")
-	
-	// Single page load for both
-	if err := archivers.PerformCompletePageLoadWithContext(ctx, page, job.URL, sharedLogWriter, true); err != nil {
-		fmt.Fprintf(sharedLogWriter, "Shared page load failed: %v\n", err)
-		// Mark both as failed with shared logs
-		sharedLogs := sharedLogWriter.String()
-		db.Model(&mhtmlItem).Updates(map[string]interface{}{
-			"status": "failed",
-			"logs":   sharedLogs,
-		})
-		db.Model(&screenshotItem).Updates(map[string]interface{}{
-			"status": "failed", 
-			"logs":   sharedLogs,
-		})
-		return fmt.Errorf("shared page load failed: %v", err)
-	}
-	
-	// Process MHTML first (uses CDP session)
-	mhtmlLogWriter := utils.NewDBLogWriter(db, mhtmlItem.ID)
-	fmt.Fprintf(mhtmlLogWriter, "%s\n--- Starting MHTML capture on shared page ---\n", sharedLogWriter.String())
-	
-	mhtmlData, mhtmlExt, _, _, err := mhtmlArch.ArchiveWithPageContext(ctx, page, job.URL, mhtmlLogWriter)
-	if err != nil {
-		fmt.Fprintf(mhtmlLogWriter, "MHTML capture failed: %v\n", err)
-		db.Model(&mhtmlItem).Updates(map[string]interface{}{
-			"status": "failed",
-			"logs":   mhtmlLogWriter.String(),
-		})
-	} else {
-		// Save MHTML data
-		if err := saveArchiveData(mhtmlData, mhtmlExt, job.ShortID, "mhtml", storage, db, &mhtmlItem, mhtmlLogWriter); err != nil {
-			log.Printf("Failed to save MHTML data: %v", err)
-		}
-	}
-	
-	// Then screenshot on the same page
-	screenshotLogWriter := utils.NewDBLogWriter(db, screenshotItem.ID)
-	fmt.Fprintf(screenshotLogWriter, "%s\n--- Starting screenshot capture on shared page ---\n", sharedLogWriter.String())
-	
-	screenshotData, screenshotExt, _, _, err := screenshotArch.ArchiveWithPageContext(ctx, page, job.URL, screenshotLogWriter, nil)
-	if err != nil {
-		fmt.Fprintf(screenshotLogWriter, "Screenshot capture failed: %v\n", err)
-		db.Model(&screenshotItem).Updates(map[string]interface{}{
-			"status": "failed",
-			"logs":   screenshotLogWriter.String(),
-		})
-	} else {
-		// Save screenshot data  
-		if err := saveArchiveData(screenshotData, screenshotExt, job.ShortID, "screenshot", storage, db, &screenshotItem, screenshotLogWriter); err != nil {
-			log.Printf("Failed to save screenshot data: %v", err)
-		}
-	}
-	
-	slog.Info("Completed combined browser job",
-		"short_id", job.ShortID,
-		"types", pendingBrowserTypes)
-	return nil
-}
+// REMOVED: ProcessCombinedBrowserJob - too complex, causing hangs
+// Each job now gets its own fresh browser instance for maximum reliability
 
 // ProcessSingleJob handles individual job processing (original logic)
 func ProcessSingleJob(job models.Job, storage storage.Storage, db *gorm.DB, archiversMap map[string]archivers.Archiver) error {
