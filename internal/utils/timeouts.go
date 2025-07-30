@@ -16,10 +16,10 @@ type TimeoutConfig struct {
 // DefaultTimeoutConfig returns sensible default timeouts
 func DefaultTimeoutConfig() TimeoutConfig {
 	return TimeoutConfig{
-		ArchiveTimeout:  30 * time.Minute, // Long timeout for complex pages
-		GitCloneTimeout: 10 * time.Minute, // Git operations can be slow
-		YtDlpTimeout:    45 * time.Minute, // Video downloads can take a long time
-		PageLoadTimeout: 2 * time.Minute,  // Page loading should be relatively quick
+		ArchiveTimeout:  2 * time.Minute,  // Much shorter timeout to prevent browser accumulation
+		GitCloneTimeout: 5 * time.Minute,  // Git operations can be slow but not too slow
+		YtDlpTimeout:    10 * time.Minute, // Video downloads can take time but not 45 minutes
+		PageLoadTimeout: 30 * time.Second, // Page loading should be quick
 	}
 }
 
