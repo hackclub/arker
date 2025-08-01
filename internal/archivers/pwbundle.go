@@ -71,8 +71,12 @@ func (b *PWBundle) CreateBrowser() error {
 		"--disable-setuid-sandbox",
 		"--disable-dev-shm-usage",
 		"--disable-web-security",
-		"--disable-features=VizDisplayCompositor",
-		// Critical args for preventing zombie processes in Docker containers
+		// GPU acceleration optimizations for Intel HD Graphics P630
+		"--use-gl=egl",                    // Solution 1: Use EGL backend instead of GLX for headless GPU
+		"--enable-accelerated-2d-canvas", // Solution 3: Enable hardware-accelerated 2D canvas
+		"--enable-gpu-rasterization",     // Solution 3: Enable GPU-accelerated rasterization
+		// Solution 2: Removed --disable-features=VizDisplayCompositor to enable modern GPU compositor
+		// Critical args for preventing zombie processes in Docker containers (DO NOT REMOVE)
 		"--no-zygote",        // Disable zygote process forking (prevents orphaned child processes)
 		"--single-process",   // Run renderer in the same process as browser (reduces process count)
 	}
