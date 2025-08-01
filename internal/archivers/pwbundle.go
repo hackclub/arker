@@ -25,6 +25,7 @@ type PWBundle struct {
 	logWriter    io.Writer
 	cleaned      bool
 	chromePIDs   []int // Track Chrome process PIDs for proper termination
+	userDataDir  string // Unique identifier for this browser instance
 	mu           sync.Mutex
 	once         sync.Once
 }
@@ -100,6 +101,15 @@ func (b *PWBundle) CreateBrowser() error {
 	// Give Chrome a moment to fully start before capturing PIDs
 	time.Sleep(100 * time.Millisecond)
 	b.chromePIDs = b.findChromePIDs()
+	
+	// Extract the unique user data directory for this browser instance
+	// This allows us to track only processes belonging to THIS browser
+	if len(b.chromePIDs) > 0 {
+		b.userDataDir = b.extractUserDataDir(b.chromePIDs[0])
+		if b.userDataDir != "" {
+			fmt.Fprintf(b.logWriter, "Browser instance identifier: %s\n", b.userDataDir)
+		}
+	}
 	
 	return nil
 }
@@ -279,14 +289,19 @@ func (b *PWBundle) performCleanup() {
 	
 	// IMPORTANT: Refresh PID list before cleanup to catch any processes spawned during browser operation
 	// Chrome may spawn additional processes (renderers, utilities) after initial browser creation
-	fmt.Fprintf(b.logWriter, "Refreshing Chrome PID list before cleanup...\n")
-	refreshedPIDs := b.findChromePIDs()
-	if len(refreshedPIDs) > len(b.chromePIDs) {
-		fmt.Fprintf(b.logWriter, "Found %d additional Chrome processes since creation (was %d, now %d)\n", 
-			len(refreshedPIDs)-len(b.chromePIDs), len(b.chromePIDs), len(refreshedPIDs))
-		b.chromePIDs = refreshedPIDs
+	// Use the specific user data directory to ensure we only track our own processes
+	fmt.Fprintf(b.logWriter, "Refreshing Chrome PID list before cleanup using user data dir...\n")
+	if b.userDataDir != "" {
+		refreshedPIDs := b.findChromeProcessesByUserDataDir(b.userDataDir)
+		if len(refreshedPIDs) != len(b.chromePIDs) {
+			fmt.Fprintf(b.logWriter, "Chrome process count changed during operation (was %d, now %d)\n", 
+				len(b.chromePIDs), len(refreshedPIDs))
+			b.chromePIDs = refreshedPIDs
+		} else {
+			fmt.Fprintf(b.logWriter, "Chrome process count unchanged (%d processes)\n", len(b.chromePIDs))
+		}
 	} else {
-		fmt.Fprintf(b.logWriter, "No additional Chrome processes found (still %d processes)\n", len(b.chromePIDs))
+		fmt.Fprintf(b.logWriter, "Warning: No user data directory available for targeted cleanup\n")
 	}
 	
 	// Use proper process management: poll every 250ms, force kill after 10s
@@ -308,11 +323,16 @@ func (b *PWBundle) GetLogWriter() io.Writer {
 	return b.logWriter
 }
 
-// findChromePIDs discovers ALL Chrome process PIDs associated with this browser instance
-// This includes main processes and ALL child processes (zygote, gpu-process, utility, renderer, etc.)
+// findChromePIDs discovers ALL Chrome process PIDs associated with THIS SPECIFIC browser instance
+// Uses the unique user data directory to ensure we only track our own processes
 func (b *PWBundle) findChromePIDs() []int {
-	// Step 1: Find main Chrome processes with --remote-debugging-pipe
-	// These are the "root" processes that spawn all the child processes
+	if b.userDataDir != "" {
+		// If we already have a user data directory, use it for precise tracking
+		return b.findChromeProcessesByUserDataDir(b.userDataDir)
+	}
+	
+	// Initial discovery: find main Chrome processes with --remote-debugging-pipe
+	// We'll extract the user data directory from one of these processes
 	cmd := exec.Command("pgrep", "-f", "chrome.*--remote-debugging-pipe")
 	output, err := cmd.Output()
 	if err != nil {
@@ -336,60 +356,67 @@ func (b *PWBundle) findChromePIDs() []int {
 		return nil
 	}
 	
-	// Step 2: For each main process, find ALL child Chrome processes recursively
-	allPIDs := make(map[int]bool)
-	
-	// Add main processes
-	for _, pid := range mainPIDs {
-		allPIDs[pid] = true
-	}
-	
-	// Find all Chrome child processes recursively
-	for _, mainPID := range mainPIDs {
-		childPIDs := b.findChromeChildProcesses(mainPID)
-		for _, childPID := range childPIDs {
-			allPIDs[childPID] = true
-		}
-	}
-	
-	// Convert map back to slice
-	var result []int
-	for pid := range allPIDs {
-		result = append(result, pid)
-	}
-	
-	fmt.Fprintf(b.logWriter, "Found %d total Chrome processes (including children): %v\n", len(result), result)
-	return result
+	fmt.Fprintf(b.logWriter, "Found %d main Chrome processes for initial discovery: %v\n", len(mainPIDs), mainPIDs)
+	return mainPIDs
 }
 
-// findChromeChildProcesses recursively finds all Chrome child processes for a given parent PID
-func (b *PWBundle) findChromeChildProcesses(parentPID int) []int {
-	var result []int
-	
-	// Find direct children that are Chrome processes
-	// Use pgrep to find processes that have chrome in the command line and are children of parentPID
-	cmd := exec.Command("pgrep", "-P", strconv.Itoa(parentPID), "-f", "chrome")
-	output, err := cmd.Output()
-	if err != nil {
-		// Not finding children is not an error - some processes may not have Chrome children
-		return result
+// findChromeProcessesByUserDataDir finds ALL Chrome processes for a specific user data directory
+func (b *PWBundle) findChromeProcessesByUserDataDir(userDataDir string) []int {
+	if userDataDir == "" {
+		fmt.Fprintf(b.logWriter, "Warning: No user data directory specified\n")
+		return nil
 	}
 	
+	// Find ALL Chrome processes (not just main ones) that contain our specific user data directory
+	cmd := exec.Command("pgrep", "-f", "chrome.*"+userDataDir)
+	output, err := cmd.Output()
+	if err != nil {
+		fmt.Fprintf(b.logWriter, "Warning: Could not find Chrome processes for user data dir %s: %v\n", userDataDir, err)
+		return nil
+	}
+	
+	var pids []int
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	for _, line := range lines {
 		if line == "" {
 			continue
 		}
-		if childPID, err := strconv.Atoi(line); err == nil {
-			result = append(result, childPID)
-			// Recursively find children of this child
-			grandChildren := b.findChromeChildProcesses(childPID)
-			result = append(result, grandChildren...)
+		if pid, err := strconv.Atoi(line); err == nil {
+			pids = append(pids, pid)
 		}
 	}
 	
-	return result
+	fmt.Fprintf(b.logWriter, "Found %d Chrome processes for user data dir %s: %v\n", len(pids), userDataDir, pids)
+	return pids
 }
+
+// extractUserDataDir extracts the user data directory from a Chrome process's command line
+func (b *PWBundle) extractUserDataDir(pid int) string {
+	// Read the full command line for this process
+	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "args", "--no-headers")
+	output, err := cmd.Output()
+	if err != nil {
+		fmt.Fprintf(b.logWriter, "Warning: Could not read command line for PID %d: %v\n", pid, err)
+		return ""
+	}
+	
+	cmdLine := strings.TrimSpace(string(output))
+	
+	// Look for --user-data-dir= argument
+	parts := strings.Fields(cmdLine)
+	for _, part := range parts {
+		if strings.HasPrefix(part, "--user-data-dir=") {
+			userDataDir := strings.TrimPrefix(part, "--user-data-dir=")
+			fmt.Fprintf(b.logWriter, "Extracted user data directory: %s\n", userDataDir)
+			return userDataDir
+		}
+	}
+	
+	fmt.Fprintf(b.logWriter, "Warning: Could not find user data directory in command line for PID %d\n", pid)
+	return ""
+}
+
+
 
 // processExists checks if a process with the given PID still exists
 func processExists(pid int) bool {
