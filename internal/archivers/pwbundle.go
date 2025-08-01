@@ -71,11 +71,13 @@ func (b *PWBundle) CreateBrowser() error {
 		"--disable-setuid-sandbox",
 		"--disable-dev-shm-usage",
 		"--disable-web-security",
-		// GPU acceleration optimizations for Intel HD Graphics P630
-		"--use-gl=egl",                    // Solution 1: Use EGL backend instead of GLX for headless GPU
-		"--enable-accelerated-2d-canvas", // Solution 3: Enable hardware-accelerated 2D canvas
-		"--enable-gpu-rasterization",     // Solution 3: Enable GPU-accelerated rasterization
-		// Solution 2: Removed --disable-features=VizDisplayCompositor to enable modern GPU compositor
+		// WORKING Intel GPU hardware acceleration (tested with intel_gpu_top)
+		"--enable-gpu",                   // Enable GPU processes
+		"--disable-gpu-sandbox",          // Required in containers
+		"--use-gl=angle",                 // Use ANGLE for GL
+		"--use-angle=gl-egl",            // Use EGL backend through ANGLE (WORKING!)
+		"--enable-accelerated-2d-canvas", // Enable hardware-accelerated 2D canvas
+		"--enable-gpu-rasterization",     // Enable GPU-accelerated rasterization
 		// Critical args for preventing zombie processes in Docker containers (DO NOT REMOVE)
 		"--no-zygote",        // Disable zygote process forking (prevents orphaned child processes)
 		"--single-process",   // Run renderer in the same process as browser (reduces process count)
@@ -86,6 +88,9 @@ func (b *PWBundle) CreateBrowser() error {
 		launchArgs = append(launchArgs, "--proxy-server="+socks5Proxy)
 		fmt.Fprintf(b.logWriter, "Using SOCKS5 proxy: %s\n", socks5Proxy)
 	}
+	
+	// Set EGL_PLATFORM for Intel GPU hardware acceleration
+	os.Setenv("EGL_PLATFORM", "surfaceless")
 	
 	browser, err := b.pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
 		Headless: playwright.Bool(true),
