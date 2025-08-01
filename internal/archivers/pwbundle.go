@@ -72,6 +72,9 @@ func (b *PWBundle) CreateBrowser() error {
 		"--disable-dev-shm-usage",
 		"--disable-web-security",
 		"--disable-features=VizDisplayCompositor",
+		// Critical args for preventing zombie processes in Docker containers
+		"--no-zygote",        // Disable zygote process forking (prevents orphaned child processes)
+		"--single-process",   // Run renderer in the same process as browser (reduces process count)
 	}
 	
 	// Add SOCKS5 proxy configuration if available

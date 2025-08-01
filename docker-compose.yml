@@ -37,3 +37,6 @@ services:
     # Increase memory limit for Playwright
     mem_limit: 2g
     shm_size: 2g
+    # Enable init process for proper zombie process reaping
+    # This prevents Chrome zombie processes from accumulating
+    init: true
