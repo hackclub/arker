@@ -277,6 +277,18 @@ func (b *PWBundle) performCleanup() {
 	// but don't wait for the OS processes to fully exit, causing zombie accumulation
 	fmt.Fprintf(b.logWriter, "Verifying Chrome process termination...\n")
 	
+	// IMPORTANT: Refresh PID list before cleanup to catch any processes spawned during browser operation
+	// Chrome may spawn additional processes (renderers, utilities) after initial browser creation
+	fmt.Fprintf(b.logWriter, "Refreshing Chrome PID list before cleanup...\n")
+	refreshedPIDs := b.findChromePIDs()
+	if len(refreshedPIDs) > len(b.chromePIDs) {
+		fmt.Fprintf(b.logWriter, "Found %d additional Chrome processes since creation (was %d, now %d)\n", 
+			len(refreshedPIDs)-len(b.chromePIDs), len(b.chromePIDs), len(refreshedPIDs))
+		b.chromePIDs = refreshedPIDs
+	} else {
+		fmt.Fprintf(b.logWriter, "No additional Chrome processes found (still %d processes)\n", len(b.chromePIDs))
+	}
+	
 	// Use proper process management: poll every 250ms, force kill after 10s
 	b.waitForProcessTermination()
 	
@@ -296,28 +308,87 @@ func (b *PWBundle) GetLogWriter() io.Writer {
 	return b.logWriter
 }
 
-// findChromePIDs discovers Chrome process PIDs associated with this browser instance
+// findChromePIDs discovers ALL Chrome process PIDs associated with this browser instance
+// This includes main processes and ALL child processes (zygote, gpu-process, utility, renderer, etc.)
 func (b *PWBundle) findChromePIDs() []int {
+	// Step 1: Find main Chrome processes with --remote-debugging-pipe
+	// These are the "root" processes that spawn all the child processes
 	cmd := exec.Command("pgrep", "-f", "chrome.*--remote-debugging-pipe")
 	output, err := cmd.Output()
 	if err != nil {
-		fmt.Fprintf(b.logWriter, "Warning: Could not find Chrome PIDs: %v\n", err)
+		fmt.Fprintf(b.logWriter, "Warning: Could not find main Chrome PIDs: %v\n", err)
 		return nil
 	}
 	
-	var pids []int
+	var mainPIDs []int
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	for _, line := range lines {
 		if line == "" {
 			continue
 		}
 		if pid, err := strconv.Atoi(line); err == nil {
-			pids = append(pids, pid)
+			mainPIDs = append(mainPIDs, pid)
 		}
 	}
 	
-	fmt.Fprintf(b.logWriter, "Found %d Chrome processes: %v\n", len(pids), pids)
-	return pids
+	if len(mainPIDs) == 0 {
+		fmt.Fprintf(b.logWriter, "No main Chrome processes found\n")
+		return nil
+	}
+	
+	// Step 2: For each main process, find ALL child Chrome processes recursively
+	allPIDs := make(map[int]bool)
+	
+	// Add main processes
+	for _, pid := range mainPIDs {
+		allPIDs[pid] = true
+	}
+	
+	// Find all Chrome child processes recursively
+	for _, mainPID := range mainPIDs {
+		childPIDs := b.findChromeChildProcesses(mainPID)
+		for _, childPID := range childPIDs {
+			allPIDs[childPID] = true
+		}
+	}
+	
+	// Convert map back to slice
+	var result []int
+	for pid := range allPIDs {
+		result = append(result, pid)
+	}
+	
+	fmt.Fprintf(b.logWriter, "Found %d total Chrome processes (including children): %v\n", len(result), result)
+	return result
+}
+
+// findChromeChildProcesses recursively finds all Chrome child processes for a given parent PID
+func (b *PWBundle) findChromeChildProcesses(parentPID int) []int {
+	var result []int
+	
+	// Find direct children that are Chrome processes
+	// Use pgrep to find processes that have chrome in the command line and are children of parentPID
+	cmd := exec.Command("pgrep", "-P", strconv.Itoa(parentPID), "-f", "chrome")
+	output, err := cmd.Output()
+	if err != nil {
+		// Not finding children is not an error - some processes may not have Chrome children
+		return result
+	}
+	
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		if childPID, err := strconv.Atoi(line); err == nil {
+			result = append(result, childPID)
+			// Recursively find children of this child
+			grandChildren := b.findChromeChildProcesses(childPID)
+			result = append(result, grandChildren...)
+		}
+	}
+	
+	return result
 }
 
 // processExists checks if a process with the given PID still exists
