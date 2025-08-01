@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
 	"arker/internal/monitoring"
 	"github.com/playwright-community/playwright-go"
@@ -261,6 +262,10 @@ func (b *PWBundle) performCleanup() {
 		b.pw = nil
 		monitor.RecordPlaywrightClose()
 	}
+	
+	// Give a brief moment for OS processes to fully terminate
+	// This prevents zombie processes from accumulating
+	time.Sleep(100 * time.Millisecond)
 	
 	b.cleaned = true
 	fmt.Fprintf(b.logWriter, "Bundle cleanup completed successfully\n")
