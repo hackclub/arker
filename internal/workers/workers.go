@@ -224,12 +224,13 @@ func ProcessSingleJob(job models.Job, storage storage.Storage, db *gorm.DB, arch
 	
 	// Single attempt only - worker is completely isolated
 	// Create browser, process job, clean up browser, done
-	data, ext, _, cleanup, err := arch.Archive(ctx, job.URL, multiWriter, db, item.ID)
+	data, ext, _, bundle, err := arch.Archive(ctx, job.URL, multiWriter, db, item.ID)
 	
-	// CRITICAL: Always defer cleanup immediately after getting it
+	// CRITICAL: Always defer bundle cleanup immediately after getting it
 	// This ensures browser cleanup happens regardless of success/failure
-	if cleanup != nil {
-		defer cleanup()
+	// PWBundle provides idempotent cleanup - safe to call multiple times
+	if bundle != nil {
+		defer bundle.Cleanup()
 	}
 
 	if err != nil {

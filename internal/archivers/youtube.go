@@ -12,7 +12,7 @@ import (
 // YTArchiver (streams directly from yt-dlp stdout)
 type YTArchiver struct{}
 
-func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
+func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *PWBundle, error) {
 	fmt.Fprintf(logWriter, "Starting YouTube archive for: %s\n", url)
 	
 	// Check context before starting
@@ -119,10 +119,7 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 		fmt.Fprintf(logWriter, "Failed to start yt-dlp: %v\n", err)
 		return nil, "", "", nil, err
 	}
-	cleanup := func() { 
-		cmd.Process.Kill()
-		cmd.Wait() 
-	}
+	
 	fmt.Fprintf(logWriter, "YouTube download started successfully\n")
-	return pr, ".mp4", "video/mp4", cleanup, nil
+	return pr, ".mp4", "video/mp4", nil, nil
 }

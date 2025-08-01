@@ -11,14 +11,13 @@ import (
 	"gorm.io/gorm"
 	"github.com/HugoSmits86/nativewebp"
 	"github.com/playwright-community/playwright-go"
-	"arker/internal/monitoring"
 )
 
 // ScreenshotArchiver
 type ScreenshotArchiver struct {
 }
 
-func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
+func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *PWBundle, error) {
 	fmt.Fprintf(logWriter, "Starting screenshot archive for: %s\n", url)
 	
 	// Check context before creating browser
@@ -28,15 +27,21 @@ func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter 
 	default:
 	}
 	
-	// Create a fresh browser instance for this job
-	fmt.Fprintf(logWriter, "Creating fresh browser instance for screenshot job...\n")
-	pw, browser, err := CreateBrowserInstance()
+	// Create PWBundle for guaranteed cleanup
+	bundle, err := NewPWBundle(logWriter)
 	if err != nil {
-		fmt.Fprintf(logWriter, "Failed to create browser instance: %v\n", err)
+		fmt.Fprintf(logWriter, "Failed to create PWBundle: %v\n", err)
 		return nil, "", "", nil, err
 	}
 	
-	page, err := browser.NewPage(playwright.BrowserNewPageOptions{
+	// Create browser within bundle
+	if err := bundle.CreateBrowser(); err != nil {
+		bundle.Cleanup() // Cleanup on error
+		return nil, "", "", nil, err
+	}
+	
+	// Create page with screenshot-specific options
+	err = bundle.CreatePage(playwright.BrowserNewPageOptions{
 		Viewport: &playwright.Size{
 			Width:  1500,
 			Height: 1080,
@@ -44,50 +49,37 @@ func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter 
 		DeviceScaleFactor: playwright.Float(2.0), // Retina quality
 	})
 	if err != nil {
-		browser.Close()
-		pw.Stop()
 		fmt.Fprintf(logWriter, "Failed to create browser page: %v\n", err)
-		return nil, "", "", nil, err
+		return nil, "", "", bundle, err // Return bundle for cleanup by worker
 	}
 	
-	cleanup := func() { 
-		monitor := monitoring.GetGlobalMonitor()
-		page.Close()
-		browser.Close()
-		pw.Stop()
-		monitor.RecordPlaywrightClose()
-		monitor.RecordBrowserCleanup()
-		fmt.Fprintf(logWriter, "Browser instance cleaned up\n")
+	page, err := bundle.GetPage()
+	if err != nil {
+		return nil, "", "", bundle, err
 	}
 
-	// Log console messages and errors
-	page.On("console", func(msg playwright.ConsoleMessage) {
+	// Add event listeners via bundle (ensures cleanup)
+	bundle.AddEventListener(page, "console", func(msg playwright.ConsoleMessage) {
 		fmt.Fprintf(logWriter, "Console [%s]: %s\n", msg.Type(), msg.Text())
 	})
-	page.On("pageerror", func(err error) {
+	bundle.AddEventListener(page, "pageerror", func(err error) {
 		fmt.Fprintf(logWriter, "Page error: %v\n", err)
 	})
 
 	// Use the common complete page load sequence (with scrolling for full-page screenshots)
 	if err = PerformCompletePageLoadWithContext(ctx, page, url, logWriter, true); err != nil {
 		fmt.Fprintf(logWriter, "Complete page load failed: %v\n", err)
-		cleanup()
-		return nil, "", "", nil, err
+		return nil, "", "", bundle, err // Return bundle for cleanup by worker
 	}
 
-	return a.ArchiveWithPageContext(ctx, page, url, logWriter, cleanup)
+	return a.ArchiveWithPageContext(ctx, page, url, logWriter, bundle)
 }
 
-func (a *ScreenshotArchiver) ArchiveWithPage(page playwright.Page, url string, logWriter io.Writer, cleanup func()) (io.Reader, string, string, func(), error) {
-	// For backward compatibility, create a background context
-	return a.ArchiveWithPageContext(context.Background(), page, url, logWriter, cleanup)
-}
-
-func (a *ScreenshotArchiver) ArchiveWithPageContext(ctx context.Context, page playwright.Page, url string, logWriter io.Writer, cleanup func()) (io.Reader, string, string, func(), error) {
+func (a *ScreenshotArchiver) ArchiveWithPageContext(ctx context.Context, page playwright.Page, url string, logWriter io.Writer, bundle *PWBundle) (io.Reader, string, string, *PWBundle, error) {
 	// Check context before screenshot operations
 	select {
 	case <-ctx.Done():
-		return nil, "", "", nil, ctx.Err()
+		return nil, "", "", bundle, ctx.Err()
 	default:
 	}
 	
@@ -109,7 +101,7 @@ func (a *ScreenshotArchiver) ArchiveWithPageContext(ctx context.Context, page pl
 	// Check context before taking screenshot
 	select {
 	case <-ctx.Done():
-		return nil, "", "", nil, ctx.Err()
+		return nil, "", "", bundle, ctx.Err()
 	default:
 	}
 
@@ -120,7 +112,7 @@ func (a *ScreenshotArchiver) ArchiveWithPageContext(ctx context.Context, page pl
 	})
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to take screenshot: %v\n", err)
-		return nil, "", "", nil, err
+		return nil, "", "", bundle, err
 	}
 
 	// Decode PNG and select optimal format
@@ -129,7 +121,7 @@ func (a *ScreenshotArchiver) ArchiveWithPageContext(ctx context.Context, page pl
 	img, err := png.Decode(bytes.NewReader(data))
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to decode PNG: %v\n", err)
-		return nil, "", "", nil, err
+		return nil, "", "", bundle, err
 	}
 	
 	fmt.Fprintf(logWriter, "Image decoded, bounds: %v\n", img.Bounds())
@@ -180,7 +172,7 @@ func (a *ScreenshotArchiver) ArchiveWithPageContext(ctx context.Context, page pl
 		}
 	}()
 
-	return pipeReader, extension, mimeType, cleanup, nil
+	return pipeReader, extension, mimeType, bundle, nil
 }
 
 // selectImageFormat determines the best format based on image dimensions

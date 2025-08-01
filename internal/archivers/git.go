@@ -20,7 +20,7 @@ import (
 // GitArchiver
 type GitArchiver struct{}
 
-func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
+func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *PWBundle, error) {
 	fmt.Fprintf(logWriter, "Starting git archive for: %s\n", url)
 	
 	// Check context before starting
@@ -125,7 +125,7 @@ func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 		}
 	}()
 
-	return pr, ".tar", "application/x-tar", cleanup, nil
+	return pr, ".tar", "application/x-tar", nil, nil
 }
 
 // extractGitRepoURL extracts the repository URL from GitHub URLs with extra paths and fragments

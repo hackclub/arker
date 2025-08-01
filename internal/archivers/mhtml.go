@@ -7,14 +7,13 @@ import (
 	"strings"
 	"gorm.io/gorm"
 	"github.com/playwright-community/playwright-go"
-	"arker/internal/monitoring"
 )
 
 // MHTMLArchiver
 type MHTMLArchiver struct {
 }
 
-func (a *MHTMLArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, func(), error) {
+func (a *MHTMLArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *PWBundle, error) {
 	fmt.Fprintf(logWriter, "Starting MHTML archive for: %s\n", url)
 	
 	// Check context before creating browser
@@ -24,69 +23,62 @@ func (a *MHTMLArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 	default:
 	}
 	
-	// Create a fresh browser instance for this job
-	fmt.Fprintf(logWriter, "Creating fresh browser instance for MHTML job...\n")
-	pw, browser, err := CreateBrowserInstance()
+	// Create PWBundle for guaranteed cleanup
+	bundle, err := NewPWBundle(logWriter)
 	if err != nil {
-		fmt.Fprintf(logWriter, "Failed to create browser instance: %v\n", err)
+		fmt.Fprintf(logWriter, "Failed to create PWBundle: %v\n", err)
 		return nil, "", "", nil, err
 	}
 	
-	page, err := browser.NewPage()
+	// Create browser within bundle
+	if err := bundle.CreateBrowser(); err != nil {
+		bundle.Cleanup() // Cleanup on error
+		return nil, "", "", nil, err
+	}
+	
+	// Create page with default options for MHTML
+	err = bundle.CreatePage()
 	if err != nil {
-		browser.Close()
-		pw.Stop()
 		fmt.Fprintf(logWriter, "Failed to create browser page: %v\n", err)
-		return nil, "", "", nil, err
+		return nil, "", "", bundle, err // Return bundle for cleanup by worker
 	}
 	
-	cleanup := func() { 
-		monitor := monitoring.GetGlobalMonitor()
-		page.Close()
-		browser.Close()
-		pw.Stop()
-		monitor.RecordPlaywrightClose()
-		monitor.RecordBrowserCleanup()
-		fmt.Fprintf(logWriter, "Browser instance cleaned up\n")
+	page, err := bundle.GetPage()
+	if err != nil {
+		return nil, "", "", bundle, err
 	}
 
-	// Log console messages and errors
-	page.On("console", func(msg playwright.ConsoleMessage) {
+	// Add event listeners via bundle (ensures cleanup)
+	bundle.AddEventListener(page, "console", func(msg playwright.ConsoleMessage) {
 		fmt.Fprintf(logWriter, "Console [%s]: %s\n", msg.Type(), msg.Text())
 	})
-	page.On("pageerror", func(err error) {
+	bundle.AddEventListener(page, "pageerror", func(err error) {
 		fmt.Fprintf(logWriter, "Page error: %v\n", err)
 	})
 
 	// Use the common complete page load sequence (with scrolling for MHTML)
 	if err = PerformCompletePageLoadWithContext(ctx, page, url, logWriter, true); err != nil {
 		fmt.Fprintf(logWriter, "Complete page load failed: %v\n", err)
-		cleanup()
-		return nil, "", "", nil, err
+		return nil, "", "", bundle, err // Return bundle for cleanup by worker
 	}
 
-	return a.ArchiveWithPageContext(ctx, page, url, logWriter, cleanup)
+	return a.ArchiveWithPageContext(ctx, page, url, logWriter, bundle)
 }
 
-func (a *MHTMLArchiver) ArchiveWithPage(page playwright.Page, url string, logWriter io.Writer) (io.Reader, string, string, func(), error) {
-	// For backward compatibility, create a background context
-	return a.ArchiveWithPageContext(context.Background(), page, url, logWriter, nil)
-}
-
-func (a *MHTMLArchiver) ArchiveWithPageContext(ctx context.Context, page playwright.Page, url string, logWriter io.Writer, cleanup func()) (io.Reader, string, string, func(), error) {
+func (a *MHTMLArchiver) ArchiveWithPageContext(ctx context.Context, page playwright.Page, url string, logWriter io.Writer, bundle *PWBundle) (io.Reader, string, string, *PWBundle, error) {
 	fmt.Fprintf(logWriter, "Creating CDP session for MHTML capture...\n")
 	
 	// Check context before creating CDP session
 	select {
 	case <-ctx.Done():
-		return nil, "", "", nil, ctx.Err()
+		return nil, "", "", bundle, ctx.Err()
 	default:
 	}
 	
 	session, err := page.Context().NewCDPSession(page)
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to create CDP session: %v\n", err)
-		return nil, "", "", nil, err
+		return nil, "", "", bundle, err
 	}
 
 	fmt.Fprintf(logWriter, "Capturing MHTML snapshot with context awareness...\n")
@@ -94,7 +86,7 @@ func (a *MHTMLArchiver) ArchiveWithPageContext(ctx context.Context, page playwri
 	// Check context before MHTML capture
 	select {
 	case <-ctx.Done():
-		return nil, "", "", nil, ctx.Err()
+		return nil, "", "", bundle, ctx.Err()
 	default:
 	}
 	
@@ -115,7 +107,7 @@ func (a *MHTMLArchiver) ArchiveWithPageContext(ctx context.Context, page playwri
 	select {
 	case <-ctx.Done():
 		fmt.Fprintf(logWriter, "Context cancelled during MHTML capture\n")
-		return nil, "", "", nil, ctx.Err()
+		return nil, "", "", bundle, ctx.Err()
 	case cdpRes := <-resultChan:
 		result = cdpRes.result
 		err = cdpRes.err
@@ -123,10 +115,10 @@ func (a *MHTMLArchiver) ArchiveWithPageContext(ctx context.Context, page playwri
 	
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to capture MHTML snapshot: %v\n", err)
-		return nil, "", "", nil, err
+		return nil, "", "", bundle, err
 	}
 
 	dataStr := result.(map[string]interface{})["data"].(string)
 	fmt.Fprintf(logWriter, "MHTML archive completed successfully, size: %d bytes\n", len(dataStr))
-	return strings.NewReader(dataStr), ".mhtml", "application/x-mhtml", cleanup, nil
+	return strings.NewReader(dataStr), ".mhtml", "application/x-mhtml", bundle, nil
 }
