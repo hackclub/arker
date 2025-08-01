@@ -3,10 +3,14 @@ package archivers
 import (
 	"os"
 	"github.com/playwright-community/playwright-go"
+	"arker/internal/monitoring"
 )
 
 // CreateBrowserInstance creates a fresh browser instance with proper configuration
 func CreateBrowserInstance() (*playwright.Playwright, playwright.Browser, error) {
+	monitor := monitoring.GetGlobalMonitor()
+	monitor.RecordPlaywrightLaunch()
+	
 	pw, err := playwright.Run()
 	if err != nil {
 		return nil, nil, err
@@ -35,5 +39,6 @@ func CreateBrowserInstance() (*playwright.Playwright, playwright.Browser, error)
 		return nil, nil, err
 	}
 	
+	monitor.RecordBrowserCreation()
 	return pw, browser, nil
 }

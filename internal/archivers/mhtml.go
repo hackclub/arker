@@ -7,6 +7,7 @@ import (
 	"strings"
 	"gorm.io/gorm"
 	"github.com/playwright-community/playwright-go"
+	"arker/internal/monitoring"
 )
 
 // MHTMLArchiver
@@ -40,9 +41,12 @@ func (a *MHTMLArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 	}
 	
 	cleanup := func() { 
+		monitor := monitoring.GetGlobalMonitor()
 		page.Close()
 		browser.Close()
 		pw.Stop()
+		monitor.RecordPlaywrightClose()
+		monitor.RecordBrowserCleanup()
 		fmt.Fprintf(logWriter, "Browser instance cleaned up\n")
 	}
 

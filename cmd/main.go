@@ -18,6 +18,7 @@ import (
 	"arker/internal/archivers"
 	"arker/internal/handlers"
 	"arker/internal/models"
+	"arker/internal/monitoring"
 	"arker/internal/storage"
 	"arker/internal/utils"
 	"arker/internal/workers"
@@ -85,6 +86,44 @@ func healthCheckHandler(db *gorm.DB) gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{
 			"status": "healthy",
 		})
+	}
+}
+
+func browserMetricsHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		monitor := monitoring.GetGlobalMonitor()
+		metrics := monitor.GetMetrics()
+		
+		c.JSON(http.StatusOK, metrics)
+	}
+}
+
+func browserStatusHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		monitor := monitoring.GetGlobalMonitor()
+		metrics := monitor.GetMetrics()
+		
+		status := "healthy"
+		if metrics.LeakDetected {
+			status = "leak_detected"
+		}
+		
+		response := gin.H{
+			"status":                status,
+			"chrome_process_count":  metrics.ChromeProcessCount,
+			"total_goroutines":      metrics.TotalGoroutines,
+			"launch_close_balance":  metrics.PlaywrightLaunches - metrics.PlaywrightCloses,
+			"create_cleanup_balance": metrics.BrowserCreations - metrics.BrowserCleanups,
+			"leak_detected":         metrics.LeakDetected,
+			"leak_reason":           metrics.LeakReason,
+			"last_updated":          metrics.LastUpdated,
+		}
+		
+		if metrics.LeakDetected {
+			c.JSON(http.StatusServiceUnavailable, response)
+		} else {
+			c.JSON(http.StatusOK, response)
+		}
 	}
 }
 
@@ -221,11 +260,18 @@ func main() {
 		log.Printf("Reset %d stuck processing jobs to failed for retry", len(stuckItems))
 	}
 
+	// Initialize browser monitoring
+	monitor := monitoring.GetGlobalMonitor()
+	slog.Info("Browser monitoring initialized")
+	
 	// Start workers
 	slog.Info("Starting worker pool", "worker_count", cfg.MaxWorkers)
 	for i := 1; i <= cfg.MaxWorkers; i++ {
 		go workers.Worker(i, workers.JobChan, storageInstance, db, archiversMap)
 	}
+	
+	// Log initial browser status
+	monitor.LogCurrentStatus()
 	
 	// Start job dispatcher (replaces complex startup recovery and monitoring)
 	dispatcher := workers.NewDispatcher(db, workers.JobChan)
@@ -250,6 +296,8 @@ func main() {
 
 	// Setup routes
 	r.GET("/health", healthCheckHandler(db))
+	r.GET("/metrics/browser", browserMetricsHandler())
+	r.GET("/status/browser", browserStatusHandler())
 	r.GET("/login", handlers.LoginGet)
 	r.POST("/login", func(c *gin.Context) { handlers.LoginPost(c, db) })
 	r.GET("/admin/api-keys", func(c *gin.Context) { handlers.ApiKeysGet(c, db) })

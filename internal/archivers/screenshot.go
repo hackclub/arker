@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 	"github.com/HugoSmits86/nativewebp"
 	"github.com/playwright-community/playwright-go"
+	"arker/internal/monitoring"
 )
 
 // ScreenshotArchiver
@@ -50,9 +51,12 @@ func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter 
 	}
 	
 	cleanup := func() { 
+		monitor := monitoring.GetGlobalMonitor()
 		page.Close()
 		browser.Close()
 		pw.Stop()
+		monitor.RecordPlaywrightClose()
+		monitor.RecordBrowserCleanup()
 		fmt.Fprintf(logWriter, "Browser instance cleaned up\n")
 	}
 
