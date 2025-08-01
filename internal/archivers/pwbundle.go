@@ -263,9 +263,14 @@ func (b *PWBundle) performCleanup() {
 		monitor.RecordPlaywrightClose()
 	}
 	
-	// Give a brief moment for OS processes to fully terminate
-	// This prevents zombie processes from accumulating
-	time.Sleep(100 * time.Millisecond)
+	// CRITICAL: Wait for Chrome processes to actually terminate
+	// Playwright's browser.Close() and pw.Stop() only send shutdown signals via IPC
+	// but don't wait for the OS processes to fully exit, causing zombie accumulation
+	fmt.Fprintf(b.logWriter, "Waiting for Chrome processes to fully terminate...\n")
+	
+	// Give sufficient time for Chrome shutdown sequence to complete
+	// Chrome has multiple processes (main, renderer, zygote) that need to coordinate shutdown
+	time.Sleep(500 * time.Millisecond)
 	
 	b.cleaned = true
 	fmt.Fprintf(b.logWriter, "Bundle cleanup completed successfully\n")
