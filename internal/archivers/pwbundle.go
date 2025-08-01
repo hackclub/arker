@@ -5,9 +5,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -16,16 +13,15 @@ import (
 )
 
 // PWBundle manages Playwright resources with guaranteed idempotent cleanup
-// This solves the double cleanup problem that causes browser leaks
+// Uses BrowserContext for proper isolation and relies on Playwright's built-in cleanup
 type PWBundle struct {
 	pw           *playwright.Playwright
 	browser      playwright.Browser
+	context      playwright.BrowserContext
 	page         playwright.Page
 	cleanupFuncs []func() // Event listener cleanup functions
 	logWriter    io.Writer
 	cleaned      bool
-	chromePIDs   []int // Track Chrome process PIDs for proper termination
-	userDataDir  string // Unique identifier for this browser instance
 	mu           sync.Mutex
 	once         sync.Once
 }
@@ -97,19 +93,16 @@ func (b *PWBundle) CreateBrowser() error {
 	monitor.RecordBrowserCreation()
 	fmt.Fprintf(b.logWriter, "Browser launched successfully\n")
 	
-	// Capture Chrome process PIDs for proper termination tracking
-	// Give Chrome a moment to fully start before capturing PIDs
-	time.Sleep(100 * time.Millisecond)
-	b.chromePIDs = b.findChromePIDs()
-	
-	// Extract the unique user data directory for this browser instance
-	// This allows us to track only processes belonging to THIS browser
-	if len(b.chromePIDs) > 0 {
-		b.userDataDir = b.extractUserDataDir(b.chromePIDs[0])
-		if b.userDataDir != "" {
-			fmt.Fprintf(b.logWriter, "Browser instance identifier: %s\n", b.userDataDir)
-		}
+	// Create a new browser context for isolation
+	// Each context is like an incognito window with its own storage
+	context, err := browser.NewContext()
+	if err != nil {
+		fmt.Fprintf(b.logWriter, "Failed to create browser context: %v\n", err)
+		return fmt.Errorf("failed to create browser context: %w", err)
 	}
+	
+	b.context = context
+	fmt.Fprintf(b.logWriter, "Browser context created successfully\n")
 	
 	return nil
 }
@@ -123,8 +116,8 @@ func (b *PWBundle) CreatePage(options ...playwright.BrowserNewPageOptions) error
 		return fmt.Errorf("cannot create page: bundle already cleaned up")
 	}
 	
-	if b.browser == nil {
-		return fmt.Errorf("cannot create page: browser not created")
+	if b.context == nil {
+		return fmt.Errorf("cannot create page: browser context not created")
 	}
 	
 	if b.page != nil {
@@ -133,14 +126,8 @@ func (b *PWBundle) CreatePage(options ...playwright.BrowserNewPageOptions) error
 	
 	fmt.Fprintf(b.logWriter, "Creating new page...\n")
 	
-	var page playwright.Page
-	var err error
-	
-	if len(options) > 0 {
-		page, err = b.browser.NewPage(options[0])
-	} else {
-		page, err = b.browser.NewPage()
-	}
+	// Create page within the browser context for proper isolation
+	page, err := b.context.NewPage()
 	
 	if err != nil {
 		fmt.Fprintf(b.logWriter, "Failed to create page: %v\n", err)
@@ -232,20 +219,21 @@ func (b *PWBundle) performCleanup() {
 		b.cleanupFuncs = nil
 	}
 	
-	// Step 2: Close page
-	if b.page != nil {
-		fmt.Fprintf(b.logWriter, "Closing page...\n")
+	// Step 2: Close browser context (this closes all pages within the context)
+	if b.context != nil {
+		fmt.Fprintf(b.logWriter, "Closing browser context...\n")
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					fmt.Fprintf(b.logWriter, "Warning: Page close panicked: %v\n", r)
+					fmt.Fprintf(b.logWriter, "Warning: Context close panicked: %v\n", r)
 				}
 			}()
-			if err := b.page.Close(); err != nil {
-				fmt.Fprintf(b.logWriter, "Warning: Page close error: %v\n", err)
+			if err := b.context.Close(); err != nil {
+				fmt.Fprintf(b.logWriter, "Warning: Context close error: %v\n", err)
 			}
 		}()
-		b.page = nil
+		b.context = nil
+		b.page = nil // Page is automatically closed with context
 	}
 	
 	// Step 3: Close browser
@@ -282,30 +270,10 @@ func (b *PWBundle) performCleanup() {
 		monitor.RecordPlaywrightClose()
 	}
 	
-	// CRITICAL: Wait for Chrome processes to actually terminate
-	// Playwright's browser.Close() and pw.Stop() only send shutdown signals via IPC
-	// but don't wait for the OS processes to fully exit, causing zombie accumulation
-	fmt.Fprintf(b.logWriter, "Verifying Chrome process termination...\n")
-	
-	// IMPORTANT: Refresh PID list before cleanup to catch any processes spawned during browser operation
-	// Chrome may spawn additional processes (renderers, utilities) after initial browser creation
-	// Use the specific user data directory to ensure we only track our own processes
-	fmt.Fprintf(b.logWriter, "Refreshing Chrome PID list before cleanup using user data dir...\n")
-	if b.userDataDir != "" {
-		refreshedPIDs := b.findChromeProcessesByUserDataDir(b.userDataDir)
-		if len(refreshedPIDs) != len(b.chromePIDs) {
-			fmt.Fprintf(b.logWriter, "Chrome process count changed during operation (was %d, now %d)\n", 
-				len(b.chromePIDs), len(refreshedPIDs))
-			b.chromePIDs = refreshedPIDs
-		} else {
-			fmt.Fprintf(b.logWriter, "Chrome process count unchanged (%d processes)\n", len(b.chromePIDs))
-		}
-	} else {
-		fmt.Fprintf(b.logWriter, "Warning: No user data directory available for targeted cleanup\n")
-	}
-	
-	// Use proper process management: poll every 250ms, force kill after 10s
-	b.waitForProcessTermination()
+	// Step 5: Give Playwright time to clean up processes properly
+	// This allows the browser.Close() and pw.Stop() operations to complete
+	fmt.Fprintf(b.logWriter, "Allowing Playwright cleanup to complete...\n")
+	time.Sleep(500 * time.Millisecond)
 	
 	b.cleaned = true
 	fmt.Fprintf(b.logWriter, "Bundle cleanup completed successfully\n")
@@ -323,191 +291,7 @@ func (b *PWBundle) GetLogWriter() io.Writer {
 	return b.logWriter
 }
 
-// findChromePIDs discovers ALL Chrome process PIDs associated with THIS SPECIFIC browser instance
-// Uses the unique user data directory to ensure we only track our own processes
-func (b *PWBundle) findChromePIDs() []int {
-	if b.userDataDir != "" {
-		// If we already have a user data directory, use it for precise tracking
-		return b.findChromeProcessesByUserDataDir(b.userDataDir)
-	}
-	
-	// Initial discovery: find main Chrome processes with --remote-debugging-pipe
-	// We'll extract the user data directory from one of these processes
-	cmd := exec.Command("pgrep", "-f", "chrome.*--remote-debugging-pipe")
-	output, err := cmd.Output()
-	if err != nil {
-		fmt.Fprintf(b.logWriter, "Warning: Could not find main Chrome PIDs: %v\n", err)
-		return nil
-	}
-	
-	var mainPIDs []int
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-		if pid, err := strconv.Atoi(line); err == nil {
-			mainPIDs = append(mainPIDs, pid)
-		}
-	}
-	
-	if len(mainPIDs) == 0 {
-		fmt.Fprintf(b.logWriter, "No main Chrome processes found\n")
-		return nil
-	}
-	
-	fmt.Fprintf(b.logWriter, "Found %d main Chrome processes for initial discovery: %v\n", len(mainPIDs), mainPIDs)
-	return mainPIDs
-}
 
-// findChromeProcessesByUserDataDir finds ALL Chrome processes for a specific user data directory
-func (b *PWBundle) findChromeProcessesByUserDataDir(userDataDir string) []int {
-	if userDataDir == "" {
-		fmt.Fprintf(b.logWriter, "Warning: No user data directory specified\n")
-		return nil
-	}
-	
-	// Find ALL Chrome processes (not just main ones) that contain our specific user data directory
-	cmd := exec.Command("pgrep", "-f", "chrome.*"+userDataDir)
-	output, err := cmd.Output()
-	if err != nil {
-		fmt.Fprintf(b.logWriter, "Warning: Could not find Chrome processes for user data dir %s: %v\n", userDataDir, err)
-		return nil
-	}
-	
-	var pids []int
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-		if pid, err := strconv.Atoi(line); err == nil {
-			pids = append(pids, pid)
-		}
-	}
-	
-	fmt.Fprintf(b.logWriter, "Found %d Chrome processes for user data dir %s: %v\n", len(pids), userDataDir, pids)
-	return pids
-}
-
-// extractUserDataDir extracts the user data directory from a Chrome process's command line
-func (b *PWBundle) extractUserDataDir(pid int) string {
-	// Read the full command line for this process
-	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "args", "--no-headers")
-	output, err := cmd.Output()
-	if err != nil {
-		fmt.Fprintf(b.logWriter, "Warning: Could not read command line for PID %d: %v\n", pid, err)
-		return ""
-	}
-	
-	cmdLine := strings.TrimSpace(string(output))
-	
-	// Look for --user-data-dir= argument
-	parts := strings.Fields(cmdLine)
-	for _, part := range parts {
-		if strings.HasPrefix(part, "--user-data-dir=") {
-			userDataDir := strings.TrimPrefix(part, "--user-data-dir=")
-			fmt.Fprintf(b.logWriter, "Extracted user data directory: %s\n", userDataDir)
-			return userDataDir
-		}
-	}
-	
-	fmt.Fprintf(b.logWriter, "Warning: Could not find user data directory in command line for PID %d\n", pid)
-	return ""
-}
-
-
-
-// processExists checks if a process with the given PID still exists
-func processExists(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	
-	// On Unix systems, sending signal 0 tests if process exists without affecting it
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	
-	err = process.Signal(os.Signal(nil))
-	return err == nil
-}
-
-// forceKillProcess attempts to force kill a process
-func (b *PWBundle) forceKillProcess(pid int) {
-	fmt.Fprintf(b.logWriter, "Force killing Chrome process %d...\n", pid)
-	
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		fmt.Fprintf(b.logWriter, "Could not find process %d: %v\n", pid, err)
-		return
-	}
-	
-	if err := process.Kill(); err != nil {
-		fmt.Fprintf(b.logWriter, "Failed to kill process %d: %v\n", pid, err)
-	} else {
-		fmt.Fprintf(b.logWriter, "Sent SIGKILL to process %d\n", pid)
-	}
-}
-
-// waitForProcessTermination polls for Chrome processes to exit, with force kill fallback
-func (b *PWBundle) waitForProcessTermination() {
-	if len(b.chromePIDs) == 0 {
-		fmt.Fprintf(b.logWriter, "No Chrome PIDs to wait for\n")
-		return
-	}
-	
-	fmt.Fprintf(b.logWriter, "Waiting for %d Chrome processes to terminate: %v\n", len(b.chromePIDs), b.chromePIDs)
-	
-	const (
-		pollInterval = 250 * time.Millisecond
-		forceKillTimeout = 10 * time.Second
-	)
-	
-	startTime := time.Now()
-	remaining := make([]int, len(b.chromePIDs))
-	copy(remaining, b.chromePIDs)
-	
-	for len(remaining) > 0 {
-		// Check which processes still exist
-		var stillRunning []int
-		for _, pid := range remaining {
-			if processExists(pid) {
-				stillRunning = append(stillRunning, pid)
-			} else {
-				fmt.Fprintf(b.logWriter, "Chrome process %d terminated\n", pid)
-			}
-		}
-		remaining = stillRunning
-		
-		// If all processes are gone, we're done
-		if len(remaining) == 0 {
-			fmt.Fprintf(b.logWriter, "All Chrome processes terminated successfully\n")
-			return
-		}
-		
-		// Check if we should force kill
-		elapsed := time.Since(startTime)
-		if elapsed >= forceKillTimeout {
-			fmt.Fprintf(b.logWriter, "Timeout reached (%v), force killing %d remaining processes\n", elapsed, len(remaining))
-			for _, pid := range remaining {
-				b.forceKillProcess(pid)
-			}
-			// Reset timer for final wait after force kill
-			startTime = time.Now()
-		}
-		
-		// Wait before next poll
-		time.Sleep(pollInterval)
-		
-		// Absolute timeout - give up after 20 seconds total
-		if time.Since(startTime) > 20*time.Second {
-			fmt.Fprintf(b.logWriter, "Absolute timeout reached, giving up on %d processes: %v\n", len(remaining), remaining)
-			break
-		}
-	}
-}
 
 // Helper function to get SOCKS5 proxy setting (moved from browser_utils.go)
 func getSocks5Proxy() string {
