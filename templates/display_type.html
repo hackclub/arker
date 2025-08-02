@@ -277,7 +277,7 @@
     <div class="content {{if eq .current_type "web"}}mhtml-active{{end}}{{if eq .current_type "screenshot"}}screenshot-active{{end}}">
         {{if eq .current_item.Status "completed"}}
             {{if eq .current_type "web"}}
-                <iframe src="/archive/{{.short_id}}/mhtml/html" class="mhtml-iframe"></iframe>
+                <iframe src="/archive/{{.short_id}}/mhtml/html" class="mhtml-iframe" sandbox="allow-forms allow-scripts"></iframe>
                 <a href="/archive/{{.short_id}}/mhtml" class="download-link mhtml-download-link">Download MHTML File</a>
             {{else if eq .current_type "screenshot"}}
                 <img src="/archive/{{.short_id}}/{{.current_type}}" alt="Full page screenshot" class="screenshot-img">
