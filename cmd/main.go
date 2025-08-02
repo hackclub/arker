@@ -33,6 +33,7 @@ type Config struct {
 	SessionSecret  string `envconfig:"SESSION_SECRET"`
 	AdminUsername  string `envconfig:"ADMIN_USERNAME" default:"admin"`
 	AdminPassword  string `envconfig:"ADMIN_PASSWORD" default:"admin"`
+	LoginText      string `envconfig:"LOGIN_TEXT"`
 }
 
 func generateRandomSecret() string {
@@ -302,8 +303,8 @@ func main() {
 	r.GET("/health", healthCheckHandler(db))
 	r.GET("/metrics/browser", browserMetricsHandler())
 	r.GET("/status/browser", browserStatusHandler())
-	r.GET("/login", handlers.LoginGet)
-	r.POST("/login", func(c *gin.Context) { handlers.LoginPost(c, db) })
+	r.GET("/login", func(c *gin.Context) { handlers.LoginGet(c, cfg.LoginText) })
+	r.POST("/login", func(c *gin.Context) { handlers.LoginPost(c, db, cfg.LoginText) })
 	r.GET("/admin/api-keys", func(c *gin.Context) { handlers.ApiKeysGet(c, db) })
 	r.POST("/admin/api-keys", func(c *gin.Context) { handlers.ApiKeysCreate(c, db) })
 	r.POST("/admin/api-keys/:id/toggle", func(c *gin.Context) { handlers.ApiKeysToggle(c, db) })

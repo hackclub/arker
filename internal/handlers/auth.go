@@ -9,20 +9,28 @@ import (
 	"arker/internal/models"
 )
 
-func LoginGet(c *gin.Context) {
-	c.HTML(http.StatusOK, "login.html", nil)
+func LoginGet(c *gin.Context, loginText string) {
+	c.HTML(http.StatusOK, "login.html", gin.H{
+		"login_text": loginText,
+	})
 }
 
-func LoginPost(c *gin.Context, db *gorm.DB) {
+func LoginPost(c *gin.Context, db *gorm.DB, loginText string) {
 	username := c.PostForm("username")
 	password := c.PostForm("password")
 	var user models.User
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
-		c.HTML(http.StatusBadRequest, "login.html", gin.H{"error": "Invalid credentials"})
+		c.HTML(http.StatusBadRequest, "login.html", gin.H{
+			"error": "Invalid credentials",
+			"login_text": loginText,
+		})
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
-		c.HTML(http.StatusBadRequest, "login.html", gin.H{"error": "Invalid credentials"})
+		c.HTML(http.StatusBadRequest, "login.html", gin.H{
+			"error": "Invalid credentials",
+			"login_text": loginText,
+		})
 		return
 	}
 	session := sessions.Default(c)

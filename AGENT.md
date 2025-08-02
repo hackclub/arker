@@ -142,6 +142,7 @@ git clone http://localhost:8080/git/{shortid}
 - `MAX_WORKERS` - Worker pool size (default: `5`)
 - `GIN_MODE` - Gin framework mode (`debug` for development)
 - `SOCKS5_PROXY` - SOCKS5 proxy for archiving traffic (e.g., `socks5://localhost:1080`)
+- `LOGIN_TEXT` - Text to display under login form (useful for demo credentials)
 
 ### Default Credentials
 - **Username**: `admin` (set via `ADMIN_USERNAME` env var)

@@ -23,6 +23,12 @@
         <button type="submit">Login</button>
         {{if .error}}<p class="error">{{.error}}</p>{{end}}
     </form>
+    
+    {{if .login_text}}
+    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; color: #666;">
+        {{.login_text}}
+    </div>
+    {{end}}
 
 </body>
 </html>
