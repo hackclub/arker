@@ -41,9 +41,13 @@ func AdminGet(c *gin.Context, db *gorm.DB) {
 	fiveMinutesAgo := time.Now().Add(-5 * time.Minute)
 	db.Model(&models.ArchiveItem{}).Where("status = 'completed' AND updated_at > ?", fiveMinutesAgo).Count(&queueSummary.RecentCompleted)
 	
+	// Get SOCKS proxy health status
+	socksStatus := utils.GetSOCKSHealthChecker().GetStatus()
+	
 	c.HTML(http.StatusOK, "admin.html", gin.H{
 		"urls": urls,
 		"queueSummary": queueSummary,
+		"socksStatus": socksStatus,
 	})
 }
 

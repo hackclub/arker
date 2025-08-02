@@ -224,6 +224,10 @@ func main() {
 	} else {
 		log.Println("All health checks passed")
 	}
+	
+	// Initialize SOCKS proxy health monitoring
+	socksChecker := utils.GetSOCKSHealthChecker()
+	defer socksChecker.Stop() // Ensure cleanup on shutdown
 
 	// Default user
 	var user models.User
