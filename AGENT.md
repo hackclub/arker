@@ -1,18 +1,24 @@
 # Arker Development Guide
 
-Arker is a Go-based web archiving server that captures web pages using multiple strategies (MHTML, screenshots, Git repos, YouTube videos) and provides short URLs for accessing archived content.
+Arker is a Go-based web archiving server that captures web pages using multiple strategies and provides short URLs for accessing archived content.
+
+## Deployment
+
+**Production URL**: https://archive.selfhosted.hackclub.com  
+**Deployment**: Managed via Coolify  
+**Debug Access**: `ssh root@archive.selfhosted.hackclub.com`
 
 ## Quick Commands
 
 ### Essential Development Commands
 - **Build**: `go build -o arker ./cmd`
-- **Test**: `go test -v` (tests storage and archiver interfaces)
+- **Test**: `go test -v`
 - **Run locally**: `go run ./cmd` or `go run .`
 - **Lint/Format**: `go fmt ./...` and `go vet ./...`
-- **Build check**: `go build ./...` (compile check without executable)
+- **Build check**: `go build ./...`
 
 ### Docker Development
-- **Start dev environment**: `make dev` (uses docker-compose.dev.yml with live reload)
+- **Start dev environment**: `make dev`
 - **Build dev containers**: `make dev-build`
 - **Stop dev environment**: `make dev-down`
 - **View dev logs**: `make dev-logs`
@@ -21,7 +27,6 @@ Arker is a Go-based web archiving server that captures web pages using multiple 
 ### Database Operations
 - **Connect to dev DB**: `make db-connect`
 - **Reset dev database**: `make db-reset`
-- **Manual PostgreSQL**: `docker run -d --name postgres -e POSTGRES_USER=user -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=arker -p 5432:5432 postgres:15`
 
 ### Production
 - **Start production**: `make prod` or `docker compose up -d`
@@ -30,17 +35,17 @@ Arker is a Go-based web archiving server that captures web pages using multiple 
 
 ## Environment Setup
 
-### Local Development (Option 1)
+### Local Development (Recommended: Docker)
+1. `make dev` (starts PostgreSQL + app with live reload)
+
+### Manual Local Development
 1. Start PostgreSQL: `docker run -d --name postgres -e POSTGRES_USER=user -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=arker -p 5432:5432 postgres:15`
 2. Install Playwright: `go install github.com/playwright-community/playwright-go/cmd/playwright@latest && playwright install chromium`
 3. Install yt-dlp: `pip install yt-dlp`
 4. Run: `go run .`
 
-### Docker Development (Option 2 - Recommended)
-1. `make dev` (starts PostgreSQL + app with live reload)
-
 ### Dependencies
-- **Go 1.22+** (using Go 1.24.3 toolchain)
+- **Go 1.24+** (using Go 1.24.5 toolchain)
 - **PostgreSQL 15**
 - **Git** (for repository archiving)
 - **Python 3 + yt-dlp** (for YouTube archiving)
@@ -53,10 +58,12 @@ Arker is a Go-based web archiving server that captures web pages using multiple 
 ├── cmd/main.go              # Application entry point & service setup
 ├── internal/                # Internal packages (modular architecture)
 │   ├── archivers/          # Archive implementations
+│   │   ├── archiver.go     # Base archiver interface
 │   │   ├── mhtml.go        # MHTML webpage archiving
 │   │   ├── screenshot.go   # Full-page screenshot capture
 │   │   ├── git.go          # Git repository cloning
-│   │   └── youtube.go      # YouTube video downloading
+│   │   ├── youtube.go      # YouTube video downloading
+│   │   └── browser_utils.go # Shared browser utilities
 │   ├── handlers/           # HTTP handlers
 │   │   ├── admin.go        # Admin interface endpoints
 │   │   ├── api.go          # REST API endpoints
@@ -68,20 +75,12 @@ Arker is a Go-based web archiving server that captures web pages using multiple 
 │   │   └── models.go       # User, ArchivedURL, Capture, ArchiveItem
 │   ├── storage/            # Storage interface & implementations
 │   │   └── fs.go           # Filesystem storage (S3-ready interface)
+│   ├── monitoring/         # Browser process monitoring
 │   ├── utils/              # Shared utilities
-│   │   ├── health.go       # Health checks (yt-dlp, Playwright, etc.)
-│   │   ├── logging.go      # Structured logging
-│   │   └── timeout.go      # Request timeout utilities
 │   └── workers/            # Async job processing
 │       ├── queue.go        # Job queue management
 │       └── worker.go       # Background worker implementation
 ├── templates/              # HTML templates for web interface
-├── storage_test.go         # Storage interface tests
-├── archiver_test.go        # Archiver interface tests
-├── Dockerfile              # Production container
-├── Dockerfile.dev          # Development container with live reload
-├── docker-compose.yml      # Production multi-service setup
-├── docker-compose.dev.yml  # Development setup with volume mounts
 └── Makefile               # Development workflow commands
 ```
 
@@ -89,89 +88,95 @@ Arker is a Go-based web archiving server that captures web pages using multiple 
 
 ### Key Interfaces
 - **`Storage`** - Pluggable storage backend (filesystem now, S3-ready)
-  - Methods: `Writer(key)`, `Reader(key)`, `Exists(key)`
+  - Methods: `Writer(key)`, `Reader(key)`, `Exists(key)`, `Size(key)`
   - Current: Filesystem storage with zstd compression
 - **`Archiver`** - Different archiving strategies
   - Methods: `Archive(url, writer)`, content type detection
   - Types: MHTML, Screenshot, Git, YouTube
 
 ### Performance Features
-- **Page Reuse**: Chromium browser pages are reused for MHTML+screenshot jobs (2x speedup)
+- **Browser Instance Reuse**: Playwright browsers reused across jobs for efficiency
 - **Streaming**: All file operations use streaming with zstd compression
 - **Async Processing**: Queue-based job processing with configurable worker pools
 - **Concurrent Workers**: Default 5 workers (configurable via `MAX_WORKERS`)
+- **Browser Monitoring**: Tracks browser processes to prevent memory leaks
 
 ### Database Models
 - **User**: Admin authentication (default: admin/admin)
+- **APIKey**: API authentication with app tracking
 - **ArchivedURL**: Original URLs with metadata
 - **Capture**: Archive sessions with short IDs (5-char alphanumeric)
 - **ArchiveItem**: Individual archive files per type with logs & status
+- **Config**: Persistent configuration (e.g., session secrets)
 
 ## API Endpoints
 
-### Public API
+### Public API (Requires API Key)
 - `POST /api/v1/archive` - Request new archive
   ```json
   {"url": "https://example.com", "types": ["mhtml", "screenshot"]}
   ```
 - `GET /api/v1/past-archives?url=...` - Get past archives for URL
+
+### Public Access
 - `GET /:shortid` - Archive display page with tabs for each type
 - `GET /archive/:shortid/:type` - Download specific archive type
 - `GET /archive/:shortid/mhtml/html` - View MHTML as rendered HTML
 - `GET /git/:shortid` - Git HTTP backend for cloning repositories
 
-### Admin Interface
+### Admin Interface (Session Authentication)
 - `GET /login` - Admin login page
 - `POST /login` - Authentication endpoint
 - `GET /` - Admin dashboard with archive management
+- `GET /admin/api-keys` - API key management
+- `POST /admin/api-keys` - Create new API key
 - `POST /admin/url/:id/capture` - Request new capture
 - `GET /admin/item/:id/log` - View capture logs
-- `GET /logs/:shortid/:type` - View processing logs
+
+### Health & Monitoring
+- `GET /health` - Application health check
+- `GET /metrics/browser` - Browser monitoring metrics
+- `GET /status/browser` - Browser status (leak detection)
 
 ### Git Repository Access
 ```bash
-git clone http://localhost:8080/git/{shortid}
+git clone https://archive.selfhosted.hackclub.com/git/{shortid}
 ```
 
 ## Configuration
 
 ### Environment Variables
-- `DB_URL` - PostgreSQL connection string (default: local PostgreSQL)
+- `DB_URL` - PostgreSQL connection string
 - `STORAGE_PATH` - Archive storage directory (default: `./storage`)
 - `CACHE_PATH` - Git clone cache directory (default: `./cache`)
 - `MAX_WORKERS` - Worker pool size (default: `5`)
+- `PORT` - HTTP server port (default: `8080`)
 - `GIN_MODE` - Gin framework mode (`debug` for development)
 - `SOCKS5_PROXY` - SOCKS5 proxy for archiving traffic (e.g., `socks5://localhost:1080`)
-- `LOGIN_TEXT` - Text to display under login form (useful for demo credentials)
+- `LOGIN_TEXT` - Text to display under login form
 
-### Default Credentials
-- **Username**: `admin` (set via `ADMIN_USERNAME` env var)
-- **Password**: `admin` (set via `ADMIN_PASSWORD` env var)
-- **⚠️ Change in production!**
+### Authentication
+- **Admin Username**: `admin` (set via `ADMIN_USERNAME`)
+- **Admin Password**: `admin` (set via `ADMIN_PASSWORD`)
+- **Session Secret**: Auto-generated and stored in database (override with `SESSION_SECRET`)
+- **API Keys**: Managed through admin interface
 
-### Session Security
-- **Session Secret**: Automatically generated and stored in database on first run
-- **Override**: Set `SESSION_SECRET` environment variable to use custom value
-- **Persistence**: Session secret persists across restarts via database storage
-- **Regeneration**: Delete the `session_secret` config entry from database to regenerate
-
-### Security Notes
-- Session secret is automatically generated with cryptographically secure random bytes
-- Configure proper PostgreSQL credentials for production
-- Consider rate limiting for API endpoints
-- Use strong admin passwords via environment variables
+### Security Features
+- Session secret automatically generated with cryptographically secure random bytes
+- API keys with prefix for identification and hashed storage
+- Per-key usage tracking and activation controls
+- SOCKS5 proxy support for network isolation
 
 ## Testing
 
 ### Test Files
-- `storage_test.go` - Tests storage interface (filesystem operations, tar creation)
-- `archiver_test.go` - Tests archiver interfaces (structure validation, content type detection)
-
-### Test Categories
-- **Storage Interface**: File operations, compression, existence checks
-- **Archiver Structure**: Interface compliance for all archiver types
-- **Tar Operations**: Directory archiving for Git repositories
-- **Content Type Detection**: MIME type mapping for different archive types
+- `storage_test.go` - Storage interface tests
+- `archiver_test.go` - Archiver interface tests
+- `monitoring_test.go` - Browser monitoring tests
+- `validation_test.go` - Input validation tests
+- `login_text_test.go` - Login text handling tests
+- `socks_health_test.go` - SOCKS proxy health checks
+- `vimeo_test.go` - Vimeo video archiving tests
 
 ### Running Tests
 ```bash
@@ -184,17 +189,18 @@ go test -run TestFSStorage    # Run specific test
 
 ### Core Framework
 - **gin-gonic/gin** v1.9.1 - HTTP router and middleware
-- **gorm.io/gorm** v1.25.2 - ORM with PostgreSQL driver
+- **gorm.io/gorm** v1.30.0 - ORM with PostgreSQL driver
 - **gin-contrib/sessions** v0.0.5 - Session management
 
 ### Archive & Browser
 - **playwright-community/playwright-go** v0.4501.1 - Browser automation
 - **go-git/go-git/v5** v5.8.1 - Git operations
-- **klauspost/compress** v1.16.7 - zstd compression
+- **klauspost/compress** v1.18.0 - zstd compression
 
 ### Utilities
-- **golang.org/x/crypto** v0.23.0 - Password hashing (bcrypt)
-- **golang.org/x/net** v0.25.0 - Network utilities
+- **golang.org/x/crypto** v0.33.0 - Password hashing (bcrypt)
+- **golang.org/x/net** v0.34.0 - Network utilities
+- **kelseyhightower/envconfig** v1.4.0 - Environment configuration
 
 ## Development Workflow
 
@@ -216,11 +222,6 @@ go test -run TestFSStorage    # Run specific test
 2. Add migration logic to `cmd/main.go` (AutoMigrate call)
 3. Test with `make db-reset` for clean database
 
-### Adding New API Endpoints
-1. Add handler in appropriate `internal/handlers/` file
-2. Register route in `cmd/main.go`
-3. Update this documentation
-
 ## Troubleshooting
 
 ### Common Issues
@@ -228,25 +229,28 @@ go test -run TestFSStorage    # Run specific test
 - **yt-dlp not found**: Install with `pip install yt-dlp`
 - **Database connection**: Check PostgreSQL is running and credentials match
 - **Permission errors**: Ensure storage/cache directories are writable
-- **Memory issues**: Increase Docker memory limits (default: 2GB for Playwright)
+- **Browser leaks**: Check `/status/browser` endpoint for monitoring data
 
-### Health Checks
+### Production Debugging
+- **SSH Access**: `ssh root@archive.selfhosted.hackclub.com`
+- **Health Checks**: Monitor `/health` and `/status/browser` endpoints
+- **Logs**: Check Coolify dashboard or container logs
+- **Database**: Connect via environment variables in deployment
+
+### Health Monitoring
 - Startup health checks verify yt-dlp and Playwright availability
-- Non-critical failures log warnings but don't stop startup
-- Manual health check: Check application logs on startup
-
-### Log Cleanup
-- Archive logs are automatically cleaned after 30 days for completed items
-- Runs daily cleanup routine in background
-- Logs available via admin interface and API endpoints
+- Browser process monitoring with leak detection
+- SOCKS proxy health monitoring when configured
+- Automatic log cleanup (30 days for completed items)
 
 ## Architecture Notes
 
 - **Modular Design**: Clean separation of concerns with internal packages
 - **Interface-Driven**: Storage and Archiver interfaces for extensibility
 - **Resilient Processing**: Error handling with retries, timeouts, and status tracking
-- **Memory Efficient**: Streaming operations for large files
+- **Memory Efficient**: Streaming operations for large files with compression
 - **Production Ready**: Docker deployment with health checks and resource limits
 - **Git Integration**: Full Git HTTP backend for repository cloning
-- **Session Security**: Secure cookie-based authentication
+- **API-First**: RESTful API with web interface as overlay
 - **Queue Management**: Robust job queue with worker pool and retry logic
+- **Browser Safety**: Process monitoring and cleanup to prevent resource leaks
