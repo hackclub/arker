@@ -101,13 +101,23 @@ func IsYouTubeURL(url string) bool {
 	return strings.Contains(lowerURL, "youtube.com") || strings.Contains(lowerURL, "youtu.be")
 }
 
+// Check if URL is a Vimeo URL
+func IsVimeoURL(url string) bool {
+	lowerURL := strings.ToLower(url)
+	return strings.Contains(lowerURL, "vimeo.com")
+}
+
+// Check if URL is a video URL (YouTube, Vimeo, etc.)
+func IsVideoURL(url string) bool {
+	return IsYouTubeURL(url) || IsVimeoURL(url)
+}
+
 // Get archive types based on URL patterns
 func GetArchiveTypes(url string) []string {
 	types := []string{"mhtml", "screenshot"}
-	lowerURL := strings.ToLower(url)
 	
-	// Add YouTube archiver for YouTube URLs
-	if strings.Contains(lowerURL, "youtube.com") || strings.Contains(lowerURL, "youtu.be") {
+	// Add YouTube archiver for video URLs (YouTube, Vimeo, etc.)
+	if IsVideoURL(url) {
 		types = append(types, "youtube")
 	}
 	

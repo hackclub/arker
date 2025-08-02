@@ -9,11 +9,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// YTArchiver (streams directly from yt-dlp stdout)
+// YTArchiver downloads videos from YouTube, Vimeo, and other platforms (streams directly from yt-dlp stdout)
 type YTArchiver struct{}
 
 func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *PWBundle, error) {
-	fmt.Fprintf(logWriter, "Starting YouTube archive for: %s\n", url)
+	fmt.Fprintf(logWriter, "Starting video archive for: %s\n", url)
 	
 	// Check context before starting
 	select {
@@ -120,6 +120,6 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 		return nil, "", "", nil, err
 	}
 	
-	fmt.Fprintf(logWriter, "YouTube download started successfully\n")
+	fmt.Fprintf(logWriter, "Video download started successfully\n")
 	return pr, ".mp4", "video/mp4", nil, nil
 }

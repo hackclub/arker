@@ -61,7 +61,7 @@ func DisplayDefault(c *gin.Context, db *gorm.DB) {
 	
 	// Determine the default archive type based on URL type
 	isGit := utils.IsGitURL(archivedURL.Original)
-	isYouTube := utils.IsYouTubeURL(archivedURL.Original)
+	isVideo := utils.IsVideoURL(archivedURL.Original)
 	var defaultType string
 	
 	if isGit {
@@ -77,8 +77,8 @@ func DisplayDefault(c *gin.Context, db *gorm.DB) {
 				break
 			}
 		}
-	} else if isYouTube {
-		// For YouTube URLs, prefer youtube -> mhtml -> screenshot -> git
+	} else if isVideo {
+		// For video URLs (YouTube, Vimeo, etc.), prefer youtube -> mhtml -> screenshot -> git
 		for _, preferredType := range []string{"youtube", "mhtml", "screenshot", "git"} {
 			for _, item := range capture.ArchiveItems {
 				if item.Type == preferredType {
@@ -152,7 +152,7 @@ func DisplayDefault(c *gin.Context, db *gorm.DB) {
 		"host":          c.Request.Host,
 		"original_url":  archivedURL.Original,
 		"is_git":        isGit,
-		"is_youtube":    isYouTube,
+		"is_video":      isVideo,
 		"git_repo_name": gitRepoName,
 		"download_filename": filename,
 		"queue_position": queuePosition,
@@ -193,7 +193,7 @@ func DisplayType(c *gin.Context, db *gorm.DB) {
 	
 	// Check if this is a git repository and generate clone info
 	isGit := utils.IsGitURL(archivedURL.Original)
-	isYouTube := utils.IsYouTubeURL(archivedURL.Original)
+	isVideo := utils.IsVideoURL(archivedURL.Original)
 	var gitRepoName string
 	if isGit {
 		gitRepoName = utils.ExtractRepoName(archivedURL.Original)
@@ -215,7 +215,7 @@ func DisplayType(c *gin.Context, db *gorm.DB) {
 		"host":          c.Request.Host,
 		"original_url":  archivedURL.Original,
 		"is_git":        isGit,
-		"is_youtube":    isYouTube,
+		"is_video":      isVideo,
 		"git_repo_name": gitRepoName,
 		"download_filename": filename,
 		"queue_position": queuePosition,
