@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/url"
 	"os"
 	"sync"
 	"time"
 
 	"arker/internal/monitoring"
+	proxyutil "arker/internal/proxy"
 	"github.com/playwright-community/playwright-go"
 )
 
@@ -108,12 +108,12 @@ func (b *PWBundle) CreateBrowser() error {
 	contextOptions := playwright.BrowserNewContextOptions{}
 	
 	// Configure SOCKS5 proxy if available
-	if proxyURL := os.Getenv("SOCKS5_PROXY"); proxyURL != "" {
+	if proxyURL := proxyutil.GetProxyURL(); proxyURL != "" {
 		// Use local proxy server that handles authentication
 		contextOptions.Proxy = &playwright.Proxy{
-			Server: "socks5://127.0.0.1:7777",
+			Server: proxyURL,
 		}
-		fmt.Fprintf(b.logWriter, "Using local SOCKS5 proxy: socks5://127.0.0.1:7777 (forwarding to %s)\n", proxyURL)
+		fmt.Fprintf(b.logWriter, "Using SOCKS5 proxy: %s\n", proxyURL)
 	}
 	
 	context, err := browser.NewContext(contextOptions)
@@ -314,41 +314,7 @@ func (b *PWBundle) GetLogWriter() io.Writer {
 
 
 
-// Helper function to get SOCKS5 proxy setting (moved from browser_utils.go)
+// Helper function to get SOCKS5 proxy setting (deprecated - use proxyutil.GetProxyURL)
 func getSocks5Proxy() string {
-	return os.Getenv("SOCKS5_PROXY")
-}
-
-// parseProxyConfig parses the SOCKS5_PROXY environment variable and returns a Playwright proxy config
-func parseProxyConfig() *playwright.Proxy {
-	proxyURL := os.Getenv("SOCKS5_PROXY")
-	if proxyURL == "" {
-		return nil
-	}
-	
-	// Parse the proxy URL
-	u, err := url.Parse(proxyURL)
-	if err != nil {
-		slog.Error("Failed to parse proxy URL", "url", proxyURL, "error", err)
-		return nil
-	}
-	
-	// Build the server URL without credentials
-	server := fmt.Sprintf("%s://%s", u.Scheme, u.Host)
-	
-	proxy := &playwright.Proxy{
-		Server: server,
-	}
-	
-	// Extract username and password if present
-	if u.User != nil {
-		if username := u.User.Username(); username != "" {
-			proxy.Username = &username
-		}
-		if password, ok := u.User.Password(); ok && password != "" {
-			proxy.Password = &password
-		}
-	}
-	
-	return proxy
+	return proxyutil.GetProxyURL()
 }
