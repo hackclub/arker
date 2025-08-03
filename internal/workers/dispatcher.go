@@ -62,10 +62,15 @@ func (d *Dispatcher) dispatchPendingJobs() {
 	startTime := time.Now()
 	
 	// First, handle failed jobs that should be retried (failed > 30 seconds ago)
+	// Update created_at to current time so retries go to back of queue
 	retryTime := time.Now().Add(-30 * time.Second)
+	currentTime := time.Now()
 	retryResult := d.db.Model(&models.ArchiveItem{}).
 		Where("status = 'failed' AND retry_count < ? AND updated_at < ?", 3, retryTime).
-		Update("status", "pending")
+		Updates(map[string]interface{}{
+			"status": "pending",
+			"created_at": currentTime,
+		})
 	
 	if retryResult.RowsAffected > 0 {
 		slog.Info("Auto-retrying failed jobs",
