@@ -53,14 +53,15 @@ type Capture struct {
 // ArchiveItem represents a specific type of archive (screenshot, mhtml, etc.)
 type ArchiveItem struct {
 	gorm.Model
-	CaptureID  uint
-	Type       string // mhtml, screenshot, git, youtube
-	Status     string // pending, processing, completed, failed
-	StorageKey string
-	Extension  string // .webp, .mhtml, .tar.zst, .mp4, etc.
-	FileSize   int64  // file size in bytes
-	Logs       string `gorm:"type:text"`
-	RetryCount int
+	CaptureID     uint
+	Type          string // mhtml, screenshot, git, youtube
+	Status        string // pending, processing, completed, failed
+	StorageKey    string
+	Extension     string // .webp, .mhtml, .tar.zst, .mp4, etc.
+	FileSize      int64  // file size in bytes
+	Logs          string `gorm:"type:text"`
+	RetryCount    int
+	LastQueuedAt  *time.Time // when this job was last added to the queue (for ordering)
 }
 
 // Job represents a job in the queue

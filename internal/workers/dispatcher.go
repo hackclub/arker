@@ -62,14 +62,14 @@ func (d *Dispatcher) dispatchPendingJobs() {
 	startTime := time.Now()
 	
 	// First, handle failed jobs that should be retried (failed > 30 seconds ago)
-	// Update created_at to current time so retries go to back of queue
+	// Update last_queued_at to current time so retries go to back of queue
 	retryTime := time.Now().Add(-30 * time.Second)
 	currentTime := time.Now()
 	retryResult := d.db.Model(&models.ArchiveItem{}).
 		Where("status = 'failed' AND retry_count < ? AND updated_at < ?", 3, retryTime).
 		Updates(map[string]interface{}{
 			"status": "pending",
-			"created_at": currentTime,
+			"last_queued_at": currentTime,
 		})
 	
 	if retryResult.RowsAffected > 0 {
@@ -104,7 +104,7 @@ func (d *Dispatcher) dispatchPendingJobs() {
 	
 	var pendingItems []models.ArchiveItem
 	err := d.db.Where("status = 'pending' AND retry_count < ?", 3).
-		Order("created_at ASC").
+		Order("COALESCE(last_queued_at, created_at) ASC").
 		Limit(50). // Process up to 50 at a time
 		Find(&pendingItems).Error
 	

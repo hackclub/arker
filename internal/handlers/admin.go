@@ -116,9 +116,11 @@ func RetryAllFailedJobs(c *gin.Context, db *gorm.DB) {
 		}
 		
 		// Reset the item status to pending and reset retry count for manual retry
+		currentTime := time.Now()
 		item.Status = "pending"
 		item.RetryCount = 0 // Reset retry count for manual retry
-		item.Logs = "Manual bulk retry at " + time.Now().Format("2006-01-02 15:04:05") + " (retry count reset)\n" + item.Logs
+		item.LastQueuedAt = &currentTime // Put manual retries at back of queue
+		item.Logs = "Manual bulk retry at " + currentTime.Format("2006-01-02 15:04:05") + " (retry count reset)\n" + item.Logs
 		
 		if err := db.Save(&item).Error; err != nil {
 			continue // Skip this item if we can't save
