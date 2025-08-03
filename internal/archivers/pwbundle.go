@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"sync"
 	"time"
@@ -83,11 +84,8 @@ func (b *PWBundle) CreateBrowser() error {
 		"--single-process",   // Run renderer in the same process as browser (reduces process count)
 	}
 	
-	// Add SOCKS5 proxy configuration if available
-	if socks5Proxy := getSocks5Proxy(); socks5Proxy != "" {
-		launchArgs = append(launchArgs, "--proxy-server="+socks5Proxy)
-		fmt.Fprintf(b.logWriter, "Using SOCKS5 proxy: %s\n", socks5Proxy)
-	}
+	// SOCKS5 proxy configuration is now handled at the context level
+	// Chrome's --proxy-server argument doesn't support SOCKS5 authentication
 	
 	// Set EGL_PLATFORM for Intel GPU hardware acceleration
 	os.Setenv("EGL_PLATFORM", "surfaceless")
@@ -107,7 +105,15 @@ func (b *PWBundle) CreateBrowser() error {
 	
 	// Create a new browser context for isolation
 	// Each context is like an incognito window with its own storage
-	context, err := browser.NewContext()
+	contextOptions := playwright.BrowserNewContextOptions{}
+	
+	// Configure SOCKS5 proxy with authentication if available
+	if proxyConfig := parseProxyConfig(); proxyConfig != nil {
+		contextOptions.Proxy = proxyConfig
+		fmt.Fprintf(b.logWriter, "Using SOCKS5 proxy: %s\n", contextOptions.Proxy.Server)
+	}
+	
+	context, err := browser.NewContext(contextOptions)
 	if err != nil {
 		fmt.Fprintf(b.logWriter, "Failed to create browser context: %v\n", err)
 		return fmt.Errorf("failed to create browser context: %w", err)
@@ -308,4 +314,38 @@ func (b *PWBundle) GetLogWriter() io.Writer {
 // Helper function to get SOCKS5 proxy setting (moved from browser_utils.go)
 func getSocks5Proxy() string {
 	return os.Getenv("SOCKS5_PROXY")
+}
+
+// parseProxyConfig parses the SOCKS5_PROXY environment variable and returns a Playwright proxy config
+func parseProxyConfig() *playwright.Proxy {
+	proxyURL := os.Getenv("SOCKS5_PROXY")
+	if proxyURL == "" {
+		return nil
+	}
+	
+	// Parse the proxy URL
+	u, err := url.Parse(proxyURL)
+	if err != nil {
+		slog.Error("Failed to parse proxy URL", "url", proxyURL, "error", err)
+		return nil
+	}
+	
+	// Build the server URL without credentials
+	server := fmt.Sprintf("%s://%s", u.Scheme, u.Host)
+	
+	proxy := &playwright.Proxy{
+		Server: server,
+	}
+	
+	// Extract username and password if present
+	if u.User != nil {
+		if username := u.User.Username(); username != "" {
+			proxy.Username = &username
+		}
+		if password, ok := u.User.Password(); ok && password != "" {
+			proxy.Password = &password
+		}
+	}
+	
+	return proxy
 }

@@ -1,7 +1,6 @@
 package archivers
 
 import (
-	"os"
 	"github.com/playwright-community/playwright-go"
 	"arker/internal/monitoring"
 )
@@ -25,10 +24,8 @@ func CreateBrowserInstance() (*playwright.Playwright, playwright.Browser, error)
 		"--disable-features=VizDisplayCompositor",
 	}
 	
-	// Add SOCKS5 proxy configuration if SOCKS5_PROXY is set
-	if socks5Proxy := os.Getenv("SOCKS5_PROXY"); socks5Proxy != "" {
-		launchArgs = append(launchArgs, "--proxy-server="+socks5Proxy)
-	}
+	// SOCKS5 proxy configuration is now handled at the context level
+	// Chrome's --proxy-server argument doesn't support SOCKS5 authentication
 	
 	browser, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
 		Headless: playwright.Bool(true),
