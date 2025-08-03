@@ -6,8 +6,24 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"syscall"
 	"gorm.io/gorm"
 )
+
+// cmdReader wraps a pipe and ensures cmd.Wait() is called when the reader is closed
+type cmdReader struct {
+	io.ReadCloser
+	cmd *exec.Cmd
+}
+
+func (cr *cmdReader) Close() error {
+	err1 := cr.ReadCloser.Close()
+	err2 := cr.cmd.Wait() // Reap the child process
+	if err1 != nil {
+		return err1
+	}
+	return err2
+}
 
 // YTArchiver downloads videos from YouTube, Vimeo, and other platforms (streams directly from yt-dlp stdout)
 type YTArchiver struct{}
@@ -55,6 +71,9 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	cmd := exec.CommandContext(ctx, "yt-dlp")
 	cmd.Args = append(cmd.Args, dlArgs...)
 	cmd.Args = append(cmd.Args, url)
+	
+	// Set process group so we can kill the entire process tree on timeout
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	
 	pr, err := cmd.StdoutPipe()
 	if err != nil {
@@ -120,6 +139,18 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 		return nil, "", "", nil, err
 	}
 	
+	// Kill the whole process group when the context times out
+	go func() {
+		<-ctx.Done()
+		if cmd.Process != nil {
+			fmt.Fprintf(logWriter, "Context cancelled, killing yt-dlp process group\n")
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	}()
+	
 	fmt.Fprintf(logWriter, "Video download started successfully\n")
-	return pr, ".mp4", "video/mp4", nil, nil
+	
+	// Create reader that guarantees Wait() is executed when closed
+	cmdPipeReader := &cmdReader{ReadCloser: pr, cmd: cmd}
+	return cmdPipeReader, ".mp4", "video/mp4", nil, nil
 }

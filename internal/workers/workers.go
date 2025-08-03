@@ -270,6 +270,14 @@ func saveArchiveData(data io.Reader, ext, shortID, jobType string, storage stora
 	}
 	
 	_, err = io.Copy(w, data)
+	
+	// Close the data reader if it's a closer (triggers cmd.Wait() for yt-dlp processes)
+	if c, ok := data.(io.Closer); ok {
+		if closeErr := c.Close(); closeErr != nil && err == nil {
+			err = closeErr // Preserve the close error if copy succeeded
+		}
+	}
+	
 	if err != nil {
 		w.Close() // Close on error
 		db.Model(item).Updates(map[string]interface{}{
