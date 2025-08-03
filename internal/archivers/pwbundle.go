@@ -109,8 +109,16 @@ func (b *PWBundle) CreateBrowser() error {
 	
 	// Configure SOCKS5 proxy with authentication if available
 	if proxyConfig := parseProxyConfig(); proxyConfig != nil {
-		contextOptions.Proxy = proxyConfig
-		fmt.Fprintf(b.logWriter, "Using SOCKS5 proxy: %s\n", contextOptions.Proxy.Server)
+		// Use local proxy server if upstream proxy is configured
+		if os.Getenv("SOCKS5_PROXY") != "" {
+			contextOptions.Proxy = &playwright.Proxy{
+				Server: "socks5://127.0.0.1:7777",
+			}
+			fmt.Fprintf(b.logWriter, "Using local SOCKS5 proxy: socks5://127.0.0.1:7777 (forwarding to upstream)\n")
+		} else {
+			contextOptions.Proxy = proxyConfig
+			fmt.Fprintf(b.logWriter, "Using direct SOCKS5 proxy: %s\n", contextOptions.Proxy.Server)
+		}
 	}
 	
 	context, err := browser.NewContext(contextOptions)

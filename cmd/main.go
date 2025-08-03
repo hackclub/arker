@@ -19,6 +19,7 @@ import (
 	"arker/internal/handlers"
 	"arker/internal/models"
 	"arker/internal/monitoring"
+	"arker/internal/proxy"
 	"arker/internal/storage"
 	"arker/internal/utils"
 	"arker/internal/workers"
@@ -268,6 +269,17 @@ func main() {
 	// Initialize browser monitoring
 	monitor := monitoring.GetGlobalMonitor()
 	slog.Info("Browser monitoring initialized")
+	
+	// Start internal SOCKS5 proxy server if needed
+	proxyServer, err := proxy.StartProxyServer()
+	if err != nil {
+		slog.Error("Failed to start SOCKS5 proxy server", "error", err)
+		log.Fatal("Failed to start proxy server:", err)
+	}
+	if proxyServer != nil {
+		defer proxyServer.Stop()
+		slog.Info("SOCKS5 proxy server started successfully")
+	}
 	
 	// Start workers
 	slog.Info("Starting worker pool", "worker_count", cfg.MaxWorkers)
