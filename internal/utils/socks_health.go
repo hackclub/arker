@@ -7,11 +7,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"sync"
 	"time"
 
 	"golang.org/x/net/proxy"
+	proxyutil "arker/internal/proxy"
 )
 
 // SOCKSHealthStatus represents the current status of the SOCKS proxy
@@ -47,8 +47,8 @@ func GetSOCKSHealthChecker() *SOCKSHealthChecker {
 
 // NewSOCKSHealthChecker creates a new SOCKS health checker
 func NewSOCKSHealthChecker() *SOCKSHealthChecker {
-	proxyURL := os.Getenv("SOCKS5_PROXY")
-	enabled := proxyURL != ""
+	enabled := proxyutil.IsProxyEnabled()
+	proxyURL := proxyutil.GetProxyURL() // Use local proxy for health checks
 	
 	checker := &SOCKSHealthChecker{
 		proxyURL:      proxyURL,

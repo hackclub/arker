@@ -107,18 +107,13 @@ func (b *PWBundle) CreateBrowser() error {
 	// Each context is like an incognito window with its own storage
 	contextOptions := playwright.BrowserNewContextOptions{}
 	
-	// Configure SOCKS5 proxy with authentication if available
-	if proxyConfig := parseProxyConfig(); proxyConfig != nil {
-		// Use local proxy server if upstream proxy is configured
-		if os.Getenv("SOCKS5_PROXY") != "" {
-			contextOptions.Proxy = &playwright.Proxy{
-				Server: "socks5://127.0.0.1:7777",
-			}
-			fmt.Fprintf(b.logWriter, "Using local SOCKS5 proxy: socks5://127.0.0.1:7777 (forwarding to upstream)\n")
-		} else {
-			contextOptions.Proxy = proxyConfig
-			fmt.Fprintf(b.logWriter, "Using direct SOCKS5 proxy: %s\n", contextOptions.Proxy.Server)
+	// Configure SOCKS5 proxy if available
+	if proxyURL := os.Getenv("SOCKS5_PROXY"); proxyURL != "" {
+		// Use local proxy server that handles authentication
+		contextOptions.Proxy = &playwright.Proxy{
+			Server: "socks5://127.0.0.1:7777",
 		}
+		fmt.Fprintf(b.logWriter, "Using local SOCKS5 proxy: socks5://127.0.0.1:7777 (forwarding to %s)\n", proxyURL)
 	}
 	
 	context, err := browser.NewContext(contextOptions)

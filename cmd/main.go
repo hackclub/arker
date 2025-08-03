@@ -271,14 +271,20 @@ func main() {
 	slog.Info("Browser monitoring initialized")
 	
 	// Start internal SOCKS5 proxy server if needed
-	proxyServer, err := proxy.StartProxyServer()
-	if err != nil {
-		slog.Error("Failed to start SOCKS5 proxy server", "error", err)
-		log.Fatal("Failed to start proxy server:", err)
-	}
-	if proxyServer != nil {
-		defer proxyServer.Stop()
-		slog.Info("SOCKS5 proxy server started successfully")
+	upstreamProxy := os.Getenv("SOCKS5_PROXY")
+	if upstreamProxy != "" {
+		slog.Info("Starting internal SOCKS5 proxy server", "upstream", upstreamProxy)
+		proxyServer, err := proxy.StartProxyServer()
+		if err != nil {
+			slog.Error("Failed to start SOCKS5 proxy server", "error", err)
+			log.Fatal("Failed to start proxy server:", err)
+		}
+		if proxyServer != nil {
+			defer proxyServer.Stop()
+			slog.Info("SOCKS5 proxy server started successfully", "listen_addr", "127.0.0.1:7777")
+		}
+	} else {
+		slog.Info("No SOCKS5_PROXY configured, skipping proxy server")
 	}
 	
 	// Start workers

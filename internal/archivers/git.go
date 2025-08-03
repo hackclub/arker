@@ -15,6 +15,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"golang.org/x/net/proxy"
+	proxyutil "arker/internal/proxy"
 )
 
 // GitArchiver
@@ -30,18 +31,18 @@ func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 	default:
 	}
 	
-	// Configure SOCKS5 proxy if SOCKS5_PROXY is set
-	if socks5Proxy := os.Getenv("SOCKS5_PROXY"); socks5Proxy != "" {
-		fmt.Fprintf(logWriter, "Using SOCKS5 proxy for git operations: %s\n", socks5Proxy)
+	// Configure SOCKS5 proxy if available
+	if proxyURL := proxyutil.GetProxyURL(); proxyURL != "" {
+		fmt.Fprintf(logWriter, "Using SOCKS5 proxy for git operations: %s\n", proxyURL)
 		
-		proxyURL, err := neturl.Parse(socks5Proxy)
+		parsedURL, err := neturl.Parse(proxyURL)
 		if err != nil {
 			fmt.Fprintf(logWriter, "Failed to parse proxy URL: %v\n", err)
 			return nil, "", "", nil, err
 		}
 		
 		// Create SOCKS5 dialer
-		dialer, err := proxy.FromURL(proxyURL, proxy.Direct)
+		dialer, err := proxy.FromURL(parsedURL, proxy.Direct)
 		if err != nil {
 			fmt.Fprintf(logWriter, "Failed to create proxy dialer: %v\n", err)
 			return nil, "", "", nil, err

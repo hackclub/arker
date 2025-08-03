@@ -143,14 +143,14 @@ func (s *SOCKS5ProxyServer) handleConnection(clientConn net.Conn) {
 
 // handleHandshake performs SOCKS5 initial handshake
 func (s *SOCKS5ProxyServer) handleHandshake(conn net.Conn) error {
-	// Read client greeting
-	buf := make([]byte, 3)
-	if _, err := io.ReadFull(conn, buf[:2]); err != nil {
-		return fmt.Errorf("failed to read greeting: %w", err)
+	// Read client greeting header
+	header := make([]byte, 2)
+	if _, err := io.ReadFull(conn, header); err != nil {
+		return fmt.Errorf("failed to read greeting header: %w", err)
 	}
 
-	version := buf[0]
-	nmethods := buf[1]
+	version := header[0]
+	nmethods := header[1]
 
 	if version != 0x05 {
 		return fmt.Errorf("unsupported SOCKS version: %d", version)
@@ -160,6 +160,22 @@ func (s *SOCKS5ProxyServer) handleHandshake(conn net.Conn) error {
 	methods := make([]byte, nmethods)
 	if _, err := io.ReadFull(conn, methods); err != nil {
 		return fmt.Errorf("failed to read auth methods: %w", err)
+	}
+
+	// Check if "no authentication" (0x00) is supported
+	noAuthSupported := false
+	for _, method := range methods {
+		if method == 0x00 {
+			noAuthSupported = true
+			break
+		}
+	}
+
+	if !noAuthSupported {
+		// Return "no acceptable methods"
+		response := []byte{0x05, 0xFF}
+		conn.Write(response)
+		return fmt.Errorf("client doesn't support no-authentication method")
 	}
 
 	// Respond with "no authentication required"
@@ -244,8 +260,19 @@ func (s *SOCKS5ProxyServer) connectToUpstream(targetAddr string) (net.Conn, erro
 		return nil, fmt.Errorf("failed to parse upstream URL: %w", err)
 	}
 
+	// Add default port if missing
+	host, port, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		// No port specified, add default SOCKS5 port
+		host = u.Host
+		port = "1080"
+	}
+	
+	// Properly format IPv6 addresses
+	upstreamAddr := net.JoinHostPort(host, port)
+
 	// Connect to upstream proxy
-	upstreamConn, err := net.Dial("tcp", u.Host)
+	upstreamConn, err := net.Dial("tcp", upstreamAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to upstream: %w", err)
 	}
@@ -267,8 +294,8 @@ func (s *SOCKS5ProxyServer) connectToUpstream(targetAddr string) (net.Conn, erro
 
 // authenticateUpstream performs SOCKS5 authentication with the upstream proxy
 func (s *SOCKS5ProxyServer) authenticateUpstream(conn net.Conn, userInfo *url.Userinfo) error {
-	// Send greeting with username/password auth method
-	greeting := []byte{0x05, 0x01, 0x02} // Version 5, 1 method, method 2 (username/password)
+	// Send greeting with both no-auth and username/password methods
+	greeting := []byte{0x05, 0x02, 0x00, 0x02} // Version 5, 2 methods: no-auth (0x00) and username/password (0x02)
 	if _, err := conn.Write(greeting); err != nil {
 		return fmt.Errorf("failed to send greeting: %w", err)
 	}
@@ -279,40 +306,53 @@ func (s *SOCKS5ProxyServer) authenticateUpstream(conn net.Conn, userInfo *url.Us
 		return fmt.Errorf("failed to read greeting response: %w", err)
 	}
 
-	if response[0] != 0x05 || response[1] != 0x02 {
-		return fmt.Errorf("upstream proxy doesn't support username/password auth")
+	if response[0] != 0x05 {
+		return fmt.Errorf("upstream proxy responded with wrong SOCKS version: %d", response[0])
 	}
 
-	// Send username/password
-	if userInfo == nil {
-		return fmt.Errorf("no credentials provided for upstream proxy")
+	selectedMethod := response[1]
+	switch selectedMethod {
+	case 0x00:
+		// No authentication required
+		return nil
+		
+	case 0x02:
+		// Username/password authentication required
+		if userInfo == nil {
+			return fmt.Errorf("upstream proxy requires authentication but no credentials provided")
+		}
+
+		username := userInfo.Username()
+		password, _ := userInfo.Password()
+
+		authReq := make([]byte, 0, 3+len(username)+len(password))
+		authReq = append(authReq, 0x01) // Version 1
+		authReq = append(authReq, byte(len(username)))
+		authReq = append(authReq, username...)
+		authReq = append(authReq, byte(len(password)))
+		authReq = append(authReq, password...)
+
+		if _, err := conn.Write(authReq); err != nil {
+			return fmt.Errorf("failed to send auth request: %w", err)
+		}
+
+		// Read auth response
+		authResp := make([]byte, 2)
+		if _, err := io.ReadFull(conn, authResp); err != nil {
+			return fmt.Errorf("failed to read auth response: %w", err)
+		}
+
+		if authResp[1] != 0x00 {
+			return fmt.Errorf("authentication failed")
+		}
+		return nil
+		
+	case 0xFF:
+		return fmt.Errorf("upstream proxy rejected all authentication methods")
+		
+	default:
+		return fmt.Errorf("upstream proxy selected unsupported auth method: %d", selectedMethod)
 	}
-
-	username := userInfo.Username()
-	password, _ := userInfo.Password()
-
-	authReq := make([]byte, 0, 3+len(username)+len(password))
-	authReq = append(authReq, 0x01) // Version 1
-	authReq = append(authReq, byte(len(username)))
-	authReq = append(authReq, username...)
-	authReq = append(authReq, byte(len(password)))
-	authReq = append(authReq, password...)
-
-	if _, err := conn.Write(authReq); err != nil {
-		return fmt.Errorf("failed to send auth request: %w", err)
-	}
-
-	// Read auth response
-	authResp := make([]byte, 2)
-	if _, err := io.ReadFull(conn, authResp); err != nil {
-		return fmt.Errorf("failed to read auth response: %w", err)
-	}
-
-	if authResp[1] != 0x00 {
-		return fmt.Errorf("authentication failed")
-	}
-
-	return nil
 }
 
 // sendUpstreamConnect sends a CONNECT request to the upstream proxy
@@ -367,6 +407,7 @@ func (s *SOCKS5ProxyServer) sendUpstreamConnect(conn net.Conn, targetAddr string
 	}
 
 	// Read bound address (we don't need it, but must consume it)
+	// Only read if the response was successful (REP = 0x00)
 	atyp := resp[3]
 	switch atyp {
 	case 0x01: // IPv4
@@ -432,4 +473,22 @@ func StartProxyServer() (*SOCKS5ProxyServer, error) {
 	}
 
 	return server, nil
+}
+
+// GetProxyURL returns the appropriate proxy URL to use throughout the application.
+// If SOCKS5_PROXY is configured, returns the local proxy server URL.
+// Otherwise returns empty string.
+func GetProxyURL() string {
+	upstreamProxy := os.Getenv("SOCKS5_PROXY")
+	if upstreamProxy == "" {
+		return "" // No proxy configured
+	}
+	
+	// Return local proxy server address
+	return "socks5://127.0.0.1:7777"
+}
+
+// IsProxyEnabled returns true if proxy is configured
+func IsProxyEnabled() bool {
+	return os.Getenv("SOCKS5_PROXY") != ""
 }
