@@ -11,6 +11,7 @@ import (
 type HealthCheckConfig struct {
 	CheckYtDlp     bool
 	CheckPlaywright bool
+	CheckAria2c    bool
 	Timeout        time.Duration
 }
 
@@ -19,6 +20,7 @@ func DefaultHealthCheckConfig() HealthCheckConfig {
 	return HealthCheckConfig{
 		CheckYtDlp:     true,
 		CheckPlaywright: true,
+		CheckAria2c:    true,
 		Timeout:        10 * time.Second,
 	}
 }
@@ -28,6 +30,12 @@ func RunHealthChecks(config HealthCheckConfig) error {
 	if config.CheckYtDlp {
 		if err := CheckYtDlpAvailability(config.Timeout); err != nil {
 			return fmt.Errorf("yt-dlp health check failed: %v", err)
+		}
+	}
+	
+	if config.CheckAria2c {
+		if err := CheckAria2cAvailability(config.Timeout); err != nil {
+			return fmt.Errorf("aria2c health check failed: %v", err)
 		}
 	}
 	
@@ -57,6 +65,26 @@ func CheckYtDlpAvailability(timeout time.Duration) error {
 		return nil
 	case <-time.After(timeout):
 		return fmt.Errorf("yt-dlp health check timed out after %v", timeout)
+	}
+}
+
+// CheckAria2cAvailability checks if aria2c is available and working
+func CheckAria2cAvailability(timeout time.Duration) error {
+	done := make(chan error, 1)
+	
+	go func() {
+		cmd := exec.Command("aria2c", "--version")
+		done <- cmd.Run()
+	}()
+	
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("aria2c not available or not working: %v", err)
+		}
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("aria2c health check timed out after %v", timeout)
 	}
 }
 

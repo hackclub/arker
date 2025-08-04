@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     ffmpeg \
+    aria2 \
     # Playwright browser dependencies
     libnss3 \
     libnspr4 \

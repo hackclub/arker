@@ -41,13 +41,14 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	
 	// Prepare command arguments
 	testArgs := []string{"--print", "title,duration,uploader"}
-	dlArgs := []string{"-f", "bestvideo+bestaudio/best", "--no-playlist", "--no-write-thumbnail", "--verbose", "--hls-prefer-native", "--prefer-free-formats", "-o", "-"}
+	dlArgs := []string{"-f", "bestvideo+bestaudio/best", "--no-playlist", "--no-write-thumbnail", "--verbose", "-o", "-"}
 	
 	// Add SOCKS5 proxy configuration if proxy is enabled
 	if proxyURL := proxyutil.GetProxyURL(); proxyURL != "" {
-		fmt.Fprintf(logWriter, "Using local SOCKS5 proxy for yt-dlp: %s\n", proxyURL)
+		fmt.Fprintf(logWriter, "Using aria2c external downloader with SOCKS5 proxy: %s\n", proxyURL)
 		testArgs = append([]string{"--proxy", proxyURL}, testArgs...)
-		dlArgs = append([]string{"--proxy", proxyURL}, dlArgs...)
+		// Use aria2c for downloads which supports SOCKS proxies
+		dlArgs = append([]string{"--external-downloader", "aria2c", "--external-downloader-args", "aria2c:--all-proxy=" + proxyURL}, dlArgs...)
 	}
 	
 	// First, test if yt-dlp can access the video
