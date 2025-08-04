@@ -10,25 +10,37 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // SOCKS5ProxyServer is a local SOCKS5 proxy that forwards to an authenticated upstream proxy
 type SOCKS5ProxyServer struct {
-	listenAddr   string
-	upstreamURL  string
-	listener     net.Listener
-	shutdown     chan struct{}
-	wg           sync.WaitGroup
-	running      bool
-	mu           sync.Mutex
+	listenAddr     string
+	upstreamURL    string
+	listener       net.Listener
+	shutdown       chan struct{}
+	wg             sync.WaitGroup
+	running        bool
+	mu             sync.Mutex
+	activeConns    int
+	connMu         sync.Mutex
+	connectTimeout time.Duration
+	relayTimeout   time.Duration
+	
+	// Circuit breaker for upstream failures
+	upstreamFailures    int
+	lastUpstreamFailure time.Time
+	upstreamMu          sync.Mutex
 }
 
 // NewSOCKS5ProxyServer creates a new SOCKS5 proxy server
 func NewSOCKS5ProxyServer(listenAddr, upstreamURL string) *SOCKS5ProxyServer {
 	return &SOCKS5ProxyServer{
-		listenAddr:  listenAddr,
-		upstreamURL: upstreamURL,
-		shutdown:    make(chan struct{}),
+		listenAddr:     listenAddr,
+		upstreamURL:    upstreamURL,
+		shutdown:       make(chan struct{}),
+		connectTimeout: 30 * time.Second, // Connection timeout
+		relayTimeout:   5 * time.Minute,  // Data relay timeout
 	}
 }
 
@@ -49,7 +61,11 @@ func (s *SOCKS5ProxyServer) Start() error {
 	s.listener = listener
 	s.running = true
 
-	slog.Info("SOCKS5 proxy server started", "listen_addr", s.listenAddr, "upstream", s.upstreamURL)
+	slog.Info("SOCKS5 proxy server started", 
+		"listen_addr", s.listenAddr, 
+		"upstream", s.upstreamURL,
+		"connect_timeout", s.connectTimeout,
+		"relay_timeout", s.relayTimeout)
 
 	s.wg.Add(1)
 	go s.acceptLoop()
@@ -109,6 +125,20 @@ func (s *SOCKS5ProxyServer) acceptLoop() {
 func (s *SOCKS5ProxyServer) handleConnection(clientConn net.Conn) {
 	defer s.wg.Done()
 	defer clientConn.Close()
+	
+	// Track active connections for monitoring
+	s.connMu.Lock()
+	s.activeConns++
+	s.connMu.Unlock()
+	
+	defer func() {
+		s.connMu.Lock()
+		s.activeConns--
+		s.connMu.Unlock()
+	}()
+	
+	// Set connection timeout
+	clientConn.SetDeadline(time.Now().Add(s.connectTimeout))
 
 	// Step 1: SOCKS5 handshake
 	if err := s.handleHandshake(clientConn); err != nil {
@@ -123,22 +153,37 @@ func (s *SOCKS5ProxyServer) handleConnection(clientConn net.Conn) {
 		return
 	}
 
-	// Step 3: Connect to upstream proxy
+	// Step 3: Check if upstream is healthy before attempting connection
+	if !s.isUpstreamHealthy() {
+		slog.Warn("Upstream proxy is unhealthy, rejecting connection", "target", targetAddr)
+		s.sendConnectResponse(clientConn, 0x01) // General failure
+		return
+	}
+
+	// Step 4: Connect to upstream proxy
 	upstreamConn, err := s.connectToUpstream(targetAddr)
 	if err != nil {
 		slog.Error("Failed to connect to upstream", "error", err, "target", targetAddr)
+		s.recordUpstreamFailure()
 		s.sendConnectResponse(clientConn, 0x01) // General failure
 		return
 	}
 	defer upstreamConn.Close()
+	
+	// Reset failure count on successful connection
+	s.resetUpstreamFailures()
 
-	// Step 4: Send success response
+	// Step 5: Send success response
 	if err := s.sendConnectResponse(clientConn, 0x00); err != nil {
 		slog.Error("Failed to send connect response", "error", err)
 		return
 	}
 
-	// Step 5: Relay data between client and upstream
+	// Step 6: Clear connection deadline for data relay phase
+	clientConn.SetDeadline(time.Time{})
+	upstreamConn.SetDeadline(time.Time{})
+	
+	// Step 7: Relay data between client and upstream
 	s.relayConnections(clientConn, upstreamConn)
 }
 
@@ -279,8 +324,11 @@ func (s *SOCKS5ProxyServer) connectToUpstream(targetAddr string) (net.Conn, erro
 	// Properly format IPv6 addresses
 	upstreamAddr := net.JoinHostPort(host, port)
 
-	// Connect to upstream proxy
-	upstreamConn, err := net.Dial("tcp", upstreamAddr)
+	// Connect to upstream proxy with timeout
+	dialer := net.Dialer{
+		Timeout: s.connectTimeout,
+	}
+	upstreamConn, err := dialer.Dial("tcp", upstreamAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to upstream: %w", err)
 	}
@@ -448,22 +496,99 @@ func (s *SOCKS5ProxyServer) sendConnectResponse(conn net.Conn, status byte) erro
 	return err
 }
 
-// relayConnections relays data between two connections
+// relayConnections relays data between two connections with timeout handling
 func (s *SOCKS5ProxyServer) relayConnections(conn1, conn2 net.Conn) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	relay := func(dst, src net.Conn) {
+	relay := func(dst, src net.Conn, direction string) {
 		defer wg.Done()
-		io.Copy(dst, src)
-		dst.Close()
-		src.Close()
+		defer dst.Close()
+		defer src.Close()
+		
+		// Set read/write timeouts for the relay phase
+		ticker := time.NewTicker(s.relayTimeout)
+		defer ticker.Stop()
+		
+		// Channel to signal completion
+		done := make(chan struct{})
+		
+		go func() {
+			defer close(done)
+			_, err := io.Copy(dst, src)
+			if err != nil && !isConnectionClosed(err) {
+				slog.Debug("Relay connection error", "direction", direction, "error", err)
+			}
+		}()
+		
+		// Wait for completion or timeout
+		select {
+		case <-done:
+			// Normal completion
+		case <-ticker.C:
+			slog.Debug("Relay connection timeout", "direction", direction, "timeout", s.relayTimeout)
+		}
 	}
 
-	go relay(conn1, conn2)
-	go relay(conn2, conn1)
+	go relay(conn1, conn2, "client->upstream")
+	go relay(conn2, conn1, "upstream->client")
 
 	wg.Wait()
+}
+
+// isConnectionClosed checks if an error indicates a closed connection
+func isConnectionClosed(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "use of closed network connection") ||
+		strings.Contains(err.Error(), "connection reset by peer") ||
+		strings.Contains(err.Error(), "broken pipe")
+}
+
+// isUpstreamHealthy checks if the upstream proxy is considered healthy
+func (s *SOCKS5ProxyServer) isUpstreamHealthy() bool {
+	s.upstreamMu.Lock()
+	defer s.upstreamMu.Unlock()
+	
+	// If we have recent failures, implement exponential backoff
+	if s.upstreamFailures > 0 {
+		backoffDuration := time.Duration(s.upstreamFailures*s.upstreamFailures) * time.Second
+		if backoffDuration > 60*time.Second {
+			backoffDuration = 60 * time.Second // Max 60 second backoff
+		}
+		
+		if time.Since(s.lastUpstreamFailure) < backoffDuration {
+			return false
+		}
+	}
+	
+	return true
+}
+
+// recordUpstreamFailure records a failure to connect to upstream
+func (s *SOCKS5ProxyServer) recordUpstreamFailure() {
+	s.upstreamMu.Lock()
+	defer s.upstreamMu.Unlock()
+	
+	s.upstreamFailures++
+	s.lastUpstreamFailure = time.Now()
+	
+	slog.Warn("Upstream proxy failure recorded", 
+		"failure_count", s.upstreamFailures, 
+		"last_failure", s.lastUpstreamFailure)
+}
+
+// resetUpstreamFailures resets the failure counter on successful connection
+func (s *SOCKS5ProxyServer) resetUpstreamFailures() {
+	s.upstreamMu.Lock()
+	defer s.upstreamMu.Unlock()
+	
+	if s.upstreamFailures > 0 {
+		slog.Info("Upstream proxy connection successful, resetting failure count", 
+			"previous_failures", s.upstreamFailures)
+		s.upstreamFailures = 0
+	}
 }
 
 // StartProxyServer starts a SOCKS5 proxy server if upstream proxy is configured
@@ -499,4 +624,52 @@ func GetProxyURL() string {
 // IsProxyEnabled returns true if proxy is configured
 func IsProxyEnabled() bool {
 	return os.Getenv("SOCKS5_PROXY") != ""
+}
+
+// ConnectionStats returns current connection statistics
+type ConnectionStats struct {
+	ActiveConnections   int    `json:"active_connections"`
+	IsRunning           bool   `json:"is_running"`
+	ConnectTimeout      string `json:"connect_timeout"`
+	RelayTimeout        string `json:"relay_timeout"`
+	UpstreamFailures    int    `json:"upstream_failures"`
+	UpstreamHealthy     bool   `json:"upstream_healthy"`
+	LastUpstreamFailure string `json:"last_upstream_failure,omitempty"`
+}
+
+// GetConnectionStats returns current connection statistics
+func (s *SOCKS5ProxyServer) GetConnectionStats() ConnectionStats {
+	s.mu.Lock()
+	s.connMu.Lock()
+	s.upstreamMu.Lock()
+	defer s.upstreamMu.Unlock()
+	defer s.connMu.Unlock()
+	defer s.mu.Unlock()
+	
+	stats := ConnectionStats{
+		ActiveConnections: s.activeConns,
+		IsRunning:         s.running,
+		ConnectTimeout:    s.connectTimeout.String(),
+		RelayTimeout:      s.relayTimeout.String(),
+		UpstreamFailures:  s.upstreamFailures,
+		UpstreamHealthy:   s.isUpstreamHealthyUnsafe(),
+	}
+	
+	if !s.lastUpstreamFailure.IsZero() {
+		stats.LastUpstreamFailure = s.lastUpstreamFailure.Format(time.RFC3339)
+	}
+	
+	return stats
+}
+
+// isUpstreamHealthyUnsafe checks upstream health without locking (caller must hold upstreamMu)
+func (s *SOCKS5ProxyServer) isUpstreamHealthyUnsafe() bool {
+	if s.upstreamFailures > 0 {
+		backoffDuration := time.Duration(s.upstreamFailures*s.upstreamFailures) * time.Second
+		if backoffDuration > 60*time.Second {
+			backoffDuration = 60 * time.Second
+		}
+		return time.Since(s.lastUpstreamFailure) >= backoffDuration
+	}
+	return true
 }
