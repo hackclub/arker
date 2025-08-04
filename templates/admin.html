@@ -58,15 +58,7 @@
         </div>
     </div>
     
-    <!-- SOCKS Proxy Health Banner -->
-    {{if .socksStatus.Enabled}}{{if not .socksStatus.IsHealthy}}
-    <div style="background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 15px; border-radius: 5px; margin-bottom: 20px; text-align: center;">
-        <strong>⚠️ SOCKS Proxy Unavailable</strong><br>
-        <span style="font-size: 14px;">{{.socksStatus.ErrorMessage}}</span><br>
-        <span style="font-size: 12px; color: #856404;">Last checked: {{.socksStatus.LastChecked.Format "Jan 2, 15:04:05"}}</span><br>
-        <span style="font-size: 12px; color: #666;">Archives may fail or use direct connection. Check your exit node.</span>
-    </div>
-    {{end}}{{end}}
+
     
     <div class="add-url-form" style="position: relative;">
         <div style="display: flex; justify-content: space-between; align-items: flex-start;">

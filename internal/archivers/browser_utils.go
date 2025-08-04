@@ -24,8 +24,7 @@ func CreateBrowserInstance() (*playwright.Playwright, playwright.Browser, error)
 		"--disable-features=VizDisplayCompositor",
 	}
 	
-	// SOCKS5 proxy configuration is now handled at the context level
-	// Chrome's --proxy-server argument doesn't support SOCKS5 authentication
+
 	
 	browser, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
 		Headless: playwright.Bool(true),

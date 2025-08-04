@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	neturl "net/url"
+
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,8 +16,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
-	"golang.org/x/net/proxy"
-	proxyutil "arker/internal/proxy"
+
 )
 
 // GitArchiver
@@ -28,7 +27,7 @@ var (
 	gitHTTPClient     *http.Client
 )
 
-// getGitHTTPClient returns a pooled HTTP client configured for git operations with SOCKS5 proxy
+// getGitHTTPClient returns a pooled HTTP client configured for git operations
 func getGitHTTPClient() *http.Client {
 	gitHTTPClientOnce.Do(func() {
 		transport := &http.Transport{
@@ -36,18 +35,6 @@ func getGitHTTPClient() *http.Client {
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     90 * time.Second,
 			DisableKeepAlives:   false,
-		}
-		
-		// Configure SOCKS5 proxy if available
-		if proxyURL := proxyutil.GetProxyURL(); proxyURL != "" {
-			parsedURL, err := neturl.Parse(proxyURL)
-			if err == nil {
-				// Create SOCKS5 dialer
-				dialer, err := proxy.FromURL(parsedURL, proxy.Direct)
-				if err == nil {
-					transport.Dial = dialer.Dial
-				}
-			}
 		}
 		
 		gitHTTPClient = &http.Client{
@@ -68,11 +55,8 @@ func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 	default:
 	}
 	
-	// Configure HTTP client with pooled connections and SOCKS5 proxy if available
+	// Configure HTTP client with pooled connections
 	httpClient := getGitHTTPClient()
-	if proxyutil.IsProxyEnabled() {
-		fmt.Fprintf(logWriter, "Using SOCKS5 proxy for git operations: %s\n", proxyutil.GetProxyURL())
-	}
 	
 	// Install pooled HTTP client for git operations
 	client.InstallProtocol("https", githttp.NewClient(httpClient))

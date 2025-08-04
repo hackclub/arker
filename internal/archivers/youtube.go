@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"gorm.io/gorm"
 	
-	proxyutil "arker/internal/proxy"
+
 )
 
 // cmdReader wraps a pipe and ensures cmd.Wait() is called when the reader is closed
@@ -43,13 +43,7 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	testArgs := []string{"--print", "title,duration,uploader"}
 	dlArgs := []string{"-f", "bestvideo+bestaudio/best", "--no-playlist", "--no-write-thumbnail", "--verbose", "-o", "-"}
 	
-	// Add SOCKS5 proxy configuration if proxy is enabled
-	if proxyURL := proxyutil.GetProxyURL(); proxyURL != "" {
-		fmt.Fprintf(logWriter, "Using aria2c external downloader with SOCKS5 proxy: %s\n", proxyURL)
-		testArgs = append([]string{"--proxy", proxyURL}, testArgs...)
-		// Use aria2c for downloads which supports SOCKS proxies
-		dlArgs = append([]string{"--external-downloader", "aria2c", "--external-downloader-args", "aria2c:--all-proxy=" + proxyURL}, dlArgs...)
-	}
+
 	
 	// First, test if yt-dlp can access the video
 	fmt.Fprintf(logWriter, "Testing video accessibility with yt-dlp...\n")

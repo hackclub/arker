@@ -152,7 +152,7 @@ git clone https://archive.selfhosted.hackclub.com/git/{shortid}
 - `MAX_WORKERS` - Worker pool size (default: `5`)
 - `PORT` - HTTP server port (default: `8080`)
 - `GIN_MODE` - Gin framework mode (`debug` for development)
-- `SOCKS5_PROXY` - SOCKS5 proxy for archiving traffic (e.g., `socks5://localhost:1080` or `socks5h://user:pass@proxy.example.com:7777`)
+
 - `LOGIN_TEXT` - Text to display under login form
 
 ### Authentication
@@ -165,7 +165,7 @@ git clone https://archive.selfhosted.hackclub.com/git/{shortid}
 - Session secret automatically generated with cryptographically secure random bytes
 - API keys with prefix for identification and hashed storage
 - Per-key usage tracking and activation controls
-- SOCKS5 proxy support for network isolation
+
 
 ## Testing
 
@@ -175,7 +175,7 @@ git clone https://archive.selfhosted.hackclub.com/git/{shortid}
 - `monitoring_test.go` - Browser monitoring tests
 - `validation_test.go` - Input validation tests
 - `login_text_test.go` - Login text handling tests
-- `socks_health_test.go` - SOCKS proxy health checks
+
 - `vimeo_test.go` - Vimeo video archiving tests
 
 ### Running Tests
@@ -240,7 +240,7 @@ go test -run TestFSStorage    # Run specific test
 ### Health Monitoring
 - Startup health checks verify yt-dlp and Playwright availability
 - Browser process monitoring with leak detection
-- SOCKS proxy health monitoring when configured
+
 - Automatic log cleanup (30 days for completed items)
 
 ## Architecture Notes

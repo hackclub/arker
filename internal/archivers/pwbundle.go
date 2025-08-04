@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"arker/internal/monitoring"
-	proxyutil "arker/internal/proxy"
+
 	"github.com/playwright-community/playwright-go"
 )
 
@@ -84,8 +84,7 @@ func (b *PWBundle) CreateBrowser() error {
 		"--single-process",   // Run renderer in the same process as browser (reduces process count)
 	}
 	
-	// SOCKS5 proxy configuration is now handled at the context level
-	// Chrome's --proxy-server argument doesn't support SOCKS5 authentication
+
 	
 	// Set EGL_PLATFORM for Intel GPU hardware acceleration
 	os.Setenv("EGL_PLATFORM", "surfaceless")
@@ -107,14 +106,7 @@ func (b *PWBundle) CreateBrowser() error {
 	// Each context is like an incognito window with its own storage
 	contextOptions := playwright.BrowserNewContextOptions{}
 	
-	// Configure SOCKS5 proxy if available
-	if proxyURL := proxyutil.GetProxyURL(); proxyURL != "" {
-		// Use local proxy server that handles authentication
-		contextOptions.Proxy = &playwright.Proxy{
-			Server: proxyURL,
-		}
-		fmt.Fprintf(b.logWriter, "Using SOCKS5 proxy: %s\n", proxyURL)
-	}
+
 	
 	context, err := browser.NewContext(contextOptions)
 	if err != nil {
@@ -314,7 +306,4 @@ func (b *PWBundle) GetLogWriter() io.Writer {
 
 
 
-// Helper function to get SOCKS5 proxy setting (deprecated - use proxyutil.GetProxyURL)
-func getSocks5Proxy() string {
-	return proxyutil.GetProxyURL()
-}
+
