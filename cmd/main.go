@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -11,10 +14,17 @@ import (
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/kelseyhightower/envconfig"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivermigrate"
+
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"riverqueue.com/riverui"
 	"arker/internal/archivers"
 	"arker/internal/handlers"
 	"arker/internal/models"
@@ -163,6 +173,86 @@ func populateFileSizes(db *gorm.DB, storage storage.Storage) {
 	}
 }
 
+// cleanupOrphanedPendingJobs finds archive items marked as pending but without corresponding River jobs
+func cleanupOrphanedPendingJobs(ctx context.Context, riverClient *river.Client[pgx.Tx], db *gorm.DB) error {
+	// Get all pending archive items
+	var pendingItems []models.ArchiveItem
+	if err := db.Where("status = 'pending'").Find(&pendingItems).Error; err != nil {
+		return err
+	}
+
+	if len(pendingItems) == 0 {
+		slog.Info("No pending jobs found during startup cleanup")
+		return nil
+	}
+
+	slog.Info("Checking for orphaned pending jobs", "pending_count", len(pendingItems))
+
+	// Get all current jobs from River with archive tags
+	params := river.NewJobListParams().
+		Kinds("archive").
+		First(1000) // Adjust if you expect more than 1000 jobs
+	
+	jobs, err := riverClient.JobList(ctx, params)
+	if err != nil {
+		return err
+	}
+
+	// Create a map of River job args for quick lookup
+	riverJobMap := make(map[string]bool)
+	for _, job := range jobs.Jobs {
+		// Try to unmarshal the job args to get the job details
+		if job.Kind == "archive" {
+			// Parse the job args as ArchiveJobArgs
+			var args workers.ArchiveJobArgs
+			if err := json.Unmarshal(job.EncodedArgs, &args); err != nil {
+				slog.Warn("Failed to unmarshal job args", "job_id", job.ID, "error", err)
+				continue
+			}
+			// Create a key based on capture_id and type to match with pending items
+			key := fmt.Sprintf("%d-%s", args.CaptureID, args.Type)
+			riverJobMap[key] = true
+		}
+	}
+
+	orphanedCount := 0
+	for _, item := range pendingItems {
+		// Create the same key format
+		key := fmt.Sprintf("%d-%s", item.CaptureID, item.Type)
+		
+		if !riverJobMap[key] {
+			// This pending item doesn't have a corresponding River job
+			currentTime := time.Now()
+			item.Status = "failed"
+			item.Logs = fmt.Sprintf("Startup cleanup at %s: Job was pending but not found in River queue (likely lost due to restart)\n%s", 
+				currentTime.Format("2006-01-02 15:04:05"), item.Logs)
+			
+			if err := db.Save(&item).Error; err != nil {
+				slog.Error("Failed to mark orphaned job as failed", 
+					"item_id", item.ID, 
+					"capture_id", item.CaptureID, 
+					"type", item.Type, 
+					"error", err)
+				continue
+			}
+			
+			orphanedCount++
+			slog.Info("Marked orphaned pending job as failed", 
+				"item_id", item.ID, 
+				"capture_id", item.CaptureID, 
+				"type", item.Type)
+		}
+	}
+
+	if orphanedCount > 0 {
+		slog.Info("Startup cleanup completed", "orphaned_jobs_marked_failed", orphanedCount)
+	} else {
+		slog.Info("No orphaned pending jobs found - all pending jobs have corresponding River jobs")
+	}
+
+	return nil
+}
+
 func main() {
 	// Initialize structured logging
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
@@ -287,19 +377,80 @@ func main() {
 		slog.Info("No SOCKS5_PROXY configured, skipping proxy server")
 	}
 	
-	// Start workers
-	slog.Info("Starting worker pool", "worker_count", cfg.MaxWorkers)
-	for i := 1; i <= cfg.MaxWorkers; i++ {
-		go workers.Worker(i, workers.JobChan, storageInstance, db, archiversMap)
+	// Initialize River job queue
+	slog.Info("Starting River job queue", "worker_count", cfg.MaxWorkers)
+	
+	// Create pgx pool for River
+	pgxConfig, err := pgxpool.ParseConfig(cfg.DBURL)
+	if err != nil {
+		log.Fatal("Failed to parse database URL for River:", err)
+	}
+	dbPool, err := pgxpool.NewWithConfig(context.Background(), pgxConfig)
+	if err != nil {
+		log.Fatal("Failed to create database pool for River:", err)
+	}
+	defer dbPool.Close()
+
+	// Run River migrations first
+	migrator, err := rivermigrate.New(riverpgxv5.New(dbPool), nil)
+	if err != nil {
+		log.Fatal("Failed to create River migrator:", err)
+	}
+	if _, err := migrator.Migrate(context.Background(), rivermigrate.DirectionUp, nil); err != nil {
+		log.Fatal("Failed to run River migrations:", err)
+	}
+	slog.Info("River migrations completed successfully")
+
+	// Create worker registry
+	riverWorkers := river.NewWorkers()
+	archiveWorker := workers.NewArchiveWorker(storageInstance, db, archiversMap)
+	river.AddWorker(riverWorkers, archiveWorker)
+
+	// Create River client with configuration
+	riverClient, err := river.NewClient(riverpgxv5.New(dbPool), &river.Config{
+		Queues: map[string]river.QueueConfig{
+			river.QueueDefault: {MaxWorkers: cfg.MaxWorkers},
+		},
+		Workers: riverWorkers,
+	})
+	if err != nil {
+		log.Fatal("Failed to create River client:", err)
+	}
+
+	// Start River client
+	if err := riverClient.Start(context.Background()); err != nil {
+		log.Fatal("Failed to start River client:", err)
+	}
+	defer riverClient.Stop(context.Background())
+
+	// Create River queue manager for API handlers
+	riverQueueManager := workers.NewRiverQueueManager(riverClient, db)
+
+	// Clean up orphaned pending jobs (jobs that are marked pending but not in River)
+	if err := cleanupOrphanedPendingJobs(context.Background(), riverClient, db); err != nil {
+		slog.Error("Failed to cleanup orphaned pending jobs", "error", err)
+	}
+
+	// Setup River UI
+	riverUIServer, err := riverui.NewServer(&riverui.ServerOpts{
+		Client: riverClient,
+		DB:     dbPool,
+		Logger: slog.Default(),
+		Prefix: "/queue",
+	})
+	if err != nil {
+		log.Fatal("Failed to create River UI server:", err)
+	}
+
+	// Start River UI server
+	if err := riverUIServer.Start(context.Background()); err != nil {
+		log.Fatal("Failed to start River UI server:", err)
 	}
 	
 	// Log initial browser status
 	monitor.LogCurrentStatus()
-	
-	// Start job dispatcher (replaces complex startup recovery and monitoring)
-	dispatcher := workers.NewDispatcher(db, workers.JobChan)
-	dispatcher.Start()
-	defer dispatcher.Stop()
+
+	slog.Info("River job queue started successfully")
 
 	// Start log cleanup routine
 	go func() {
@@ -327,12 +478,25 @@ func main() {
 	r.POST("/admin/api-keys", func(c *gin.Context) { handlers.ApiKeysCreate(c, db) })
 	r.POST("/admin/api-keys/:id/toggle", func(c *gin.Context) { handlers.ApiKeysToggle(c, db) })
 	r.DELETE("/admin/api-keys/:id", func(c *gin.Context) { handlers.ApiKeysDelete(c, db) })
-	r.POST("/admin/retry-failed", func(c *gin.Context) { handlers.RetryAllFailedJobs(c, db) })
-	r.POST("/admin/url/:id/capture", func(c *gin.Context) { handlers.RequestCapture(c, db) })
-	r.POST("/admin/archive", func(c *gin.Context) { handlers.AdminArchive(c, db) })
+	r.POST("/admin/retry-failed", func(c *gin.Context) { handlers.RetryAllFailedJobs(c, db, riverQueueManager) })
+	r.POST("/admin/url/:id/capture", func(c *gin.Context) { handlers.RequestCapture(c, db, riverQueueManager) })
+	r.POST("/admin/archive", func(c *gin.Context) { handlers.AdminArchive(c, db, riverQueueManager) })
 	r.GET("/admin/item/:id/log", func(c *gin.Context) { handlers.GetItemLog(c, db) })
+	// Create protected River UI routes
+	r.GET("/queue", func(c *gin.Context) {
+		if !handlers.RequireLogin(c) {
+			return
+		}
+		riverUIServer.ServeHTTP(c.Writer, c.Request)
+	})
+	r.Any("/queue/*path", func(c *gin.Context) {
+		if !handlers.RequireLogin(c) {
+			return
+		}
+		riverUIServer.ServeHTTP(c.Writer, c.Request)
+	})
 	r.GET("/docs", handlers.DocsGet)
-	r.POST("/api/v1/archive", handlers.RequireAPIKey(db), func(c *gin.Context) { handlers.ApiArchive(c, db) })
+	r.POST("/api/v1/archive", handlers.RequireAPIKey(db), func(c *gin.Context) { handlers.ApiArchive(c, db, riverQueueManager) })
 	r.GET("/api/v1/past-archives", handlers.RequireAPIKey(db), func(c *gin.Context) { handlers.ApiPastArchives(c, db) })
 	r.GET("/web/past-archives", func(c *gin.Context) { handlers.WebPastArchives(c, db) })
 	r.GET("/logs/:shortid/:type", func(c *gin.Context) { handlers.GetLogs(c, db) })

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 	"github.com/gin-gonic/gin"
+	"github.com/riverqueue/river"
 	"gorm.io/gorm"
 	"arker/internal/models"
 	"arker/internal/utils"
@@ -51,7 +52,7 @@ func AdminGet(c *gin.Context, db *gorm.DB) {
 	})
 }
 
-func RequestCapture(c *gin.Context, db *gorm.DB) {
+func RequestCapture(c *gin.Context, db *gorm.DB, riverQueueManager *workers.RiverQueueManager) {
 	if !RequireLogin(c) {
 		return
 	}
@@ -63,7 +64,7 @@ func RequestCapture(c *gin.Context, db *gorm.DB) {
 	}
 	
 	types := utils.GetArchiveTypes(u.Original)
-	shortID, err := workers.QueueCapture(db, u.ID, u.Original, types)
+	shortID, err := riverQueueManager.QueueCapture(u.ID, u.Original, types)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue capture"})
 		return
@@ -89,7 +90,7 @@ func GetItemLog(c *gin.Context, db *gorm.DB) {
 }
 
 // RetryAllFailedJobs retries all failed archive items
-func RetryAllFailedJobs(c *gin.Context, db *gorm.DB) {
+func RetryAllFailedJobs(c *gin.Context, db *gorm.DB, riverQueueManager *workers.RiverQueueManager) {
 	if !RequireLogin(c) {
 		return
 	}
@@ -119,14 +120,33 @@ func RetryAllFailedJobs(c *gin.Context, db *gorm.DB) {
 		currentTime := time.Now()
 		item.Status = "pending"
 		item.RetryCount = 0 // Reset retry count for manual retry
-		item.LastQueuedAt = &currentTime // Put manual retries at back of queue
 		item.Logs = "Manual bulk retry at " + currentTime.Format("2006-01-02 15:04:05") + " (retry count reset)\n" + item.Logs
 		
 		if err := db.Save(&item).Error; err != nil {
 			continue // Skip this item if we can't save
 		}
 		
-		// Job is now pending and will be picked up by dispatcher
+		// Enqueue the job in River
+		args := workers.ArchiveJobArgs{
+			CaptureID: capture.ID,
+			ShortID:   capture.ShortID,
+			Type:      item.Type,
+			URL:       capture.ArchivedURL.Original,
+		}
+		
+		opts := &river.InsertOpts{
+			MaxAttempts: 3,
+			Tags:        []string{"archive", item.Type, "retry"},
+		}
+		
+		if _, err := riverQueueManager.RiverClient.Insert(c.Request.Context(), args, opts); err != nil {
+			// If enqueueing fails, mark item as failed again
+			item.Status = "failed"
+			item.Logs = item.Logs + "\nFailed to enqueue retry in River: " + err.Error()
+			db.Save(&item)
+			continue
+		}
+		
 		retriedCount++
 	}
 	
@@ -140,7 +160,7 @@ func RetryAllFailedJobs(c *gin.Context, db *gorm.DB) {
 	c.JSON(http.StatusOK, gin.H{"message": message})
 }
 
-func AdminArchive(c *gin.Context, db *gorm.DB) {
+func AdminArchive(c *gin.Context, db *gorm.DB, riverQueueManager *workers.RiverQueueManager) {
 	if !RequireLogin(c) {
 		return
 	}
@@ -157,7 +177,7 @@ func AdminArchive(c *gin.Context, db *gorm.DB) {
 		return
 	}
 	
-	shortID, err := workers.QueueCaptureForURL(db, req.URL, req.Types)
+	shortID, err := riverQueueManager.QueueCaptureForURL(req.URL, req.Types)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue capture"})
 		return

@@ -31,13 +31,11 @@ func QueueCaptureWithAPIKey(db *gorm.DB, urlID uint, originalURL string, types [
 	}
 	
 	createdItems := 0
-	currentTime := time.Now()
 	for _, t := range types {
 		item := models.ArchiveItem{
 			CaptureID:    capture.ID, 
 			Type:         t, 
 			Status:       "pending",
-			LastQueuedAt: &currentTime,
 		}
 		if err := db.Create(&item).Error; err != nil {
 			slog.Error("Failed to create archive item",

@@ -58,7 +58,7 @@ func ApiPastArchives(c *gin.Context, db *gorm.DB) {
 	c.JSON(http.StatusOK, pastArchives)
 }
 
-func ApiArchive(c *gin.Context, db *gorm.DB) {
+func ApiArchive(c *gin.Context, db *gorm.DB, riverQueueManager *workers.RiverQueueManager) {
 	var req utils.ArchiveRequest
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
@@ -79,7 +79,7 @@ func ApiArchive(c *gin.Context, db *gorm.DB) {
 	}
 	
 	apiKeyID := apiKey.(*models.APIKey).ID
-	shortID, err := workers.QueueCaptureForURLWithAPIKey(db, req.URL, req.Types, &apiKeyID)
+	shortID, err := riverQueueManager.QueueCaptureForURLWithAPIKey(req.URL, req.Types, &apiKeyID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue capture"})
 		return

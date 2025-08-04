@@ -61,7 +61,6 @@ type ArchiveItem struct {
 	FileSize      int64  // file size in bytes
 	Logs          string `gorm:"type:text"`
 	RetryCount    int
-	LastQueuedAt  *time.Time // when this job was last added to the queue (for ordering)
 }
 
 // Job represents a job in the queue
