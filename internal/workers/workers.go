@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"sync"
 	"time"
 	"gorm.io/gorm"
 	"arker/internal/archivers"
@@ -44,134 +43,7 @@ func (pw *prefixWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-// Queue channel
-var JobChan = make(chan models.Job, 100)
 
-// Worker heartbeat tracking
-var workerHeartbeats = make(map[int]time.Time)
-var heartbeatMutex sync.RWMutex
-
-// Worker
-func Worker(id int, jobChan <-chan models.Job, storage storage.Storage, db *gorm.DB, archiversMap map[string]archivers.Archiver) {
-	logger := slog.With("worker_id", id)
-	logger.Info("Worker started")
-	
-	// Initialize heartbeat
-	heartbeatMutex.Lock()
-	workerHeartbeats[id] = time.Now()
-	heartbeatMutex.Unlock()
-	
-	// Start heartbeat ticker for idle workers with proper cleanup
-	heartbeatTicker := time.NewTicker(30 * time.Second)
-	defer heartbeatTicker.Stop()
-	
-	// Create a context for the heartbeat goroutine to enable cancellation
-	heartbeatCtx, cancelHeartbeat := context.WithCancel(context.Background())
-	defer cancelHeartbeat()
-	
-	go func() {
-		defer func() {
-			// Clean up worker from heartbeats map when goroutine exits
-			heartbeatMutex.Lock()
-			delete(workerHeartbeats, id)
-			heartbeatMutex.Unlock()
-		}()
-		
-		for {
-			select {
-			case <-heartbeatCtx.Done():
-				return
-			case <-heartbeatTicker.C:
-				heartbeatMutex.Lock()
-				workerHeartbeats[id] = time.Now()
-				heartbeatMutex.Unlock()
-			}
-		}
-	}()
-	
-	for job := range jobChan {
-		jobStart := time.Now()
-		
-		// Update worker heartbeat
-		heartbeatMutex.Lock()
-		workerHeartbeats[id] = time.Now()
-		heartbeatMutex.Unlock()
-		
-		logger.Info("Processing job",
-			"short_id", job.ShortID,
-			"type", job.Type,
-			"url", job.URL,
-			"capture_id", job.CaptureID)
-		
-		err := ProcessSingleJob(job, storage, db, archiversMap)
-		duration := time.Since(jobStart)
-		
-		if err != nil {
-			logger.Error("Job processing failed",
-				"short_id", job.ShortID,
-				"type", job.Type,
-				"url", job.URL,
-				"duration", duration.Round(time.Millisecond),
-				"error", err)
-			db.Model(&models.ArchiveItem{}).Where("capture_id = ? AND type = ?", job.CaptureID, job.Type).Update("status", "failed")
-		} else {
-			logger.Info("Job processing completed",
-				"short_id", job.ShortID,
-				"type", job.Type,
-				"url", job.URL,
-				"duration", duration.Round(time.Millisecond))
-		}
-		
-		// Update heartbeat after job completion
-		heartbeatMutex.Lock()
-		workerHeartbeats[id] = time.Now()
-		heartbeatMutex.Unlock()
-	}
-	
-	logger.Info("Worker stopped")
-}
-
-// GetWorkerStatus returns the status of all workers
-func GetWorkerStatus() map[string]interface{} {
-	heartbeatMutex.RLock()
-	defer heartbeatMutex.RUnlock()
-	
-	now := time.Now()
-	activeWorkers := 0
-	stuckWorkers := 0
-	oldestHeartbeat := now
-	var workerDetails []map[string]interface{}
-	
-	for workerID, lastSeen := range workerHeartbeats {
-		timeSinceHeartbeat := now.Sub(lastSeen)
-		isStuck := timeSinceHeartbeat > 60*time.Second // Consider stuck if no heartbeat for 1 minute
-		
-		if isStuck {
-			stuckWorkers++
-		} else {
-			activeWorkers++
-		}
-		
-		if lastSeen.Before(oldestHeartbeat) {
-			oldestHeartbeat = lastSeen
-		}
-		
-		workerDetails = append(workerDetails, map[string]interface{}{
-			"worker_id":   workerID,
-			"last_seen":   lastSeen.Format("15:04:05"),
-			"idle_time":   timeSinceHeartbeat.Round(time.Second),
-			"stuck":       isStuck,
-		})
-	}
-	
-	return map[string]interface{}{
-		"total_workers":      len(workerHeartbeats),
-		"active_workers":     activeWorkers,
-		"stuck_workers":      stuckWorkers,
-		"oldest_heartbeat":   now.Sub(oldestHeartbeat).Round(time.Second),
-		"worker_details":     workerDetails,
-	}
-}
 
 // REMOVED: ProcessCombinedBrowserJob - too complex, causing hangs
 // Each job now gets its own fresh browser instance for maximum reliability

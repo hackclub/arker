@@ -36,7 +36,8 @@ func AdminGet(c *gin.Context, db *gorm.DB) {
 	db.Model(&models.ArchiveItem{}).Where("status = 'pending'").Count(&queueSummary.Pending)
 	db.Model(&models.ArchiveItem{}).Where("status = 'processing'").Count(&queueSummary.Processing)
 	db.Model(&models.ArchiveItem{}).Where("status = 'failed'").Count(&queueSummary.Failed)
-	queueSummary.QueueSize = len(workers.JobChan)
+	// River queue size is managed internally, we can get stats if needed
+	queueSummary.QueueSize = 0 // River handles queue internally
 	
 	// Count jobs completed in the past 5 minutes
 	fiveMinutesAgo := time.Now().Add(-5 * time.Minute)

@@ -59,9 +59,22 @@ func (w *ArchiveWorker) Work(ctx context.Context, job *river.Job[ArchiveJobArgs]
 
 	// Find the archive item
 	var item models.ArchiveItem
-	if err := w.db.Where("capture_id = ? AND type = ?", args.CaptureID, args.Type).First(&item).Error; err != nil {
-		logger.Error("Failed to find archive item", "error", err)
-		return fmt.Errorf("archive item not found: %w", err)
+	if args.CaptureID != 0 {
+		// New format with CaptureID
+		if err := w.db.Where("capture_id = ? AND type = ?", args.CaptureID, args.Type).First(&item).Error; err != nil {
+			logger.Error("Failed to find archive item by capture_id", "error", err)
+			return fmt.Errorf("archive item not found: %w", err)
+		}
+	} else {
+		// Legacy format - lookup by short_id and type
+		if err := w.db.Joins("JOIN captures ON archive_items.capture_id = captures.id").
+			Where("captures.short_id = ? AND archive_items.type = ?", args.ShortID, args.Type).
+			First(&item).Error; err != nil {
+			logger.Error("Failed to find archive item by short_id", "error", err)
+			return fmt.Errorf("archive item not found: %w", err)
+		}
+		// Update the job args with the correct CaptureID for compatibility
+		args.CaptureID = item.CaptureID
 	}
 
 	// Update status to processing and set retry count
@@ -78,13 +91,13 @@ func (w *ArchiveWorker) Work(ctx context.Context, job *river.Job[ArchiveJobArgs]
 		URL:       args.URL,
 	}
 
-	// Process the job using existing logic
+	// Process the job using existing logic (ProcessSingleJob has its own timeout handling)
 	err := ProcessSingleJob(arkerJob, w.storage, w.db, w.archiversMap)
 	
 	if err != nil {
 		logger.Error("Job processing failed", "error", err)
 		
-		// Check if this was the last attempt
+		// River will handle retries automatically, we just mark failed on final attempt
 		if job.Attempt+1 >= job.MaxAttempts {
 			w.db.Model(&item).Update("status", "failed")
 		}

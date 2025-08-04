@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
@@ -274,10 +275,26 @@ func main() {
 
 	// Note: Session secret is now handled after database connection
 
-	db, err := gorm.Open(postgres.Open(cfg.DBURL), &gorm.Config{})
+	// Create shared pgx pool for both River and GORM
+	pgxConfig, err := pgxpool.ParseConfig(cfg.DBURL)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Failed to parse database URL:", err)
 	}
+	dbPool, err := pgxpool.NewWithConfig(context.Background(), pgxConfig)
+	if err != nil {
+		log.Fatal("Failed to create database pool:", err)
+	}
+	defer dbPool.Close()
+
+	// Create GORM DB using the shared pgx pool
+	sqlDB := stdlib.OpenDBFromPool(dbPool)
+	db, err := gorm.Open(postgres.New(postgres.Config{
+		Conn: sqlDB,
+	}), &gorm.Config{})
+	if err != nil {
+		log.Fatal("Failed to initialize GORM with shared pool:", err)
+	}
+	
 	db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.Config{})
 
 	// Get or generate session secret from database (overrides environment variable if not set)
@@ -342,19 +359,6 @@ func main() {
 	}
 
 	os.MkdirAll(cfg.CachePath, 0755)
-	
-	// Reset any stuck processing jobs to failed (they'll be retried by dispatcher)
-	var stuckItems []models.ArchiveItem
-	db.Where("status = 'processing'").Find(&stuckItems)
-	for _, item := range stuckItems {
-		db.Model(&item).Updates(map[string]interface{}{
-			"status": "failed",
-			"logs": item.Logs + "\n--- SERVER RESTART RECOVERY ---\nJob was processing during restart, marked for retry\n",
-		})
-	}
-	if len(stuckItems) > 0 {
-		log.Printf("Reset %d stuck processing jobs to failed for retry", len(stuckItems))
-	}
 
 	// Initialize browser monitoring
 	monitor := monitoring.GetGlobalMonitor()
@@ -380,18 +384,7 @@ func main() {
 	// Initialize River job queue
 	slog.Info("Starting River job queue", "worker_count", cfg.MaxWorkers)
 	
-	// Create pgx pool for River
-	pgxConfig, err := pgxpool.ParseConfig(cfg.DBURL)
-	if err != nil {
-		log.Fatal("Failed to parse database URL for River:", err)
-	}
-	dbPool, err := pgxpool.NewWithConfig(context.Background(), pgxConfig)
-	if err != nil {
-		log.Fatal("Failed to create database pool for River:", err)
-	}
-	defer dbPool.Close()
-
-	// Run River migrations first
+	// Run River migrations using shared pool
 	migrator, err := rivermigrate.New(riverpgxv5.New(dbPool), nil)
 	if err != nil {
 		log.Fatal("Failed to create River migrator:", err)

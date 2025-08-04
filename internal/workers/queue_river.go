@@ -32,7 +32,9 @@ func (rqm *RiverQueueManager) QueueCapture(urlID uint, originalURL string, types
 	return rqm.QueueCaptureWithAPIKey(urlID, originalURL, types, nil)
 }
 
-// QueueCaptureWithAPIKey creates a capture with optional API key tracking using River
+// QueueCaptureWithAPIKey creates a capture with optional API key tracking
+// For now, using GORM transaction with separate River job insertion
+// TODO: Implement true transactional enqueueing when River supports it better
 func (rqm *RiverQueueManager) QueueCaptureWithAPIKey(urlID uint, originalURL string, types []string, apiKeyID *uint) (string, error) {
 	var shortID string
 	var createdItems int
@@ -56,9 +58,7 @@ func (rqm *RiverQueueManager) QueueCaptureWithAPIKey(urlID uint, originalURL str
 			return err
 		}
 
-		ctx := context.Background()
-
-		// Create archive items and enqueue jobs
+		// Create archive items first
 		for _, t := range types {
 			item := models.ArchiveItem{
 				CaptureID: capture.ID,
@@ -72,33 +72,6 @@ func (rqm *RiverQueueManager) QueueCaptureWithAPIKey(urlID uint, originalURL str
 					"error", err)
 				return err
 			}
-
-			// Enqueue job in River (no transaction support yet, so we'll enqueue after commit)
-			// For now, we'll enqueue outside the transaction
-			args := ArchiveJobArgs{
-				CaptureID: capture.ID,
-				ShortID:   capture.ShortID,
-				Type:      t,
-				URL:       originalURL,
-			}
-
-			opts := &river.InsertOpts{
-				MaxAttempts: 3,
-				Tags:        []string{"archive", t},
-				UniqueOpts: river.UniqueOpts{
-					ByArgs:   true,
-					ByPeriod: 1 * time.Minute,
-				},
-			}
-
-			if _, err := rqm.RiverClient.Insert(ctx, args, opts); err != nil {
-				slog.Error("Failed to enqueue archive job",
-					"short_id", shortID,
-					"type", t,
-					"error", err)
-				return err
-			}
-
 			createdItems++
 		}
 
@@ -109,11 +82,44 @@ func (rqm *RiverQueueManager) QueueCaptureWithAPIKey(urlID uint, originalURL str
 		return "", err
 	}
 
+	// Now enqueue jobs in River (after successful DB transaction)
+	ctx := context.Background()
+	jobsEnqueued := 0
+
+	for _, t := range types {
+		args := ArchiveJobArgs{
+			CaptureID: 0, // Will be looked up by short_id and type
+			ShortID:   shortID,
+			Type:      t,
+			URL:       originalURL,
+		}
+
+		opts := &river.InsertOpts{
+			MaxAttempts: 3,
+			Tags:        []string{"archive", t},
+			UniqueOpts: river.UniqueOpts{
+				ByArgs:   true,
+				ByPeriod: 1 * time.Minute,
+			},
+		}
+
+		if _, err := rqm.RiverClient.Insert(ctx, args, opts); err != nil {
+			slog.Error("Failed to enqueue archive job",
+				"short_id", shortID,
+				"type", t,
+				"error", err)
+			// Continue with other jobs even if one fails
+		} else {
+			jobsEnqueued++
+		}
+	}
+
 	slog.Info("Queued new capture with River",
 		"short_id", shortID,
 		"url", originalURL,
 		"types", types,
-		"items_created", createdItems)
+		"items_created", createdItems,
+		"jobs_enqueued", jobsEnqueued)
 
 	return shortID, nil
 }
@@ -143,13 +149,4 @@ func (rqm *RiverQueueManager) QueueCaptureForURLWithAPIKey(url string, types []s
 	return rqm.QueueCaptureWithAPIKey(u.ID, url, types, apiKeyID)
 }
 
-// Legacy function wrappers for backward compatibility
-// These will use River under the hood but maintain the same API
 
-func QueueCaptureWithRiver(riverQueueManager *RiverQueueManager, urlID uint, originalURL string, types []string, apiKeyID *uint) (string, error) {
-	return riverQueueManager.QueueCaptureWithAPIKey(urlID, originalURL, types, apiKeyID)
-}
-
-func QueueCaptureForURLWithRiver(riverQueueManager *RiverQueueManager, url string, types []string, apiKeyID *uint) (string, error) {
-	return riverQueueManager.QueueCaptureForURLWithAPIKey(url, types, apiKeyID)
-}
