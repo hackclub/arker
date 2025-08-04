@@ -41,7 +41,7 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	
 	// Prepare command arguments
 	testArgs := []string{"--print", "title,duration,uploader"}
-	dlArgs := []string{"-f", "bestvideo+bestaudio/best", "--no-playlist", "--no-write-thumbnail", "--verbose", "-o", "-"}
+	dlArgs := []string{"-f", "bestvideo+bestaudio/best", "--no-playlist", "--no-write-thumbnail", "--verbose", "--hls-prefer-native", "--prefer-free-formats", "-o", "-"}
 	
 	// Add SOCKS5 proxy configuration if proxy is enabled
 	if proxyURL := proxyutil.GetProxyURL(); proxyURL != "" {
