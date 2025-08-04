@@ -89,75 +89,47 @@ func GetItemLog(c *gin.Context, db *gorm.DB) {
 	c.JSON(http.StatusOK, gin.H{"logs": item.Logs})
 }
 
-// RetryAllFailedJobs retries all failed archive items
+// RetryAllFailedJobs queues a background job to retry all failed archive items
 func RetryAllFailedJobs(c *gin.Context, db *gorm.DB, riverQueueManager *workers.RiverQueueManager) {
 	if !RequireLogin(c) {
 		return
 	}
 	
-	// Get all failed items with their capture information
-	var failedItems []models.ArchiveItem
-	if err := db.Where("status = 'failed'").Find(&failedItems).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find failed items"})
+	// Check if there are any failed items
+	var failedCount int64
+	if err := db.Model(&models.ArchiveItem{}).Where("status = 'failed'").Count(&failedCount).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count failed items"})
 		return
 	}
 	
-	if len(failedItems) == 0 {
+	if failedCount == 0 {
 		c.JSON(http.StatusOK, gin.H{"message": "No failed jobs to retry"})
 		return
 	}
 	
-	retriedCount := 0
-	
-	for _, item := range failedItems {
-		// Get the capture and URL information
-		var capture models.Capture
-		if err := db.Preload("ArchivedURL").First(&capture, item.CaptureID).Error; err != nil {
-			continue // Skip this item if we can't load capture info
-		}
-		
-		// Reset the item status to pending and reset retry count for manual retry
-		currentTime := time.Now()
-		item.Status = "pending"
-		item.RetryCount = 0 // Reset retry count for manual retry
-		item.Logs = "Manual bulk retry at " + currentTime.Format("2006-01-02 15:04:05") + " (retry count reset)\n" + item.Logs
-		
-		if err := db.Save(&item).Error; err != nil {
-			continue // Skip this item if we can't save
-		}
-		
-		// Enqueue the job in River
-		args := workers.ArchiveJobArgs{
-			CaptureID: capture.ID,
-			ShortID:   capture.ShortID,
-			Type:      item.Type,
-			URL:       capture.ArchivedURL.Original,
-		}
-		
-		opts := &river.InsertOpts{
-			MaxAttempts: 3,
-			Tags:        []string{"archive", item.Type, "retry"},
-		}
-		
-		if _, err := riverQueueManager.RiverClient.Insert(c.Request.Context(), args, opts); err != nil {
-			// If enqueueing fails, mark item as failed again
-			item.Status = "failed"
-			item.Logs = item.Logs + "\nFailed to enqueue retry in River: " + err.Error()
-			db.Save(&item)
-			continue
-		}
-		
-		retriedCount++
+	// Queue a background job to handle the bulk retry
+	args := workers.BulkRetryJobArgs{
+		RequestedBy: "admin", // Could be enhanced to track which admin user
 	}
 	
-	var message string
-	if retriedCount > 0 {
-		message = fmt.Sprintf("Successfully queued %d failed jobs for retry", retriedCount)
-	} else {
-		message = "No jobs were retried due to errors"
+	opts := &river.InsertOpts{
+		MaxAttempts: 1, // Bulk retry jobs shouldn't themselves be retried
+		Queue:       "high_priority", // Use high-priority queue for faster processing
+		Tags:        []string{"bulk_retry", "admin"},
+		UniqueOpts: river.UniqueOpts{
+			ByArgs:   true,
+			ByPeriod: 5 * time.Minute, // Prevent multiple bulk retries in short succession
+		},
 	}
 	
-	c.JSON(http.StatusOK, gin.H{"message": message})
+	if _, err := riverQueueManager.RiverClient.Insert(c.Request.Context(), args, opts); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue bulk retry job"})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("Bulk retry job queued to process %d failed jobs in the background", failedCount),
+	})
 }
 
 func AdminArchive(c *gin.Context, db *gorm.DB, riverQueueManager *workers.RiverQueueManager) {

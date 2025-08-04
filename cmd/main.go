@@ -382,10 +382,18 @@ func main() {
 	archiveWorker := workers.NewArchiveWorker(storageInstance, db, archiversMap)
 	river.AddWorker(riverWorkers, archiveWorker)
 
+	// Create River queue manager for dependency injection
+	riverQueueManager := workers.NewRiverQueueManager(nil, db) // RiverClient will be set after creation
+	
+	// Create bulk retry worker
+	bulkRetryWorker := workers.NewBulkRetryWorker(db, riverQueueManager)
+	river.AddWorker(riverWorkers, bulkRetryWorker)
+
 	// Create River client with configuration
 	riverClient, err := river.NewClient(riverpgxv5.New(dbPool), &river.Config{
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: cfg.MaxWorkers},
+			"high_priority":    {MaxWorkers: max(2, cfg.MaxWorkers/2)}, // At least 2 workers, or half of total workers
 		},
 		Workers: riverWorkers,
 	})
@@ -399,8 +407,8 @@ func main() {
 	}
 	defer riverClient.Stop(context.Background())
 
-	// Create River queue manager for API handlers
-	riverQueueManager := workers.NewRiverQueueManager(riverClient, db)
+	// Update the River client in the temporary queue manager created earlier
+	riverQueueManager.RiverClient = riverClient
 
 	// Clean up orphaned pending jobs (jobs that are marked pending but not in River)
 	if err := cleanupOrphanedPendingJobs(context.Background(), riverClient, db); err != nil {
