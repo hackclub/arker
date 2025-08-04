@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -254,8 +255,15 @@ func (s *SOCKS5ProxyServer) handleConnectRequest(conn net.Conn) (string, error) 
 
 // connectToUpstream connects to the upstream SOCKS5 proxy with authentication
 func (s *SOCKS5ProxyServer) connectToUpstream(targetAddr string) (net.Conn, error) {
-	// Parse upstream URL
-	u, err := url.Parse(s.upstreamURL)
+	// Parse upstream URL, handling socks5h:// protocol variant
+	upstreamURL := s.upstreamURL
+	if strings.HasPrefix(upstreamURL, "socks5h://") {
+		// Convert socks5h:// to socks5:// for parsing
+		// The 'h' variant means DNS resolution should be done by proxy (which we always do anyway)
+		upstreamURL = strings.Replace(upstreamURL, "socks5h://", "socks5://", 1)
+	}
+	
+	u, err := url.Parse(upstreamURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse upstream URL: %w", err)
 	}

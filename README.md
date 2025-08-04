@@ -22,7 +22,7 @@ Try out the demo instance at <https://arker-demo.hackclub.com>.
 - `ADMIN_PASSWORD` - Admin login password (default: `admin`)
 - `LOGIN_TEXT` - Custom text to display under login form
 - `GIN_MODE` - Gin framework mode (`debug` for development)
-- `SOCKS5_PROXY` - SOCKS5 proxy for archiving traffic (e.g., `socks5://localhost:1080`)
+- `SOCKS5_PROXY` - SOCKS5 proxy for archiving traffic (e.g., `socks5://localhost:1080` or `socks5h://user:pass@proxy.example.com:7777`)
 
 ## License
 

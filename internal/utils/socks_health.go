@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -88,8 +89,15 @@ func (c *SOCKSHealthChecker) checkHealth() {
 		return
 	}
 	
-	// Parse the SOCKS proxy URL
-	proxyURL, err := url.Parse(c.proxyURL)
+	// Parse the SOCKS proxy URL, handling socks5h:// protocol variant
+	proxyURLString := c.proxyURL
+	if strings.HasPrefix(proxyURLString, "socks5h://") {
+		// Convert socks5h:// to socks5:// for parsing
+		// The 'h' variant means DNS resolution should be done by proxy (which we always do anyway)
+		proxyURLString = strings.Replace(proxyURLString, "socks5h://", "socks5://", 1)
+	}
+	
+	proxyURL, err := url.Parse(proxyURLString)
 	if err != nil {
 		c.updateStatus(false, fmt.Sprintf("Invalid proxy URL: %v", err))
 		return

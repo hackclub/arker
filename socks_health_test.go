@@ -60,6 +60,25 @@ func TestSOCKSHealthChecker(t *testing.T) {
 	
 	checker3.Stop()
 	
+	// Test 4: socks5h:// protocol variant
+	os.Setenv("SOCKS5_PROXY", "socks5h://user:pass@proxy.example.com:7777")
+	checker4 := utils.NewSOCKSHealthChecker()
+	
+	// Force a check
+	checker4.ForceCheck()
+	time.Sleep(100 * time.Millisecond)
+	
+	status4 := checker4.GetStatus()
+	if !status4.Enabled {
+		t.Error("Expected SOCKS checker to be enabled with socks5h:// URL")
+	}
+	
+	if status4.IsHealthy {
+		t.Error("Expected SOCKS checker to be unhealthy with unreachable proxy")
+	}
+	
+	checker4.Stop()
+	
 	// Clean up
 	os.Unsetenv("SOCKS5_PROXY")
 }

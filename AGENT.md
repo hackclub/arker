@@ -152,7 +152,7 @@ git clone https://archive.selfhosted.hackclub.com/git/{shortid}
 - `MAX_WORKERS` - Worker pool size (default: `5`)
 - `PORT` - HTTP server port (default: `8080`)
 - `GIN_MODE` - Gin framework mode (`debug` for development)
-- `SOCKS5_PROXY` - SOCKS5 proxy for archiving traffic (e.g., `socks5://localhost:1080`)
+- `SOCKS5_PROXY` - SOCKS5 proxy for archiving traffic (e.g., `socks5://localhost:1080` or `socks5h://user:pass@proxy.example.com:7777`)
 - `LOGIN_TEXT` - Text to display under login form
 
 ### Authentication
