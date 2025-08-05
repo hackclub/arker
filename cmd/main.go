@@ -318,7 +318,9 @@ func main() {
 		log.Fatal("Failed to initialize GORM with shared pool:", err)
 	}
 	
-	db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.Config{})
+	if err := db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.Config{}); err != nil {
+		log.Fatal("Failed to auto-migrate database:", err)
+	}
 
 	// Get or generate session secret from database (overrides environment variable if not set)
 	var sessionSecret string
@@ -419,8 +421,8 @@ func main() {
 			"high_priority":    {MaxWorkers: max(2, cfg.MaxWorkers/2)}, // At least 2 workers, or half of total workers
 		},
 		Workers: riverWorkers,
-		RescueStuckJobsAfter: 5 * time.Minute,  // Rescue stuck jobs after 5 minutes (default is 1 hour)
 		JobTimeout: 30 * time.Minute,           // Kill jobs running longer than 30 minutes
+		RescueStuckJobsAfter: 35 * time.Minute, // Rescue stuck jobs after 35 minutes (must be >= JobTimeout)
 		ErrorHandler: &CustomErrorHandler{},
 	})
 	if err != nil {
