@@ -21,6 +21,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivermigrate"
+	"github.com/riverqueue/river/rivertype"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
@@ -46,6 +47,28 @@ type Config struct {
 	AdminUsername  string `envconfig:"ADMIN_USERNAME" default:"admin"`
 	AdminPassword  string `envconfig:"ADMIN_PASSWORD" default:"admin"`
 	LoginText      string `envconfig:"LOGIN_TEXT"`
+}
+
+// CustomErrorHandler implements the River ErrorHandler interface
+type CustomErrorHandler struct{}
+
+func (h *CustomErrorHandler) HandleError(ctx context.Context, job *rivertype.JobRow, err error) *river.ErrorHandlerResult {
+	slog.Error("Job error", 
+		"job_id", job.ID,
+		"kind", job.Kind,
+		"attempt", job.Attempt,
+		"error", err)
+	return nil // Let River handle the retry
+}
+
+func (h *CustomErrorHandler) HandlePanic(ctx context.Context, job *rivertype.JobRow, panicErr any, trace string) *river.ErrorHandlerResult {
+	slog.Error("Job panicked", 
+		"job_id", job.ID,
+		"kind", job.Kind,
+		"attempt", job.Attempt,
+		"panic", panicErr,
+		"trace", trace)
+	return nil // Let River handle the retry
 }
 
 func generateRandomSecret() string {
@@ -396,6 +419,9 @@ func main() {
 			"high_priority":    {MaxWorkers: max(2, cfg.MaxWorkers/2)}, // At least 2 workers, or half of total workers
 		},
 		Workers: riverWorkers,
+		RescueStuckJobsAfter: 5 * time.Minute,  // Rescue stuck jobs after 5 minutes (default is 1 hour)
+		JobTimeout: 30 * time.Minute,           // Kill jobs running longer than 30 minutes
+		ErrorHandler: &CustomErrorHandler{},
 	})
 	if err != nil {
 		log.Fatal("Failed to create River client:", err)
