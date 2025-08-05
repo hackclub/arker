@@ -318,8 +318,20 @@ func main() {
 		log.Fatal("Failed to initialize GORM with shared pool:", err)
 	}
 	
-	if err := db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.Config{}); err != nil {
-		log.Fatal("Failed to auto-migrate database:", err)
+	// Migrate models one by one to identify problematic model
+	modelTypes := []interface{}{
+		&models.User{},
+		&models.APIKey{},
+		&models.ArchivedURL{},
+		&models.Capture{},
+		&models.ArchiveItem{},
+		&models.Config{},
+	}
+	
+	for _, model := range modelTypes {
+		if err := db.AutoMigrate(model); err != nil {
+			log.Fatal("Failed to auto-migrate model:", model, "error:", err)
+		}
 	}
 
 	// Get or generate session secret from database (overrides environment variable if not set)
