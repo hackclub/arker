@@ -61,3 +61,16 @@ func WithTimeoutAndCancel(timeout time.Duration, fn ContextAwareFunction) (error
 		return ctx.Err(), cancel
 	}
 }
+
+// TimeoutForJobType returns the appropriate timeout for a given job type
+func TimeoutForJobType(jobType string) time.Duration {
+	config := DefaultTimeoutConfig()
+	switch jobType {
+	case "git":
+		return config.GitCloneTimeout
+	case "youtube":
+		return config.YtDlpTimeout
+	default:
+		return config.ArchiveTimeout
+	}
+}

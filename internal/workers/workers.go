@@ -6,9 +6,6 @@ import (
 	"io"
 	"log"
 	"log/slog"
-	"os"
-	"strings"
-	"time"
 	"gorm.io/gorm"
 	"arker/internal/archivers"
 	"arker/internal/models"
@@ -16,32 +13,7 @@ import (
 	"arker/internal/utils"
 )
 
-// prefixWriter wraps stdout with a prefix for each line
-type prefixWriter struct {
-	prefix string
-}
 
-func (pw *prefixWriter) Write(p []byte) (n int, err error) {
-	// Convert to string and add prefix to each line
-	s := string(p)
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		if i == len(lines)-1 && line == "" {
-			// Don't add prefix to trailing empty line
-			continue
-		}
-		prefixedLine := pw.prefix + line
-		if i < len(lines)-1 {
-			prefixedLine += "\n"
-		}
-		fmt.Fprint(os.Stdout, prefixedLine)
-		if i == len(lines)-1 && line != "" {
-			// Add newline if the last line doesn't end with one
-			fmt.Fprint(os.Stdout, "\n")
-		}
-	}
-	return len(p), nil
-}
 
 
 
@@ -67,10 +39,8 @@ func ProcessSingleJob(job models.Job, storage storage.Storage, db *gorm.DB, arch
 	
 	dbLogWriter := utils.NewDBLogWriter(db, item.ID)
 	
-	// Create a multi-writer that writes to both database and stdout with job context
-	stdoutPrefix := fmt.Sprintf("[%s-%s] ", job.ShortID, job.Type)
-	prefixedStdout := &prefixWriter{prefix: stdoutPrefix}
-	multiWriter := io.MultiWriter(dbLogWriter, prefixedStdout)
+	// Use database logging only - structured logs via slog provide better context
+	multiWriter := dbLogWriter
 	
 	slog.Info("Starting single job processing",
 		"short_id", job.ShortID,
@@ -79,16 +49,7 @@ func ProcessSingleJob(job models.Job, storage storage.Storage, db *gorm.DB, arch
 		"retry_count", item.RetryCount)
 	
 	// Get appropriate timeout for the job type
-	timeoutConfig := utils.DefaultTimeoutConfig()
-	var timeout time.Duration
-	switch job.Type {
-	case "git":
-		timeout = timeoutConfig.GitCloneTimeout
-	case "youtube":
-		timeout = timeoutConfig.YtDlpTimeout
-	default:
-		timeout = timeoutConfig.ArchiveTimeout
-	}
+	timeout := utils.TimeoutForJobType(job.Type)
 	
 	// Create context with timeout for the entire operation
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)

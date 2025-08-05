@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/riverqueue/river"
 	"gorm.io/gorm"
@@ -12,7 +11,6 @@ import (
 	"arker/internal/archivers"
 	"arker/internal/models"
 	"arker/internal/storage"
-	"arker/internal/utils"
 )
 
 // ArchiveJobArgs represents the payload for an archive job in River
@@ -109,121 +107,8 @@ func (w *ArchiveWorker) Work(ctx context.Context, job *river.Job[ArchiveJobArgs]
 	return nil
 }
 
-// archiveTimeoutForType returns appropriate timeout for different job types
-func archiveTimeoutForType(jobType string) time.Duration {
-	timeoutConfig := utils.DefaultTimeoutConfig()
-	switch jobType {
-	case "git":
-		return timeoutConfig.GitCloneTimeout
-	case "youtube":
-		return timeoutConfig.YtDlpTimeout
-	default:
-		return timeoutConfig.ArchiveTimeout
-	}
-}
 
-// BulkRetryJobArgs represents the payload for a bulk retry job in River
-type BulkRetryJobArgs struct {
-	RequestedBy string `json:"requested_by"` // Admin user who requested the retry
-}
 
-// Kind returns the job kind for River
-func (BulkRetryJobArgs) Kind() string { return "bulk_retry" }
 
-// BulkRetryWorker processes bulk retry jobs using River
-type BulkRetryWorker struct {
-	river.WorkerDefaults[BulkRetryJobArgs]
-	db                *gorm.DB
-	riverQueueManager *RiverQueueManager
-}
 
-// NewBulkRetryWorker creates a new bulk retry worker
-func NewBulkRetryWorker(db *gorm.DB, riverQueueManager *RiverQueueManager) *BulkRetryWorker {
-	return &BulkRetryWorker{
-		db:                db,
-		riverQueueManager: riverQueueManager,
-	}
-}
 
-// Work processes a bulk retry job
-func (w *BulkRetryWorker) Work(ctx context.Context, job *river.Job[BulkRetryJobArgs]) error {
-	logger := slog.With(
-		"worker", "bulk_retry",
-		"job_id", job.ID,
-		"requested_by", job.Args.RequestedBy,
-	)
-
-	logger.Info("Starting bulk retry of failed jobs")
-
-	// Get all failed items with their capture information in batches
-	var totalRetried int
-	batchSize := 100
-
-	for {
-		var failedItems []models.ArchiveItem
-		if err := w.db.Where("status = 'failed'").Limit(batchSize).Find(&failedItems).Error; err != nil {
-			logger.Error("Failed to find failed items", "error", err)
-			return err
-		}
-
-		if len(failedItems) == 0 {
-			break // No more failed items
-		}
-
-		retriedInBatch := 0
-
-		for _, item := range failedItems {
-			// Get the capture and URL information
-			var capture models.Capture
-			if err := w.db.Preload("ArchivedURL").First(&capture, item.CaptureID).Error; err != nil {
-				logger.Warn("Skipping item with missing capture", "item_id", item.ID, "capture_id", item.CaptureID)
-				continue
-			}
-
-			// Reset the item status to pending and reset retry count
-			currentTime := time.Now()
-			item.Status = "pending"
-			item.RetryCount = 0
-			item.Logs = "Bulk retry at " + currentTime.Format("2006-01-02 15:04:05") + " (retry count reset)\n" + item.Logs
-
-			if err := w.db.Save(&item).Error; err != nil {
-				logger.Warn("Failed to save item", "item_id", item.ID, "error", err)
-				continue
-			}
-
-			// Enqueue the job in River
-			args := ArchiveJobArgs{
-				CaptureID: capture.ID,
-				ShortID:   capture.ShortID,
-				Type:      item.Type,
-				URL:       capture.ArchivedURL.Original,
-			}
-
-			opts := &river.InsertOpts{
-				MaxAttempts: 3,
-				Queue:       "high_priority", // Use high-priority queue for retry jobs
-				Tags:        []string{"archive", item.Type, "bulk_retry"},
-			}
-
-			if _, err := w.riverQueueManager.RiverClient.Insert(ctx, args, opts); err != nil {
-				// If enqueueing fails, mark item as failed again
-				item.Status = "failed"
-				item.Logs = item.Logs + "\nFailed to enqueue retry in River: " + err.Error()
-				w.db.Save(&item)
-				logger.Warn("Failed to enqueue retry", "item_id", item.ID, "error", err)
-				continue
-			}
-
-			retriedInBatch++
-		}
-
-		totalRetried += retriedInBatch
-		logger.Info("Processed batch", "batch_size", len(failedItems), "retried", retriedInBatch, "total_retried", totalRetried)
-
-		// Small delay to avoid overwhelming the system
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	logger.Info("Bulk retry completed", "total_retried", totalRetried)
-	return nil
-}

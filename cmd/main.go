@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
-	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -14,7 +12,6 @@ import (
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/kelseyhightower/envconfig"
@@ -26,6 +23,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 	"riverqueue.com/riverui"
 	"arker/internal/archivers"
 	"arker/internal/handlers"
@@ -74,7 +72,7 @@ func (h *CustomErrorHandler) HandlePanic(ctx context.Context, job *rivertype.Job
 func generateRandomSecret() string {
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {
-		log.Fatal("Failed to generate random session secret:", err)
+		log.Fatalf("Failed to generate random session secret: %v", err)
 	}
 	return hex.EncodeToString(bytes)
 }
@@ -197,85 +195,7 @@ func populateFileSizes(db *gorm.DB, storage storage.Storage) {
 	}
 }
 
-// cleanupOrphanedPendingJobs finds archive items marked as pending but without corresponding River jobs
-func cleanupOrphanedPendingJobs(ctx context.Context, riverClient *river.Client[pgx.Tx], db *gorm.DB) error {
-	// Get all pending archive items
-	var pendingItems []models.ArchiveItem
-	if err := db.Where("status = 'pending'").Find(&pendingItems).Error; err != nil {
-		return err
-	}
 
-	if len(pendingItems) == 0 {
-		slog.Info("No pending jobs found during startup cleanup")
-		return nil
-	}
-
-	slog.Info("Checking for orphaned pending jobs", "pending_count", len(pendingItems))
-
-	// Get all current jobs from River with archive tags
-	params := river.NewJobListParams().
-		Kinds("archive").
-		First(1000) // Adjust if you expect more than 1000 jobs
-	
-	jobs, err := riverClient.JobList(ctx, params)
-	if err != nil {
-		return err
-	}
-
-	// Create a map of River job args for quick lookup
-	riverJobMap := make(map[string]bool)
-	for _, job := range jobs.Jobs {
-		// Try to unmarshal the job args to get the job details
-		if job.Kind == "archive" {
-			// Parse the job args as ArchiveJobArgs
-			var args workers.ArchiveJobArgs
-			if err := json.Unmarshal(job.EncodedArgs, &args); err != nil {
-				slog.Warn("Failed to unmarshal job args", "job_id", job.ID, "error", err)
-				continue
-			}
-			// Create a key based on capture_id and type to match with pending items
-			key := fmt.Sprintf("%d-%s", args.CaptureID, args.Type)
-			riverJobMap[key] = true
-		}
-	}
-
-	orphanedCount := 0
-	for _, item := range pendingItems {
-		// Create the same key format
-		key := fmt.Sprintf("%d-%s", item.CaptureID, item.Type)
-		
-		if !riverJobMap[key] {
-			// This pending item doesn't have a corresponding River job
-			currentTime := time.Now()
-			item.Status = "failed"
-			item.Logs = fmt.Sprintf("Startup cleanup at %s: Job was pending but not found in River queue (likely lost due to restart)\n%s", 
-				currentTime.Format("2006-01-02 15:04:05"), item.Logs)
-			
-			if err := db.Save(&item).Error; err != nil {
-				slog.Error("Failed to mark orphaned job as failed", 
-					"item_id", item.ID, 
-					"capture_id", item.CaptureID, 
-					"type", item.Type, 
-					"error", err)
-				continue
-			}
-			
-			orphanedCount++
-			slog.Info("Marked orphaned pending job as failed", 
-				"item_id", item.ID, 
-				"capture_id", item.CaptureID, 
-				"type", item.Type)
-		}
-	}
-
-	if orphanedCount > 0 {
-		slog.Info("Startup cleanup completed", "orphaned_jobs_marked_failed", orphanedCount)
-	} else {
-		slog.Info("No orphaned pending jobs found - all pending jobs have corresponding River jobs")
-	}
-
-	return nil
-}
 
 func main() {
 	// Initialize structured logging
@@ -288,7 +208,7 @@ func main() {
 	err := envconfig.Process("", &cfg)
 	if err != nil {
 		slog.Error("Failed to process environment variables", "error", err)
-		log.Fatal("Failed to process config:", err)
+		log.Fatalf("Failed to process config: %v", err)
 	}
 	
 	slog.Info("Starting Arker archive server",
@@ -301,11 +221,11 @@ func main() {
 	// Create shared pgx pool for both River and GORM
 	pgxConfig, err := pgxpool.ParseConfig(cfg.DBURL)
 	if err != nil {
-		log.Fatal("Failed to parse database URL:", err)
+		log.Fatalf("Failed to parse database URL: %v", err)
 	}
 	dbPool, err := pgxpool.NewWithConfig(context.Background(), pgxConfig)
 	if err != nil {
-		log.Fatal("Failed to create database pool:", err)
+		log.Fatalf("Failed to create database pool: %v", err)
 	}
 	defer dbPool.Close()
 
@@ -315,23 +235,12 @@ func main() {
 		Conn: sqlDB,
 	}), &gorm.Config{})
 	if err != nil {
-		log.Fatal("Failed to initialize GORM with shared pool:", err)
+		log.Fatalf("Failed to initialize GORM with shared pool: %v", err)
 	}
 	
-	// Migrate models one by one to identify problematic model
-	modelTypes := []interface{}{
-		&models.User{},
-		&models.APIKey{},
-		&models.ArchivedURL{},
-		&models.Capture{},
-		&models.ArchiveItem{},
-		&models.Config{},
-	}
-	
-	for _, model := range modelTypes {
-		if err := db.AutoMigrate(model); err != nil {
-			log.Fatal("Failed to auto-migrate model:", model, "error:", err)
-		}
+	// Auto-migrate database models
+	if err := db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.Config{}); err != nil {
+		log.Fatalf("Failed to auto-migrate database: %v", err)
 	}
 
 	// Get or generate session secret from database (overrides environment variable if not set)
@@ -345,7 +254,7 @@ func main() {
 		generatedSecret := generateRandomSecret()
 		dbSecret, err := getOrCreateConfigValue(db, "session_secret", generatedSecret)
 		if err != nil {
-			log.Fatal("Failed to get/create session secret:", err)
+			log.Fatalf("Failed to get/create session secret: %v", err)
 		}
 		sessionSecret = dbSecret
 		if dbSecret == generatedSecret {
@@ -407,10 +316,10 @@ func main() {
 	// Run River migrations using shared pool
 	migrator, err := rivermigrate.New(riverpgxv5.New(dbPool), nil)
 	if err != nil {
-		log.Fatal("Failed to create River migrator:", err)
+		log.Fatalf("Failed to create River migrator: %v", err)
 	}
 	if _, err := migrator.Migrate(context.Background(), rivermigrate.DirectionUp, nil); err != nil {
-		log.Fatal("Failed to run River migrations:", err)
+		log.Fatalf("Failed to run River migrations: %v", err)
 	}
 	slog.Info("River migrations completed successfully")
 
@@ -419,12 +328,7 @@ func main() {
 	archiveWorker := workers.NewArchiveWorker(storageInstance, db, archiversMap)
 	river.AddWorker(riverWorkers, archiveWorker)
 
-	// Create River queue manager for dependency injection
-	riverQueueManager := workers.NewRiverQueueManager(nil, db) // RiverClient will be set after creation
-	
-	// Create bulk retry worker
-	bulkRetryWorker := workers.NewBulkRetryWorker(db, riverQueueManager)
-	river.AddWorker(riverWorkers, bulkRetryWorker)
+
 
 	// Create River client with configuration
 	riverClient, err := river.NewClient(riverpgxv5.New(dbPool), &river.Config{
@@ -438,22 +342,18 @@ func main() {
 		ErrorHandler: &CustomErrorHandler{},
 	})
 	if err != nil {
-		log.Fatal("Failed to create River client:", err)
+		log.Fatalf("Failed to create River client: %v", err)
 	}
 
 	// Start River client
 	if err := riverClient.Start(context.Background()); err != nil {
-		log.Fatal("Failed to start River client:", err)
+		log.Fatalf("Failed to start River client: %v", err)
 	}
 	defer riverClient.Stop(context.Background())
 
-	// Update the River client in the temporary queue manager created earlier
-	riverQueueManager.RiverClient = riverClient
 
-	// Clean up orphaned pending jobs (jobs that are marked pending but not in River)
-	if err := cleanupOrphanedPendingJobs(context.Background(), riverClient, db); err != nil {
-		slog.Error("Failed to cleanup orphaned pending jobs", "error", err)
-	}
+
+
 
 	// Setup River UI
 	riverUIServer, err := riverui.NewServer(&riverui.ServerOpts{
@@ -463,12 +363,12 @@ func main() {
 		Prefix: "/queue",
 	})
 	if err != nil {
-		log.Fatal("Failed to create River UI server:", err)
+		log.Fatalf("Failed to create River UI server: %v", err)
 	}
 
 	// Start River UI server
 	if err := riverUIServer.Start(context.Background()); err != nil {
-		log.Fatal("Failed to start River UI server:", err)
+		log.Fatalf("Failed to start River UI server: %v", err)
 	}
 	
 	// Log initial browser status
@@ -502,9 +402,9 @@ func main() {
 	r.POST("/admin/api-keys", func(c *gin.Context) { handlers.ApiKeysCreate(c, db) })
 	r.POST("/admin/api-keys/:id/toggle", func(c *gin.Context) { handlers.ApiKeysToggle(c, db) })
 	r.DELETE("/admin/api-keys/:id", func(c *gin.Context) { handlers.ApiKeysDelete(c, db) })
-	r.POST("/admin/retry-failed", func(c *gin.Context) { handlers.RetryAllFailedJobs(c, db, riverQueueManager) })
-	r.POST("/admin/url/:id/capture", func(c *gin.Context) { handlers.RequestCapture(c, db, riverQueueManager) })
-	r.POST("/admin/archive", func(c *gin.Context) { handlers.AdminArchive(c, db, riverQueueManager) })
+	r.POST("/admin/retry-failed", func(c *gin.Context) { handlers.RetryAllFailedJobs(c, db, riverClient) })
+	r.POST("/admin/url/:id/capture", func(c *gin.Context) { handlers.RequestCapture(c, db, riverClient) })
+	r.POST("/admin/archive", func(c *gin.Context) { handlers.AdminArchive(c, db, riverClient) })
 	r.GET("/admin/item/:id/log", func(c *gin.Context) { handlers.GetItemLog(c, db) })
 	// Create protected River UI routes
 	r.GET("/queue", func(c *gin.Context) {
@@ -520,7 +420,7 @@ func main() {
 		riverUIServer.ServeHTTP(c.Writer, c.Request)
 	})
 	r.GET("/docs", handlers.DocsGet)
-	r.POST("/api/v1/archive", handlers.RequireAPIKey(db), func(c *gin.Context) { handlers.ApiArchive(c, db, riverQueueManager) })
+	r.POST("/api/v1/archive", handlers.RequireAPIKey(db), func(c *gin.Context) { handlers.ApiArchive(c, db, riverClient) })
 	r.GET("/api/v1/past-archives", handlers.RequireAPIKey(db), func(c *gin.Context) { handlers.ApiPastArchives(c, db) })
 	r.GET("/web/past-archives", func(c *gin.Context) { handlers.WebPastArchives(c, db) })
 	r.GET("/logs/:shortid/:type", func(c *gin.Context) { handlers.GetLogs(c, db) })

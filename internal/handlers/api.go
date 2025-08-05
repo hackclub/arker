@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"time"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
+	"github.com/riverqueue/river"
 	"gorm.io/gorm"
 	"arker/internal/models"
 	"arker/internal/workers"
@@ -58,7 +60,7 @@ func ApiPastArchives(c *gin.Context, db *gorm.DB) {
 	c.JSON(http.StatusOK, pastArchives)
 }
 
-func ApiArchive(c *gin.Context, db *gorm.DB, riverQueueManager *workers.RiverQueueManager) {
+func ApiArchive(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
 	var req utils.ArchiveRequest
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
@@ -79,7 +81,7 @@ func ApiArchive(c *gin.Context, db *gorm.DB, riverQueueManager *workers.RiverQue
 	}
 	
 	apiKeyID := apiKey.(*models.APIKey).ID
-	shortID, err := riverQueueManager.QueueCaptureForURLWithAPIKey(req.URL, req.Types, &apiKeyID)
+	shortID, err := workers.QueueCapture(c.Request.Context(), db, riverClient, req.URL, req.Types, &apiKeyID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue capture"})
 		return

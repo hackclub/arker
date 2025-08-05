@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 	"gorm.io/gorm"
 	"arker/internal/models"
@@ -52,7 +53,7 @@ func AdminGet(c *gin.Context, db *gorm.DB) {
 	})
 }
 
-func RequestCapture(c *gin.Context, db *gorm.DB, riverQueueManager *workers.RiverQueueManager) {
+func RequestCapture(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
 	if !RequireLogin(c) {
 		return
 	}
@@ -64,7 +65,7 @@ func RequestCapture(c *gin.Context, db *gorm.DB, riverQueueManager *workers.Rive
 	}
 	
 	types := utils.GetArchiveTypes(u.Original)
-	shortID, err := riverQueueManager.QueueCapture(u.ID, u.Original, types)
+	shortID, err := workers.QueueCapture(c.Request.Context(), db, riverClient, u.Original, types, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue capture"})
 		return
@@ -89,50 +90,66 @@ func GetItemLog(c *gin.Context, db *gorm.DB) {
 	c.JSON(http.StatusOK, gin.H{"logs": item.Logs})
 }
 
-// RetryAllFailedJobs queues a background job to retry all failed archive items
-func RetryAllFailedJobs(c *gin.Context, db *gorm.DB, riverQueueManager *workers.RiverQueueManager) {
+// RetryAllFailedJobs directly retries all failed archive items
+func RetryAllFailedJobs(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
 	if !RequireLogin(c) {
 		return
 	}
 	
-	// Check if there are any failed items
-	var failedCount int64
-	if err := db.Model(&models.ArchiveItem{}).Where("status = 'failed'").Count(&failedCount).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count failed items"})
+	// Get all failed items
+	var items []models.ArchiveItem
+	if err := db.Where("status = 'failed'").Find(&items).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get failed items"})
 		return
 	}
 	
-	if failedCount == 0 {
+	if len(items) == 0 {
 		c.JSON(http.StatusOK, gin.H{"message": "No failed jobs to retry"})
 		return
 	}
 	
-	// Queue a background job to handle the bulk retry
-	args := workers.BulkRetryJobArgs{
-		RequestedBy: "admin", // Could be enhanced to track which admin user
-	}
-	
-	opts := &river.InsertOpts{
-		MaxAttempts: 1, // Bulk retry jobs shouldn't themselves be retried
-		Queue:       "high_priority", // Use high-priority queue for faster processing
-		Tags:        []string{"bulk_retry", "admin"},
-		UniqueOpts: river.UniqueOpts{
-			ByArgs:   true,
-			ByPeriod: 5 * time.Minute, // Prevent multiple bulk retries in short succession
-		},
-	}
-	
-	if _, err := riverQueueManager.RiverClient.Insert(c.Request.Context(), args, opts); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue bulk retry job"})
-		return
+	// Reset status to pending and enqueue new jobs
+	retriedCount := 0
+	for _, item := range items {
+		// Get the capture info for this item
+		var capture models.Capture
+		if err := db.Preload("ArchivedURL").First(&capture, item.CaptureID).Error; err != nil {
+			continue // Skip if we can't find the capture
+		}
+		
+		// Update status to pending
+		if err := db.Model(&item).Update("status", "pending").Error; err != nil {
+			continue // Skip this item if update fails
+		}
+		
+		// Queue new archive job
+		args := workers.ArchiveJobArgs{
+			CaptureID: 0, // Will be looked up by short_id and type
+			ShortID:   capture.ShortID,
+			Type:      item.Type,
+			URL:       capture.ArchivedURL.Original,
+		}
+		
+		opts := &river.InsertOpts{
+			MaxAttempts: 3,
+			Tags:        []string{"archive", item.Type, "retry"},
+			UniqueOpts: river.UniqueOpts{
+				ByArgs:   true,
+				ByPeriod: 1 * time.Minute,
+			},
+		}
+		
+		if _, err := riverClient.Insert(c.Request.Context(), args, opts); err == nil {
+			retriedCount++
+		}
 	}
 	
 	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("Bulk retry job queued to process %d failed jobs in the background", failedCount),
+		"message": fmt.Sprintf("Retried %d of %d failed items", retriedCount, len(items)),
 	})
 }
 
-func AdminArchive(c *gin.Context, db *gorm.DB, riverQueueManager *workers.RiverQueueManager) {
+func AdminArchive(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
 	if !RequireLogin(c) {
 		return
 	}
@@ -149,7 +166,7 @@ func AdminArchive(c *gin.Context, db *gorm.DB, riverQueueManager *workers.RiverQ
 		return
 	}
 	
-	shortID, err := riverQueueManager.QueueCaptureForURL(req.URL, req.Types)
+	shortID, err := workers.QueueCapture(c.Request.Context(), db, riverClient, req.URL, req.Types, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue capture"})
 		return
