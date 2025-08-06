@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -23,7 +24,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 	"riverqueue.com/riverui"
 	"arker/internal/archivers"
 	"arker/internal/handlers"
@@ -240,7 +240,8 @@ func main() {
 	
 	// Auto-migrate database models
 	if err := db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.Config{}); err != nil {
-		log.Fatalf("Failed to auto-migrate database: %v", err)
+		slog.Error("AutoMigrate failed with detailed error", "error", err, "error_type", fmt.Sprintf("%T", err), "error_string", err.Error())
+		slog.Info("Continuing startup despite AutoMigrate error")
 	}
 
 	// Get or generate session secret from database (overrides environment variable if not set)

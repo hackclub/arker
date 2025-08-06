@@ -22,7 +22,14 @@ Arker is a Go-based web archiving server that captures web pages using multiple 
 - **Build dev containers**: `make dev-build`
 - **Stop dev environment**: `make dev-down`
 - **View dev logs**: `make dev-logs`
+- **View dev logs (non-blocking)**: `make dev-logs | head -n 100` or `docker compose -f docker-compose.dev.yml logs --tail=100`
 - **Clean all containers**: `make clean`
+
+#### Development Logs
+When using Amp with `make dev` running in another window:
+- Use `make dev-logs` to see recent logs (will follow and block)
+- Use `docker compose -f docker-compose.dev.yml logs --tail=50` for last 50 lines without hanging
+- Use `docker compose -f docker-compose.dev.yml logs arker-app --tail=20` for app-only logs
 
 ### Database Operations
 - **Connect to dev DB**: `make db-connect`
