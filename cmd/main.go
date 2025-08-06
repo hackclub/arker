@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"net/http"
 	"os"
 	"time"
 	"github.com/gin-contrib/sessions"
@@ -95,71 +94,7 @@ func getOrCreateConfigValue(db *gorm.DB, key string, defaultValue string) (strin
 	return config.Value, nil
 }
 
-func healthCheckHandler(db *gorm.DB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Check database connectivity
-		sqlDB, err := db.DB()
-		if err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"status": "unhealthy",
-				"error":  "database connection failed",
-			})
-			return
-		}
 
-		if err := sqlDB.Ping(); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"status": "unhealthy",
-				"error":  "database ping failed",
-			})
-			return
-		}
-
-		// Browser health is checked per-job, no global browser manager
-		// App is ready
-		c.JSON(http.StatusOK, gin.H{
-			"status": "healthy",
-		})
-	}
-}
-
-func browserMetricsHandler() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		monitor := monitoring.GetGlobalMonitor()
-		metrics := monitor.GetMetrics()
-		
-		c.JSON(http.StatusOK, metrics)
-	}
-}
-
-func browserStatusHandler() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		monitor := monitoring.GetGlobalMonitor()
-		metrics := monitor.GetMetrics()
-		
-		status := "healthy"
-		if metrics.LeakDetected {
-			status = "leak_detected"
-		}
-		
-		response := gin.H{
-			"status":                status,
-			"chrome_process_count":  metrics.ChromeProcessCount,
-			"total_goroutines":      metrics.TotalGoroutines,
-			"launch_close_balance":  metrics.PlaywrightLaunches - metrics.PlaywrightCloses,
-			"create_cleanup_balance": metrics.BrowserCreations - metrics.BrowserCleanups,
-			"leak_detected":         metrics.LeakDetected,
-			"leak_reason":           metrics.LeakReason,
-			"last_updated":          metrics.LastUpdated,
-		}
-		
-		if metrics.LeakDetected {
-			c.JSON(http.StatusServiceUnavailable, response)
-		} else {
-			c.JSON(http.StatusOK, response)
-		}
-	}
-}
 
 func populateFileSizes(db *gorm.DB, storage storage.Storage) {
 	var items []models.ArchiveItem
@@ -394,9 +329,9 @@ func main() {
 	r.Use(sessions.Sessions("session", store))
 
 	// Setup routes
-	r.GET("/health", healthCheckHandler(db))
-	r.GET("/metrics/browser", browserMetricsHandler())
-	r.GET("/status/browser", browserStatusHandler())
+	r.GET("/health", handlers.HealthCheckHandler(db))
+	r.GET("/metrics/browser", handlers.BrowserMetricsHandler())
+	r.GET("/status/browser", handlers.BrowserStatusHandler())
 	r.GET("/login", func(c *gin.Context) { handlers.LoginGet(c, cfg.LoginText) })
 	r.POST("/login", func(c *gin.Context) { handlers.LoginPost(c, db, cfg.LoginText) })
 	r.GET("/admin/api-keys", func(c *gin.Context) { handlers.ApiKeysGet(c, db) })

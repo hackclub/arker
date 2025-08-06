@@ -18,61 +18,27 @@ type ScreenshotArchiver struct {
 }
 
 func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *PWBundle, error) {
-	fmt.Fprintf(logWriter, "Starting screenshot archive for: %s\n", url)
-	
-	// Check context before creating browser
-	select {
-	case <-ctx.Done():
-		return nil, "", "", nil, ctx.Err()
-	default:
-	}
-	
-	// Create PWBundle for guaranteed cleanup
-	bundle, err := NewPWBundle(logWriter)
-	if err != nil {
-		fmt.Fprintf(logWriter, "Failed to create PWBundle: %v\n", err)
-		return nil, "", "", nil, err
-	}
-	
-	// Create browser within bundle
-	if err := bundle.CreateBrowser(); err != nil {
-		bundle.Cleanup() // Cleanup on error
-		return nil, "", "", nil, err
-	}
-	
-	// Create page with screenshot-specific options
-	err = bundle.CreatePage(playwright.BrowserNewPageOptions{
-		Viewport: &playwright.Size{
-			Width:  1500,
-			Height: 1080,
-		},
-		DeviceScaleFactor: playwright.Float(2.0), // Retina quality
-	})
-	if err != nil {
-		fmt.Fprintf(logWriter, "Failed to create browser page: %v\n", err)
-		return nil, "", "", bundle, err // Return bundle for cleanup by worker
-	}
-	
-	page, err := bundle.GetPage()
-	if err != nil {
-		return nil, "", "", bundle, err
-	}
+    fmt.Fprintf(logWriter, "Starting screenshot archive for: %s\n", url)
 
-	// Add event listeners via bundle (ensures cleanup)
-	bundle.AddEventListener(page, "console", func(msg playwright.ConsoleMessage) {
-		fmt.Fprintf(logWriter, "Console [%s]: %s\n", msg.Type(), msg.Text())
-	})
-	bundle.AddEventListener(page, "pageerror", func(err error) {
-		fmt.Fprintf(logWriter, "Page error: %v\n", err)
-	})
+    pageOpts := playwright.BrowserNewPageOptions{
+        Viewport: &playwright.Size{
+            Width:  1500,
+            Height: 1080,
+        },
+        DeviceScaleFactor: playwright.Float(2.0), // Retina quality
+    }
 
-	// Use the common complete page load sequence (with scrolling for full-page screenshots)
-	if err = PerformCompletePageLoadWithContext(ctx, page, url, logWriter, true); err != nil {
-		fmt.Fprintf(logWriter, "Complete page load failed: %v\n", err)
-		return nil, "", "", bundle, err // Return bundle for cleanup by worker
-	}
+    bundle, page, err := setupBrowserForArchiving(logWriter, pageOpts)
+    if err != nil {
+        return nil, "", "", bundle, err
+    }
+    // Note: PWBundle cleanup is deferred in the main worker loop.
 
-	return a.ArchiveWithPageContext(ctx, page, url, logWriter, bundle)
+    if err = PerformCompletePageLoadWithContext(ctx, page, url, logWriter, true); err != nil {
+        return nil, "", "", bundle, err
+    }
+
+    return a.ArchiveWithPageContext(ctx, page, url, logWriter, bundle)
 }
 
 func (a *ScreenshotArchiver) ArchiveWithPageContext(ctx context.Context, page playwright.Page, url string, logWriter io.Writer, bundle *PWBundle) (io.Reader, string, string, *PWBundle, error) {

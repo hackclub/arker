@@ -20,7 +20,7 @@ Try out the demo instance at <https://arker-demo.hackclub.com>.
 - `SESSION_SECRET` - Session encryption key (auto-generated if not set)
 - `ADMIN_USERNAME` - Admin login username (default: `admin`)
 - `ADMIN_PASSWORD` - Admin login password (default: `admin`)
-- `LOGIN_TEXT` - Custom text to display under login form
+- `LOGIN_TEXT` - Custom text to display under the login form. Useful for providing demo credentials (e.g., `LOGIN_TEXT="Demo: admin/admin"`). Supports basic HTML.
 - `GIN_MODE` - Gin framework mode (`debug` for development)
 
 

@@ -63,30 +63,8 @@ RUN playwright --version
 # Create data directories
 RUN mkdir -p /data /cache
 
-# Create .air.toml configuration for live reloading
-RUN echo '[build]\n\
-  cmd = "go build -o ./tmp/main ./cmd"\n\
-  bin = "tmp/main"\n\
-  full_bin = "APP_ENV=dev ./tmp/main"\n\
-  include_ext = ["go", "tpl", "tmpl", "html"]\n\
-  exclude_dir = ["assets", "tmp", "vendor", "pgdata", "storage", "cache"]\n\
-  include_dir = []\n\
-  exclude_file = []\n\
-  delay = 1000 # ms\n\
-  stop_on_dir_change = true\n\
-  log = "build-errors.log"\n\
-  \n\
-[color]\n\
-  main = "magenta"\n\
-  watcher = "cyan"\n\
-  build = "yellow"\n\
-  runner = "green"\n\
-  \n\
-[log]\n\
-  time = false\n\
-  \n\
-[misc]\n\
-  clean_on_exit = true' > .air.toml
+# Copy Air config for live reloading
+COPY .air.toml .
 
 # Default command is to run Air
 CMD ["air"]

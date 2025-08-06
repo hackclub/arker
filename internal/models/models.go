@@ -63,10 +63,4 @@ type ArchiveItem struct {
 	RetryCount    int
 }
 
-// Job represents a job in the queue
-type Job struct {
-	CaptureID uint
-	ShortID   string
-	Type      string
-	URL       string
-}
+
