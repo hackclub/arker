@@ -72,8 +72,8 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 	}
 
-	// Try to get uncompressed size efficiently from zstd storage (skip for MHTML since it's served differently)
-	if typ != "mhtml" {
+	// Try to get uncompressed size efficiently from zstd storage
+	{
 		if zstdStorage, ok := storageInstance.(*storage.ZSTDStorage); ok {
 			if uncompressedSize, err := zstdStorage.UncompressedSize(item.StorageKey); err == nil {
 				// Validate file integrity by trying to read first few bytes
