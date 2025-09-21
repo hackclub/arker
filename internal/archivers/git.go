@@ -7,16 +7,15 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/transport/client"
+	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
+	"gorm.io/gorm"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sync"
 	"time"
-	"gorm.io/gorm"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/transport/client"
-	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
-
 )
 
 // GitArchiver
@@ -36,7 +35,7 @@ func getGitHTTPClient() *http.Client {
 			IdleConnTimeout:     90 * time.Second,
 			DisableKeepAlives:   false,
 		}
-		
+
 		gitHTTPClient = &http.Client{
 			Transport: transport,
 			Timeout:   5 * time.Minute, // Overall request timeout
@@ -47,27 +46,27 @@ func getGitHTTPClient() *http.Client {
 
 func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *PWBundle, error) {
 	fmt.Fprintf(logWriter, "Starting git archive for: %s\n", url)
-	
+
 	// Check context before starting
 	select {
 	case <-ctx.Done():
 		return nil, "", "", nil, ctx.Err()
 	default:
 	}
-	
+
 	// Configure HTTP client with pooled connections
 	httpClient := getGitHTTPClient()
-	
+
 	// Install pooled HTTP client for git operations
 	client.InstallProtocol("https", githttp.NewClient(httpClient))
 	client.InstallProtocol("http", githttp.NewClient(httpClient))
-	
+
 	// Extract repository URL for GitHub URLs with extra paths
 	repoURL := extractGitRepoURL(url)
 	if repoURL != url {
 		fmt.Fprintf(logWriter, "Extracted repository URL: %s\n", repoURL)
 	}
-	
+
 	tempDir, err := os.MkdirTemp("", "git-archive-")
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to create temp directory: %v\n", err)
@@ -92,7 +91,7 @@ func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 	// Start context-aware tar creation in a goroutine
 	go func() {
 		defer pw.Close()
-		
+
 		// Check context before starting tar creation
 		select {
 		case <-ctx.Done():
@@ -101,18 +100,18 @@ func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 			return
 		default:
 		}
-		
+
 		tw := tar.NewWriter(pw)
 		defer tw.Close()
-		
+
 		fmt.Fprintf(logWriter, "Creating tar archive...\n")
-		
+
 		// Use a channel to signal completion
 		done := make(chan error, 1)
 		go func() {
 			done <- AddDirToTar(tw, tempDir, "")
 		}()
-		
+
 		// Wait for either completion or context cancellation
 		select {
 		case <-ctx.Done():
@@ -137,21 +136,21 @@ func extractGitRepoURL(url string) string {
 	if fragmentIndex := regexp.MustCompile(`#.*$`).FindStringIndex(url); fragmentIndex != nil {
 		url = url[:fragmentIndex[0]]
 	}
-	
+
 	// GitHub repository URL pattern: https://github.com/owner/repo
 	githubPattern := regexp.MustCompile(`^(https?://github\.com/[^/]+/[^/]+)(/.*)?$`)
-	
+
 	if matches := githubPattern.FindStringSubmatch(url); len(matches) > 1 {
 		return matches[1] // Return just the repo part
 	}
-	
+
 	// GitLab repository URL pattern: https://gitlab.com/owner/repo
 	gitlabPattern := regexp.MustCompile(`^(https?://gitlab\.com/[^/]+/[^/]+)(/.*)?$`)
-	
+
 	if matches := gitlabPattern.FindStringSubmatch(url); len(matches) > 1 {
 		return matches[1] // Return just the repo part
 	}
-	
+
 	// For other URLs, return as-is
 	return url
 }
@@ -163,12 +162,12 @@ func AddDirToTar(tw *tar.Writer, dir string, prefix string) error {
 		return err
 	}
 	defer f.Close()
-	
+
 	fis, err := f.Readdir(-1)
 	if err != nil {
 		return err
 	}
-	
+
 	for _, fi := range fis {
 		curPath := filepath.Join(dir, fi.Name())
 		if fi.IsDir() {

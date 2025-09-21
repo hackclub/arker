@@ -1,8 +1,8 @@
 package main
 
 import (
-	"testing"
 	"arker/internal/utils"
+	"testing"
 )
 
 func TestURLValidation(t *testing.T) {
@@ -85,7 +85,7 @@ func TestURLValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := utils.ValidateURL(tt.url)
-			
+
 			if tt.shouldError {
 				if err == nil {
 					t.Errorf("Expected error for URL %s, but got none", tt.url)
@@ -151,7 +151,7 @@ func TestArchiveRequestValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.request.Validate()
-			
+
 			if tt.shouldError {
 				if err == nil {
 					t.Errorf("Expected error for request %+v, but got none", tt.request)
@@ -179,7 +179,7 @@ func TestGitURLDetection(t *testing.T) {
 		{"Codeberg repo", "https://codeberg.org/user/repo", true},
 		{"Direct git URL", "https://example.com/repo.git", true},
 		{"Git subdomain", "https://git.example.com/repo", true},
-		
+
 		// Should NOT be detected as Git repositories
 		{"GitHub user profile", "https://github.com/gamerwaves", false},
 		{"GitHub settings", "https://github.com/settings", false},
@@ -247,8 +247,8 @@ func TestGetArchiveTypes(t *testing.T) {
 }
 
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && s[:len(substr)] == substr || len(s) > len(substr) && s[len(s)-len(substr):] == substr || 
-		   (len(s) > len(substr) && findSubstring(s, substr))
+	return len(s) >= len(substr) && s[:len(substr)] == substr || len(s) > len(substr) && s[len(s)-len(substr):] == substr ||
+		(len(s) > len(substr) && findSubstring(s, substr))
 }
 
 func findSubstring(s, substr string) bool {

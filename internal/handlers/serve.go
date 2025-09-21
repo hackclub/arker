@@ -1,15 +1,15 @@
 package handlers
 
 import (
-	"fmt"
-	"io"
-	"log"
-	"net/http"
-	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 	"arker/internal/models"
 	"arker/internal/storage"
 	"arker/internal/utils"
+	"fmt"
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+	"io"
+	"log"
+	"net/http"
 )
 
 func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
@@ -60,18 +60,18 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 		attach = true
 	}
 	c.Header("Content-Type", ct)
-	
+
 	// Explicitly clear any automatic content-encoding detection
 	c.Header("Content-Encoding", "")
-	
+
 	// Add ETag for conditional requests
 	c.Header("ETag", fmt.Sprintf("\"%s-%d\"", item.StorageKey, item.FileSize))
-	
+
 	if attach {
 		filename := utils.GenerateArchiveFilename(capture, archivedURL, item.Extension)
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 	}
-	
+
 	// Try to get uncompressed size efficiently from zstd storage (skip for MHTML since it's served differently)
 	if typ != "mhtml" {
 		if zstdStorage, ok := storageInstance.(*storage.ZSTDStorage); ok {
@@ -82,14 +82,14 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 					testBuf := make([]byte, 100)
 					_, testReadErr := testReader.Read(testBuf)
 					testReader.Close()
-					
+
 					if testReadErr != nil && testReadErr != io.EOF {
 						log.Printf("File integrity check failed for %s: %v", item.StorageKey, testReadErr)
 						c.Status(http.StatusInternalServerError)
 						return
 					}
 				}
-				
+
 				c.Header("Content-Length", fmt.Sprintf("%d", uncompressedSize))
 				log.Printf("Set Content-Length to %d for %s", uncompressedSize, item.StorageKey)
 			} else {
@@ -99,7 +99,7 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 			log.Printf("Storage is not ZSTDStorage type for %s", item.StorageKey)
 		}
 	}
-	
+
 	// Stream the file directly
 	_, err = io.Copy(c.Writer, r)
 	if err != nil {
@@ -122,7 +122,7 @@ func ServeMHTMLAsHTML(c *gin.Context, storageInstance storage.Storage, db *gorm.
 		c.Status(http.StatusNotFound)
 		return
 	}
-	
+
 	r, err := storageInstance.Reader(item.StorageKey)
 	if err != nil {
 		log.Printf("Failed to open storage for %s: %v", shortID, err)
@@ -130,11 +130,11 @@ func ServeMHTMLAsHTML(c *gin.Context, storageInstance storage.Storage, db *gorm.
 		return
 	}
 	defer r.Close()
-	
+
 	c.Header("Content-Type", "text/html")
-	
+
 	log.Printf("Converting MHTML to HTML for %s", shortID)
-	
+
 	// Use the MHTML converter with streaming (decompression now handled by storage)
 	converter := utils.NewStreamingConverter()
 	if err := converter.ConvertMHTMLToHTML(r, c.Writer); err != nil {

@@ -1,14 +1,14 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
-	"errors"
 
+	"arker/internal/models"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
-	"arker/internal/models"
 )
 
 func ApiKeysGet(c *gin.Context, db *gorm.DB) {

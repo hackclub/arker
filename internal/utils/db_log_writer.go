@@ -1,10 +1,10 @@
 package utils
 
 import (
+	"arker/internal/models"
+	"gorm.io/gorm"
 	"strings"
 	"sync"
-	"gorm.io/gorm"
-	"arker/internal/models"
 )
 
 // DBLogWriter writes logs to database in real-time
@@ -25,16 +25,16 @@ func NewDBLogWriter(db *gorm.DB, itemID uint) *DBLogWriter {
 func (w *DBLogWriter) Write(p []byte) (n int, err error) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
-	
+
 	// Write to buffer
 	n, err = w.buffer.Write(p)
 	if err != nil {
 		return n, err
 	}
-	
+
 	// Update database with current log content
 	w.db.Model(&models.ArchiveItem{}).Where("id = ?", w.itemID).Update("logs", w.buffer.String())
-	
+
 	return n, nil
 }
 

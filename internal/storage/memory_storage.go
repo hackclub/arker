@@ -34,12 +34,12 @@ func (ms *MemoryStorage) Writer(key string) (io.WriteCloser, error) {
 func (ms *MemoryStorage) Reader(key string) (io.ReadCloser, error) {
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
-	
+
 	data, exists := ms.data[key]
 	if !exists {
 		return nil, fmt.Errorf("key not found: %s", key)
 	}
-	
+
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
@@ -47,12 +47,12 @@ func (ms *MemoryStorage) Reader(key string) (io.ReadCloser, error) {
 func (ms *MemoryStorage) Size(key string) (int64, error) {
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
-	
+
 	data, exists := ms.data[key]
 	if !exists {
 		return 0, fmt.Errorf("key not found: %s", key)
 	}
-	
+
 	return int64(len(data)), nil
 }
 
@@ -60,7 +60,7 @@ func (ms *MemoryStorage) Size(key string) (int64, error) {
 func (ms *MemoryStorage) Delete(key string) error {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
-	
+
 	delete(ms.data, key)
 	return nil
 }
@@ -69,7 +69,7 @@ func (ms *MemoryStorage) Delete(key string) error {
 func (ms *MemoryStorage) Exists(key string) (bool, error) {
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
-	
+
 	_, exists := ms.data[key]
 	return exists, nil
 }
@@ -95,12 +95,12 @@ func (mw *memoryWriter) Close() error {
 	if mw.closed {
 		return nil
 	}
-	
+
 	mw.storage.mu.Lock()
 	defer mw.storage.mu.Unlock()
-	
+
 	mw.storage.data[mw.key] = mw.buffer.Bytes()
 	mw.closed = true
-	
+
 	return nil
 }

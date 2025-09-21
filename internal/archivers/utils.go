@@ -3,18 +3,18 @@ package archivers
 import (
 	"context"
 	"fmt"
+	"github.com/playwright-community/playwright-go"
 	"io"
 	"strings"
 	"sync"
 	"time"
-	"github.com/playwright-community/playwright-go"
 )
 
 // waitForRobustPageLoad implements a robust page loading strategy for dynamic sites
 // like Next.js and YouTube that handles progressive/lazy images and async content
 func WaitForRobustPageLoad(page playwright.Page, logWriter io.Writer, idleDurationMs int, totalTimeoutMs int, pollIntervalMs int) error {
 	fmt.Fprintf(logWriter, "Starting robust page load wait (idle: %dms, timeout: %dms)...\n", idleDurationMs, totalTimeoutMs)
-	
+
 	// Step 1: Disable animations for instant loads
 	_, err := page.Evaluate(`
 		() => {
@@ -97,14 +97,14 @@ func PerformCompletePageLoad(page playwright.Page, url string, logWriter io.Writ
 // PerformCompletePageLoadWithContext handles the full page loading sequence for archiving with context cancellation
 func PerformCompletePageLoadWithContext(ctx context.Context, page playwright.Page, url string, logWriter io.Writer, includeScrolling bool) error {
 	fmt.Fprintf(logWriter, "Starting complete page load sequence for: %s\n", url)
-	
+
 	// Check context before starting
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
 	}
-	
+
 	// Step 1: Navigate with initial wait for 'load'
 	fmt.Fprintf(logWriter, "Navigating to URL...\n")
 	if _, err := page.Goto(url, playwright.PageGotoOptions{
@@ -166,16 +166,16 @@ func PerformCompletePageLoadWithContext(ctx context.Context, page playwright.Pag
 // scrollToBottomAndWait gradually scrolls through the page to trigger lazy loading
 func scrollToBottomAndWait(page playwright.Page, logWriter io.Writer) error {
 	fmt.Fprintf(logWriter, "Starting gradual scroll to trigger lazy loading...\n")
-	
+
 	// Get initial page height
 	initialHeight, err := page.Evaluate(`() => document.body.scrollHeight`)
 	if err != nil {
 		fmt.Fprintf(logWriter, "Warning: Could not get initial page height: %v\n", err)
 		return nil // Don't fail, just skip scrolling
 	}
-	
+
 	fmt.Fprintf(logWriter, "Initial page height: %v\n", initialHeight)
-	
+
 	// Scroll in chunks with pauses to allow content to load
 	_, err = page.Evaluate(`
 		async (initialHeight) => {
@@ -223,18 +223,18 @@ func scrollToBottomAndWait(page playwright.Page, logWriter io.Writer) error {
 			};
 		}
 	`, initialHeight)
-	
+
 	if err != nil {
 		fmt.Fprintf(logWriter, "Warning: Scrolling failed: %v\n", err)
 		return nil // Don't fail the entire process
 	}
-	
+
 	// Get final height for logging
 	finalHeight, err := page.Evaluate(`() => document.body.scrollHeight`)
 	if err == nil {
 		fmt.Fprintf(logWriter, "Scrolling completed. Final height: %v (initial: %v)\n", finalHeight, initialHeight)
 	}
-	
+
 	// Scroll back to top for consistent archiving
 	fmt.Fprintf(logWriter, "Scrolling back to top for consistent archiving...\n")
 	_, err = page.Evaluate(`
@@ -251,7 +251,7 @@ func scrollToBottomAndWait(page playwright.Page, logWriter io.Writer) error {
 	} else {
 		fmt.Fprintf(logWriter, "Successfully scrolled back to top\n")
 	}
-	
+
 	fmt.Fprintf(logWriter, "Scroll-based lazy loading trigger completed\n")
 	return nil
 }
@@ -262,7 +262,7 @@ func waitForCustomNetworkIdle(page playwright.Page, logWriter io.Writer, idleDur
 	pendingRequests := sync.Map{} // Thread-safe map for pending requests
 	var mu sync.Mutex
 	startTime := time.Now()
-	
+
 	// Resilience parameters
 	const maxAcceptablePersistentRequests = 3 // Allow up to 3 persistent requests
 	const fallbackTimeoutMs = 15000           // Give up on perfect idle after 15s
@@ -272,36 +272,36 @@ func waitForCustomNetworkIdle(page playwright.Page, logWriter io.Writer, idleDur
 	requestListener := func(req playwright.Request) {
 		// Filter out requests we don't care about for idle detection
 		url := req.URL()
-		
+
 		// Comprehensive list of ad networks, trackers, and analytics domains to ignore
 		ignoredPatterns := []string{
 			// Analytics
 			"analytics", "google-analytics", "googletagmanager", "gtag", "gtm",
 			"segment.com", "mixpanel", "amplitude", "hotjar", "fullstory",
-			
+
 			// Ad networks and tracking
 			"doubleclick", "googlesyndication", "googleadservices", "adsystem",
 			"facebook.com/tr", "connect.facebook.net", "fbcdn.net",
 			"amazon-adsystem", "adsafeprotected", "moatads", "scorecardresearch",
 			"quantserve", "outbrain", "taboola", "criteo", "adsystem",
-			
+
 			// Media/ad companies that often have slow/persistent requests
 			"krushmedia", "adsafeprotected", "doubleverify", "ias.net",
 			"moatads", "amazon-adsystem", "adsystem.com", "googleadservices",
-			
+
 			// Common tracking pixels and beacons
 			"beacon", "pixel", "track", "ping", "event", "impression",
 			"?puid=", "?redir=", "gdpr=", "ccpa=", "gpp=", // URL params often in tracking
-			
+
 			// Social media tracking
 			"twitter.com/i/adsct", "t.co/i/adsct", "linkedin.com/px",
 			"snapchat.com/tr", "tiktok.com/tr", "reddit.com/api/v2/pixel",
-			
+
 			// Other persistent/slow services
 			"pusher", "websocket", "socket.io", "sse", "eventsource",
 			"livechat", "intercom", "zendesk", "drift",
 		}
-		
+
 		shouldIgnore := false
 		for _, pattern := range ignoredPatterns {
 			if strings.Contains(strings.ToLower(url), pattern) {
@@ -309,18 +309,18 @@ func waitForCustomNetworkIdle(page playwright.Page, logWriter io.Writer, idleDur
 				break
 			}
 		}
-		
+
 		if shouldIgnore {
 			fmt.Fprintf(logWriter, "Ignoring tracking/ad request: %s\n", url)
 			return
 		}
-		
+
 		mu.Lock()
 		pendingRequests.Store(url, true)
 		mu.Unlock()
 		fmt.Fprintf(logWriter, "Request started: %s\n", url)
 	}
-	
+
 	requestFinishedListener := func(req playwright.Request) {
 		url := req.URL()
 		mu.Lock()
@@ -330,7 +330,7 @@ func waitForCustomNetworkIdle(page playwright.Page, logWriter io.Writer, idleDur
 		}
 		mu.Unlock()
 	}
-	
+
 	requestFailedListener := func(req playwright.Request) {
 		url := req.URL()
 		mu.Lock()
@@ -347,10 +347,10 @@ func waitForCustomNetworkIdle(page playwright.Page, logWriter io.Writer, idleDur
 
 	var idleStart *time.Time
 	fallbackTriggered := false
-	
+
 	for {
 		elapsed := time.Since(startTime).Milliseconds()
-		
+
 		// Hard timeout - always fail after total timeout
 		if elapsed > int64(totalTimeoutMs) {
 			var urls []string
@@ -388,20 +388,20 @@ func waitForCustomNetworkIdle(page playwright.Page, logWriter io.Writer, idleDur
 					fmt.Fprintf(logWriter, "Persistent requests: %v\n", pendingUrls)
 					return nil // Accept this as "good enough"
 				}
-				
+
 				// Give up on perfect idle after fallback timeout
 				if elapsed > fallbackTimeoutMs {
 					fmt.Fprintf(logWriter, "Fallback: Too many persistent requests (%d), but continuing after %dms\n", count, elapsed)
 					fmt.Fprintf(logWriter, "Giving up on perfect idle. Persistent requests: %v\n", pendingUrls)
 					return nil // Continue anyway - better than failing completely
 				}
-				
+
 				if !fallbackTriggered {
 					fmt.Fprintf(logWriter, "Fallback mode: %d persistent requests detected, will continue after %dms if not resolved\n", count, fallbackTimeoutMs)
 					fallbackTriggered = true
 				}
 			}
-			
+
 			// Reset idle timer if we're still trying for perfect idle
 			if idleStart != nil && !fallbackTriggered {
 				fmt.Fprintf(logWriter, "Network activity detected (%d requests), resetting idle timer\n", count)
@@ -416,14 +416,14 @@ func waitForCustomNetworkIdle(page playwright.Page, logWriter io.Writer, idleDur
 // Context-aware versions for backward compatibility
 func WaitForRobustPageLoadWithContext(ctx context.Context, page playwright.Page, logWriter io.Writer, idleDurationMs int, totalTimeoutMs int, pollIntervalMs int) error {
 	fmt.Fprintf(logWriter, "Starting robust page load wait with context (idle: %dms, timeout: %dms)...\n", idleDurationMs, totalTimeoutMs)
-	
+
 	// Check context before starting
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
 	}
-	
+
 	// Step 1: Disable animations for instant loads
 	_, err := page.Evaluate(`
 		() => {
@@ -489,7 +489,7 @@ func WaitForRobustPageLoadWithContext(ctx context.Context, page playwright.Page,
 
 	// Step 4: Final check for images/videos loaded with context timeout
 	fmt.Fprintf(logWriter, "Checking all media resources are loaded...\n")
-	
+
 	// Create a done channel for the WaitForFunction operation
 	done := make(chan error, 1)
 	go func() {
@@ -515,7 +515,7 @@ func WaitForRobustPageLoadWithContext(ctx context.Context, page playwright.Page,
 		})
 		done <- err
 	}()
-	
+
 	// Wait for either completion or context cancellation
 	select {
 	case <-ctx.Done():
@@ -534,12 +534,12 @@ func WaitForRobustPageLoadWithContext(ctx context.Context, page playwright.Page,
 
 func scrollToBottomAndWaitWithContext(ctx context.Context, page playwright.Page, logWriter io.Writer) error {
 	fmt.Fprintf(logWriter, "Starting context-aware scroll to bottom\n")
-	
+
 	done := make(chan error, 1)
 	go func() {
 		done <- scrollToBottomAndWait(page, logWriter)
 	}()
-	
+
 	select {
 	case <-ctx.Done():
 		fmt.Fprintf(logWriter, "Context cancelled during scroll operation\n")
@@ -551,12 +551,12 @@ func scrollToBottomAndWaitWithContext(ctx context.Context, page playwright.Page,
 
 func waitForCustomNetworkIdleWithContext(ctx context.Context, page playwright.Page, logWriter io.Writer, idleDurationMs int, totalTimeoutMs int, pollIntervalMs int) error {
 	fmt.Fprintf(logWriter, "Starting context-aware network idle wait (idle: %dms, timeout: %dms)\n", idleDurationMs, totalTimeoutMs)
-	
+
 	done := make(chan error, 1)
 	go func() {
 		done <- waitForCustomNetworkIdle(page, logWriter, idleDurationMs, totalTimeoutMs, pollIntervalMs)
 	}()
-	
+
 	select {
 	case <-ctx.Done():
 		fmt.Fprintf(logWriter, "Context cancelled during network idle wait\n")
@@ -568,34 +568,34 @@ func waitForCustomNetworkIdleWithContext(ctx context.Context, page playwright.Pa
 
 // setupBrowserForArchiving is a helper to reduce boilerplate in Playwright-based archivers.
 func setupBrowserForArchiving(logWriter io.Writer, pageOpts ...playwright.BrowserNewPageOptions) (*PWBundle, playwright.Page, error) {
-    bundle, err := NewPWBundle(logWriter)
-    if err != nil {
-        fmt.Fprintf(logWriter, "Failed to create PWBundle: %v\n", err)
-        return nil, nil, err
-    }
+	bundle, err := NewPWBundle(logWriter)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to create PWBundle: %v\n", err)
+		return nil, nil, err
+	}
 
-    if err := bundle.CreateBrowser(); err != nil {
-        bundle.Cleanup() // Cleanup on error
-        return nil, nil, err
-    }
+	if err := bundle.CreateBrowser(); err != nil {
+		bundle.Cleanup() // Cleanup on error
+		return nil, nil, err
+	}
 
-    if err := bundle.CreatePage(pageOpts...); err != nil {
-        // Return bundle for cleanup by the worker, as browser exists.
-        return bundle, nil, err
-    }
+	if err := bundle.CreatePage(pageOpts...); err != nil {
+		// Return bundle for cleanup by the worker, as browser exists.
+		return bundle, nil, err
+	}
 
-    page, err := bundle.GetPage()
-    if err != nil {
-        return bundle, nil, err
-    }
+	page, err := bundle.GetPage()
+	if err != nil {
+		return bundle, nil, err
+	}
 
-    // Add default event listeners.
-    bundle.AddEventListener(page, "console", func(msg playwright.ConsoleMessage) {
-        fmt.Fprintf(logWriter, "Console [%s]: %s\n", msg.Type(), msg.Text())
-    })
-    bundle.AddEventListener(page, "pageerror", func(err error) {
-        fmt.Fprintf(logWriter, "Page error: %v\n", err)
-    })
+	// Add default event listeners.
+	bundle.AddEventListener(page, "console", func(msg playwright.ConsoleMessage) {
+		fmt.Fprintf(logWriter, "Console [%s]: %s\n", msg.Type(), msg.Text())
+	})
+	bundle.AddEventListener(page, "pageerror", func(err error) {
+		fmt.Fprintf(logWriter, "Page error: %v\n", err)
+	})
 
-    return bundle, page, nil
+	return bundle, page, nil
 }

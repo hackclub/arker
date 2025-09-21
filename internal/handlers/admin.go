@@ -1,31 +1,53 @@
 package handlers
 
 import (
+	"arker/internal/models"
+	"arker/internal/utils"
+	"arker/internal/workers"
 	"fmt"
-	"net/http"
-	"time"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 	"gorm.io/gorm"
-	"arker/internal/models"
-	"arker/internal/utils"
-	"arker/internal/workers"
+	"math"
+	"net/http"
+	"strconv"
+	"time"
 )
 
 func AdminGet(c *gin.Context, db *gorm.DB) {
 	if !RequireLogin(c) {
 		return
 	}
+
+	// Get pagination parameters
+	page := 1
+	if p := c.Query("page"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+
+	const limit = 1000
+	offset := (page - 1) * limit
+
+	// Get total count for pagination info
+	var total int64
+	db.Model(&models.ArchivedURL{}).
+		Joins("LEFT JOIN captures ON archived_urls.id = captures.archived_url_id").
+		Joins("LEFT JOIN archive_items ON captures.id = archive_items.capture_id").
+		Group("archived_urls.id").Count(&total)
+
 	var urls []models.ArchivedURL
-	// Sort by most recent archive creation (not URL creation)
+	// Sort by most recent archive creation (not URL creation) with pagination
 	db.Preload("Captures.ArchiveItems").Preload("Captures.APIKey").Preload("Captures", func(db *gorm.DB) *gorm.DB {
 		return db.Order("created_at DESC")
 	}).Joins("LEFT JOIN captures ON archived_urls.id = captures.archived_url_id").
 		Joins("LEFT JOIN archive_items ON captures.id = archive_items.capture_id").
 		Group("archived_urls.id").
-		Order("MAX(archive_items.created_at) DESC").Find(&urls)
-	
+		Order("MAX(archive_items.created_at) DESC").
+		Offset(offset).Limit(limit).Find(&urls)
+
 	// Add queue status summary for dashboard
 	var queueSummary struct {
 		Pending         int64
@@ -39,17 +61,26 @@ func AdminGet(c *gin.Context, db *gorm.DB) {
 	db.Model(&models.ArchiveItem{}).Where("status = 'failed'").Count(&queueSummary.Failed)
 	// River queue size is managed internally, we can get stats if needed
 	queueSummary.QueueSize = 0 // River handles queue internally
-	
+
 	// Count jobs completed in the past 5 minutes
 	fiveMinutesAgo := time.Now().Add(-5 * time.Minute)
 	db.Model(&models.ArchiveItem{}).Where("status = 'completed' AND updated_at > ?", fiveMinutesAgo).Count(&queueSummary.RecentCompleted)
-	
 
-	
+	// Calculate pagination info
+	totalPages := int(math.Ceil(float64(total) / float64(limit)))
+
 	c.HTML(http.StatusOK, "admin.html", gin.H{
-		"urls": urls,
+		"urls":         urls,
 		"queueSummary": queueSummary,
-
+		"pagination": gin.H{
+			"currentPage": page,
+			"totalPages":  totalPages,
+			"totalItems":  total,
+			"hasNext":     page < totalPages,
+			"hasPrev":     page > 1,
+			"nextPage":    page + 1,
+			"prevPage":    page - 1,
+		},
 	})
 }
 
@@ -63,23 +94,23 @@ func RequestCapture(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.T
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid URL ID"})
 		return
 	}
-	
+
 	types := utils.GetArchiveTypes(u.Original)
 	shortID, err := workers.QueueCapture(c.Request.Context(), db, riverClient, u.Original, types, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue capture"})
 		return
 	}
-	
+
 	// Construct full URL from request host
 	fullURL := utils.BuildFullURL(c, shortID)
-	
+
 	c.JSON(http.StatusOK, gin.H{"url": fullURL})
 }
 
 func GetItemLog(c *gin.Context, db *gorm.DB) {
-	if !RequireLogin(c) { 
-		return 
+	if !RequireLogin(c) {
+		return
 	}
 	id := c.Param("id")
 	var item models.ArchiveItem
@@ -95,19 +126,19 @@ func RetryAllFailedJobs(c *gin.Context, db *gorm.DB, riverClient *river.Client[p
 	if !RequireLogin(c) {
 		return
 	}
-	
+
 	// Get all failed items
 	var items []models.ArchiveItem
 	if err := db.Where("status = 'failed'").Find(&items).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get failed items"})
 		return
 	}
-	
+
 	if len(items) == 0 {
 		c.JSON(http.StatusOK, gin.H{"message": "No failed jobs to retry"})
 		return
 	}
-	
+
 	// Reset status to pending and enqueue new jobs
 	retriedCount := 0
 	for _, item := range items {
@@ -116,12 +147,12 @@ func RetryAllFailedJobs(c *gin.Context, db *gorm.DB, riverClient *river.Client[p
 		if err := db.Preload("ArchivedURL").First(&capture, item.CaptureID).Error; err != nil {
 			continue // Skip if we can't find the capture
 		}
-		
+
 		// Update status to pending
 		if err := db.Model(&item).Update("status", "pending").Error; err != nil {
 			continue // Skip this item if update fails
 		}
-		
+
 		// Queue new archive job
 		args := workers.ArchiveJobArgs{
 			CaptureID: 0, // Will be looked up by short_id and type
@@ -129,7 +160,7 @@ func RetryAllFailedJobs(c *gin.Context, db *gorm.DB, riverClient *river.Client[p
 			Type:      item.Type,
 			URL:       capture.ArchivedURL.Original,
 		}
-		
+
 		opts := &river.InsertOpts{
 			MaxAttempts: 3,
 			Tags:        []string{"archive", item.Type, "retry"},
@@ -138,12 +169,12 @@ func RetryAllFailedJobs(c *gin.Context, db *gorm.DB, riverClient *river.Client[p
 				ByPeriod: 1 * time.Minute,
 			},
 		}
-		
+
 		if _, err := riverClient.Insert(c.Request.Context(), args, opts); err == nil {
 			retriedCount++
 		}
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": fmt.Sprintf("Retried %d of %d failed items", retriedCount, len(items)),
 	})
@@ -159,21 +190,21 @@ func AdminArchive(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
 		return
 	}
-	
+
 	// Validate the request including SSRF protection
 	if err := req.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	shortID, err := workers.QueueCapture(c.Request.Context(), db, riverClient, req.URL, req.Types, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue capture"})
 		return
 	}
-	
+
 	// Construct full URL from request host
 	fullURL := utils.BuildFullURL(c, shortID)
-	
+
 	c.JSON(http.StatusOK, gin.H{"url": fullURL})
 }

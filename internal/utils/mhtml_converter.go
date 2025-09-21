@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"golang.org/x/net/html"
 	"io"
-	"net/mail"
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
+	"net/mail"
 	"regexp"
 	"strings"
 )
@@ -43,7 +43,7 @@ func (sc *StreamingConverter) ConvertMHTMLToHTML(input io.Reader, output io.Writ
 	if err != nil {
 		return fmt.Errorf("failed to read input: %w", err)
 	}
-	
+
 	// Parse MHTML headers
 	msg, err := mail.ReadMessage(bytes.NewReader(data))
 	if err != nil {
@@ -68,7 +68,7 @@ func (sc *StreamingConverter) ConvertMHTMLToHTML(input io.Reader, output io.Writ
 
 	// First pass: find HTML content and identify referenced CIDs
 	mr := multipart.NewReader(msg.Body, boundary)
-	
+
 	var htmlContent []byte
 	partInfos := make(map[string]*StreamingPartInfo)
 	var htmlFound bool
@@ -114,7 +114,7 @@ func (sc *StreamingConverter) ConvertMHTMLToHTML(input io.Reader, output io.Writ
 			if err != nil {
 				return fmt.Errorf("failed to read HTML part: %w", err)
 			}
-			
+
 			htmlContent, err = sc.decodePart(htmlData, encoding)
 			if err != nil {
 				return fmt.Errorf("failed to decode HTML part: %w", err)
@@ -134,13 +134,13 @@ func (sc *StreamingConverter) ConvertMHTMLToHTML(input io.Reader, output io.Writ
 	referencedCIDs := sc.findReferencedCIDs(htmlContent)
 	referencedURLs := sc.findReferencedURLs(htmlContent)
 	referencedCSSURLs := sc.findCSSURLs(htmlContent)
-	
+
 	// Second pass: load only referenced parts
 	msg2, err := mail.ReadMessage(bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("failed to re-read mail message: %w", err)
 	}
-	
+
 	mr2 := multipart.NewReader(msg2.Body, boundary)
 	for {
 		part, err := mr2.NextPart()
@@ -154,11 +154,11 @@ func (sc *StreamingConverter) ConvertMHTMLToHTML(input io.Reader, output io.Writ
 		contentID := strings.Trim(part.Header.Get("Content-ID"), "<>")
 		contentLocation := part.Header.Get("Content-Location")
 		encoding := part.Header.Get("Content-Transfer-Encoding")
-		
+
 		// Check if this part is referenced
 		isReferenced := false
 		cacheKey := ""
-		
+
 		// Check by Content-ID
 		if contentID != "" {
 			if referencedCIDs[contentID] {
@@ -166,8 +166,8 @@ func (sc *StreamingConverter) ConvertMHTMLToHTML(input io.Reader, output io.Writ
 				cacheKey = contentID
 			}
 		}
-		
-		// Check by Content-Location  
+
+		// Check by Content-Location
 		if contentLocation != "" {
 			// Try exact match
 			if referencedCIDs[contentLocation] {
@@ -201,7 +201,7 @@ func (sc *StreamingConverter) ConvertMHTMLToHTML(input io.Reader, output io.Writ
 				cacheKey = contentLocation
 			}
 		}
-		
+
 		if isReferenced {
 			// Load and cache this part
 			partData, err := io.ReadAll(part)
@@ -231,20 +231,20 @@ func (sc *StreamingConverter) ConvertMHTMLToHTML(input io.Reader, output io.Writ
 func (sc *StreamingConverter) findReferencedCIDs(htmlContent []byte) map[string]bool {
 	referencedCIDs := make(map[string]bool)
 	tokenizer := html.NewTokenizer(bytes.NewReader(htmlContent))
-	
+
 	for {
 		tokenType := tokenizer.Next()
-		
+
 		if tokenType == html.ErrorToken {
 			if tokenizer.Err() == io.EOF {
 				break
 			}
 			continue
 		}
-		
+
 		if tokenType == html.StartTagToken || tokenType == html.SelfClosingTagToken {
 			token := tokenizer.Token()
-			
+
 			for _, attr := range token.Attr {
 				if (attr.Key == "src" || attr.Key == "href") && strings.HasPrefix(attr.Val, "cid:") {
 					cid := strings.TrimPrefix(attr.Val, "cid:")
@@ -253,27 +253,27 @@ func (sc *StreamingConverter) findReferencedCIDs(htmlContent []byte) map[string]
 			}
 		}
 	}
-	
+
 	return referencedCIDs
 }
 
 func (sc *StreamingConverter) findReferencedURLs(htmlContent []byte) map[string]bool {
 	referencedURLs := make(map[string]bool)
 	tokenizer := html.NewTokenizer(bytes.NewReader(htmlContent))
-	
+
 	for {
 		tokenType := tokenizer.Next()
-		
+
 		if tokenType == html.ErrorToken {
 			if tokenizer.Err() == io.EOF {
 				break
 			}
 			continue
 		}
-		
+
 		if tokenType == html.StartTagToken || tokenType == html.SelfClosingTagToken {
 			token := tokenizer.Token()
-			
+
 			for _, attr := range token.Attr {
 				if (attr.Key == "src" || attr.Key == "href") && (strings.HasPrefix(attr.Val, "http://") || strings.HasPrefix(attr.Val, "https://")) {
 					referencedURLs[attr.Val] = true
@@ -281,35 +281,35 @@ func (sc *StreamingConverter) findReferencedURLs(htmlContent []byte) map[string]
 			}
 		}
 	}
-	
+
 	return referencedURLs
 }
 
 func (sc *StreamingConverter) findCSSURLs(htmlContent []byte) map[string]bool {
 	referencedURLs := make(map[string]bool)
 	tokenizer := html.NewTokenizer(bytes.NewReader(htmlContent))
-	
+
 	for {
 		tokenType := tokenizer.Next()
-		
+
 		if tokenType == html.ErrorToken {
 			if tokenizer.Err() == io.EOF {
 				break
 			}
 			continue
 		}
-		
+
 		switch tokenType {
 		case html.StartTagToken, html.SelfClosingTagToken:
 			token := tokenizer.Token()
-			
+
 			// Check for style attributes containing url()
 			for _, attr := range token.Attr {
 				if attr.Key == "style" && strings.Contains(attr.Val, "url(") {
 					sc.extractCSSURLsFromText(attr.Val, referencedURLs)
 				}
 			}
-			
+
 		case html.TextToken:
 			// Check if this is inside a <style> tag
 			token := tokenizer.Token()
@@ -319,7 +319,7 @@ func (sc *StreamingConverter) findCSSURLs(htmlContent []byte) map[string]bool {
 			}
 		}
 	}
-	
+
 	return referencedURLs
 }
 
@@ -328,7 +328,7 @@ func (sc *StreamingConverter) extractCSSURLsFromText(cssText string, urlMap map[
 	// This regex matches url("..."), url('...'), and url(...)
 	urlPattern := `url\s*\(\s*['"]?([^'")]+)['"]?\s*\)`
 	re := regexp.MustCompile(urlPattern)
-	
+
 	matches := re.FindAllStringSubmatch(cssText, -1)
 	for _, match := range matches {
 		if len(match) > 1 {
@@ -344,7 +344,7 @@ func (sc *StreamingConverter) replaceCSSURLs(cssText string, partInfos map[strin
 	// Find all url() patterns and replace them with data URLs if we have the data
 	urlPattern := `url\s*\(\s*['"]?([^'")]+)['"]?\s*\)`
 	re := regexp.MustCompile(urlPattern)
-	
+
 	return re.ReplaceAllStringFunc(cssText, func(match string) string {
 		submatches := re.FindStringSubmatch(match)
 		if len(submatches) > 1 {
@@ -369,20 +369,20 @@ func (sc *StreamingConverter) replaceCSSURLs(cssText string, partInfos map[strin
 // streamProcessHTML processes HTML using tokenizer and replaces references
 func (sc *StreamingConverter) streamProcessHTML(htmlContent []byte, partInfos map[string]*StreamingPartInfo, output io.Writer) error {
 	tokenizer := html.NewTokenizer(bytes.NewReader(htmlContent))
-	
+
 	for {
 		tokenType := tokenizer.Next()
-		
+
 		switch tokenType {
 		case html.ErrorToken:
 			if tokenizer.Err() == io.EOF {
 				return nil
 			}
 			return tokenizer.Err()
-			
+
 		case html.StartTagToken, html.SelfClosingTagToken:
 			token := tokenizer.Token()
-			
+
 			// Check for attributes that might contain cid: references or matching URLs
 			modified := false
 			for i := range token.Attr {
@@ -390,7 +390,7 @@ func (sc *StreamingConverter) streamProcessHTML(htmlContent []byte, partInfos ma
 				if attr.Key == "src" || attr.Key == "href" {
 					var partInfo *StreamingPartInfo
 					var exists bool
-					
+
 					// First try cid: references
 					if strings.HasPrefix(attr.Val, "cid:") {
 						cid := strings.TrimPrefix(attr.Val, "cid:")
@@ -399,7 +399,7 @@ func (sc *StreamingConverter) streamProcessHTML(htmlContent []byte, partInfos ma
 						// Try to find part by URL
 						partInfo, exists = partInfos[attr.Val]
 					}
-					
+
 					if exists {
 						// Get the cached part data and convert to data URL
 						dataURL, err := sc.getPartAsDataURL(partInfo)
@@ -417,14 +417,14 @@ func (sc *StreamingConverter) streamProcessHTML(htmlContent []byte, partInfos ma
 					}
 				}
 			}
-			
+
 			// Write the token (possibly modified)
 			if modified {
 				output.Write([]byte(token.String()))
 			} else {
 				output.Write(tokenizer.Raw())
 			}
-			
+
 		case html.TextToken:
 			// Check if this might be CSS content with url() references
 			token := tokenizer.Token()
@@ -438,7 +438,7 @@ func (sc *StreamingConverter) streamProcessHTML(htmlContent []byte, partInfos ma
 			} else {
 				output.Write(tokenizer.Raw())
 			}
-			
+
 		default:
 			// Write raw token data
 			output.Write(tokenizer.Raw())
@@ -451,11 +451,11 @@ func (sc *StreamingConverter) getPartAsDataURL(partInfo *StreamingPartInfo) (str
 	if partInfo.Data == nil {
 		return "", fmt.Errorf("part data not loaded")
 	}
-	
+
 	// Encode as base64 data URL
 	encoded := base64.StdEncoding.EncodeToString(partInfo.Data)
 	dataURL := fmt.Sprintf("data:%s;base64,%s", partInfo.ContentType, encoded)
-	
+
 	return dataURL, nil
 }
 

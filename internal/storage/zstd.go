@@ -64,7 +64,7 @@ func (z *ZSTDStorage) Reader(key string) (io.ReadCloser, error) {
 		r.Close()
 		return nil, err
 	}
-	
+
 	seekableReader, err := seekable.NewReader(readSeeker, decoder)
 	if err != nil {
 		r.Close()
@@ -188,7 +188,7 @@ func (z *ZSTDStorage) SeekableReader(key string) (SeekableReader, error) {
 		r.Close()
 		return nil, err
 	}
-	
+
 	seekableReader, err := seekable.NewReader(readSeeker, decoder)
 	if err != nil {
 		r.Close()
@@ -259,19 +259,19 @@ func (r *zstdReadCloser) Size() (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	
+
 	// Seek to end to get size
 	size, err := r.seekableReader.Seek(0, io.SeekEnd)
 	if err != nil {
 		return 0, err
 	}
-	
+
 	// Restore original position
 	_, err = r.seekableReader.Seek(currentPos, io.SeekStart)
 	if err != nil {
 		return 0, err
 	}
-	
+
 	return size, nil
 }
 
@@ -288,7 +288,7 @@ func (r *regularZstdReadCloser) Read(p []byte) (n int, err error) {
 func (r *regularZstdReadCloser) Close() error {
 	// Close decoder
 	r.reader.Close()
-	
+
 	// Close underlying reader
 	return r.underlying.Close()
 }

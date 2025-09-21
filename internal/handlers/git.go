@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"archive/tar"
+	"github.com/gin-gonic/gin"
 	"io"
 	"log"
 	"net/http"
@@ -10,11 +11,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"github.com/gin-gonic/gin"
 
-	"gorm.io/gorm"
 	"arker/internal/models"
 	"arker/internal/storage"
+	"gorm.io/gorm"
 )
 
 var cacheMutex = sync.Mutex{}
@@ -57,7 +57,7 @@ func GitHandler(c *gin.Context, storage storage.Storage, db *gorm.DB, cacheRoot 
 		}
 	}
 	cacheMutex.Unlock()
-	
+
 	env := append(os.Environ(),
 		"GIT_PROJECT_ROOT="+cacheRoot,
 		"GIT_HTTP_EXPORT_ALL=true",

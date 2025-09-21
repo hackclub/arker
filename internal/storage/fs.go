@@ -17,7 +17,10 @@ type Storage interface {
 // SeekableStorage extends Storage with seekable readers
 type SeekableStorage interface {
 	Storage
-	SeekableReader(key string) (interface { io.ReadCloser; io.Seeker }, error)
+	SeekableReader(key string) (interface {
+		io.ReadCloser
+		io.Seeker
+	}, error)
 }
 
 // FSStorage impl
@@ -60,7 +63,10 @@ func (s *FSStorage) Size(key string) (int64, error) {
 	return info.Size(), nil
 }
 
-func (s *FSStorage) SeekableReader(key string) (interface { io.ReadCloser; io.Seeker }, error) {
+func (s *FSStorage) SeekableReader(key string) (interface {
+	io.ReadCloser
+	io.Seeker
+}, error) {
 	path := filepath.Join(s.baseDir, key)
 	return os.Open(path)
 }

@@ -2,8 +2,8 @@ package archivers
 
 import (
 	"context"
-	"io"
 	"gorm.io/gorm"
+	"io"
 )
 
 // Archiver interface

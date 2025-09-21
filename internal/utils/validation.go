@@ -137,13 +137,13 @@ func isLocalhost(hostname string) bool {
 		"::1",
 		"0.0.0.0",
 	}
-	
+
 	for _, local := range localhost {
 		if strings.EqualFold(hostname, local) {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -162,10 +162,10 @@ func isPrivateIP(ip net.IP) bool {
 
 	// IPv6 private ranges
 	ipv6PrivateRanges := []string{
-		"::1/128",        // Loopback
-		"fe80::/10",      // Link-local
-		"fc00::/7",       // Unique local
-		"ff00::/8",       // Multicast
+		"::1/128",   // Loopback
+		"fe80::/10", // Link-local
+		"fc00::/7",  // Unique local
+		"ff00::/8",  // Multicast
 	}
 
 	// Check IPv4 ranges
@@ -193,7 +193,7 @@ func isPrivateIP(ip net.IP) bool {
 func checkMaliciousPatterns(rawURL string) error {
 	// Convert to lowercase for pattern matching
 	lower := strings.ToLower(rawURL)
-	
+
 	// Check for suspicious patterns
 	suspiciousPatterns := []string{
 		"file://",
@@ -207,13 +207,13 @@ func checkMaliciousPatterns(rawURL string) error {
 		"sftp://",
 		"tftp://",
 	}
-	
+
 	for _, pattern := range suspiciousPatterns {
 		if strings.Contains(lower, pattern) {
 			return fmt.Errorf("protocol %s is not allowed", pattern)
 		}
 	}
-	
+
 	// Check for URL encoding attempts to bypass filters
 	if strings.Contains(lower, "%") {
 		decoded, err := url.QueryUnescape(lower)
@@ -222,7 +222,7 @@ func checkMaliciousPatterns(rawURL string) error {
 			return checkMaliciousPatterns(decoded)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -237,12 +237,12 @@ func (r *ArchiveRequest) Validate() error {
 	if err := validate.Struct(r); err != nil {
 		return fmt.Errorf("validation failed: %v", err)
 	}
-	
+
 	// Validate URL for SSRF
 	if err := ValidateURL(r.URL); err != nil {
 		return fmt.Errorf("URL validation failed: %v", err)
 	}
-	
+
 	// Validate archive types if provided
 	if len(r.Types) > 0 {
 		validTypes := map[string]bool{
@@ -251,13 +251,13 @@ func (r *ArchiveRequest) Validate() error {
 			"git":        true,
 			"youtube":    true,
 		}
-		
+
 		for _, archiveType := range r.Types {
 			if !validTypes[archiveType] {
 				return fmt.Errorf("invalid archive type: %s", archiveType)
 			}
 		}
 	}
-	
+
 	return nil
 }

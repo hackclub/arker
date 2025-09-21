@@ -1,12 +1,12 @@
 package handlers
 
 import (
-	"net/http"
+	"arker/internal/models"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
-	"arker/internal/models"
+	"net/http"
 )
 
 func LoginGet(c *gin.Context, loginText string) {
@@ -21,14 +21,14 @@ func LoginPost(c *gin.Context, db *gorm.DB, loginText string) {
 	var user models.User
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		c.HTML(http.StatusBadRequest, "login.html", gin.H{
-			"error": "Invalid credentials",
+			"error":      "Invalid credentials",
 			"login_text": loginText,
 		})
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
 		c.HTML(http.StatusBadRequest, "login.html", gin.H{
-			"error": "Invalid credentials",
+			"error":      "Invalid credentials",
 			"login_text": loginText,
 		})
 		return

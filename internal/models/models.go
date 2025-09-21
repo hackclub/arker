@@ -1,8 +1,8 @@
 package models
 
 import (
-	"time"
 	"gorm.io/gorm"
+	"time"
 )
 
 // User represents an authenticated user
@@ -44,23 +44,21 @@ type Capture struct {
 	ArchivedURLID uint
 	ArchivedURL   ArchivedURL `gorm:"foreignKey:ArchivedURLID"`
 	Timestamp     time.Time
-	ShortID       string `gorm:"unique"`
-	APIKeyID      *uint     `gorm:"nullable"`
-	APIKey        *APIKey   `gorm:"foreignKey:APIKeyID"`
+	ShortID       string        `gorm:"unique"`
+	APIKeyID      *uint         `gorm:"nullable"`
+	APIKey        *APIKey       `gorm:"foreignKey:APIKeyID"`
 	ArchiveItems  []ArchiveItem `gorm:"foreignKey:CaptureID"`
 }
 
 // ArchiveItem represents a specific type of archive (screenshot, mhtml, etc.)
 type ArchiveItem struct {
 	gorm.Model
-	CaptureID     uint
-	Type          string // mhtml, screenshot, git, youtube
-	Status        string // pending, processing, completed, failed
-	StorageKey    string
-	Extension     string // .webp, .mhtml, .tar.zst, .mp4, etc.
-	FileSize      int64  // file size in bytes
-	Logs          string `gorm:"type:text"`
-	RetryCount    int
+	CaptureID  uint
+	Type       string // mhtml, screenshot, git, youtube
+	Status     string // pending, processing, completed, failed
+	StorageKey string
+	Extension  string // .webp, .mhtml, .tar.zst, .mp4, etc.
+	FileSize   int64  // file size in bytes
+	Logs       string `gorm:"type:text"`
+	RetryCount int
 }
-
-

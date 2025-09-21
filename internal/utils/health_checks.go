@@ -2,26 +2,26 @@ package utils
 
 import (
 	"fmt"
+	"github.com/playwright-community/playwright-go"
 	"os/exec"
 	"time"
-	"github.com/playwright-community/playwright-go"
 )
 
 // HealthCheckConfig holds configuration for health checks
 type HealthCheckConfig struct {
-	CheckYtDlp     bool
+	CheckYtDlp      bool
 	CheckPlaywright bool
-	CheckAria2c    bool
-	Timeout        time.Duration
+	CheckAria2c     bool
+	Timeout         time.Duration
 }
 
 // DefaultHealthCheckConfig returns a sensible default health check configuration
 func DefaultHealthCheckConfig() HealthCheckConfig {
 	return HealthCheckConfig{
-		CheckYtDlp:     true,
+		CheckYtDlp:      true,
 		CheckPlaywright: true,
-		CheckAria2c:    true,
-		Timeout:        10 * time.Second,
+		CheckAria2c:     true,
+		Timeout:         10 * time.Second,
 	}
 }
 
@@ -32,31 +32,31 @@ func RunHealthChecks(config HealthCheckConfig) error {
 			return fmt.Errorf("yt-dlp health check failed: %v", err)
 		}
 	}
-	
+
 	if config.CheckAria2c {
 		if err := CheckAria2cAvailability(config.Timeout); err != nil {
 			return fmt.Errorf("aria2c health check failed: %v", err)
 		}
 	}
-	
+
 	if config.CheckPlaywright {
 		if err := CheckPlaywrightAvailability(config.Timeout); err != nil {
 			return fmt.Errorf("playwright health check failed: %v", err)
 		}
 	}
-	
+
 	return nil
 }
 
 // CheckYtDlpAvailability checks if yt-dlp is available and working
 func CheckYtDlpAvailability(timeout time.Duration) error {
 	done := make(chan error, 1)
-	
+
 	go func() {
 		cmd := exec.Command("yt-dlp", "--version")
 		done <- cmd.Run()
 	}()
-	
+
 	select {
 	case err := <-done:
 		if err != nil {
@@ -71,12 +71,12 @@ func CheckYtDlpAvailability(timeout time.Duration) error {
 // CheckAria2cAvailability checks if aria2c is available and working
 func CheckAria2cAvailability(timeout time.Duration) error {
 	done := make(chan error, 1)
-	
+
 	go func() {
 		cmd := exec.Command("aria2c", "--version")
 		done <- cmd.Run()
 	}()
-	
+
 	select {
 	case err := <-done:
 		if err != nil {
@@ -92,7 +92,7 @@ func CheckAria2cAvailability(timeout time.Duration) error {
 func CheckPlaywrightAvailability(timeout time.Duration) error {
 	// Create a channel to signal completion
 	done := make(chan error, 1)
-	
+
 	go func() {
 		pw, err := playwright.Run()
 		if err != nil {
@@ -100,7 +100,7 @@ func CheckPlaywrightAvailability(timeout time.Duration) error {
 			return
 		}
 		defer pw.Stop()
-		
+
 		browser, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
 			Headless: playwright.Bool(true),
 		})
@@ -109,7 +109,7 @@ func CheckPlaywrightAvailability(timeout time.Duration) error {
 			return
 		}
 		defer browser.Close()
-		
+
 		// Try to create a page to ensure everything works
 		page, err := browser.NewPage()
 		if err != nil {
@@ -117,10 +117,10 @@ func CheckPlaywrightAvailability(timeout time.Duration) error {
 			return
 		}
 		defer page.Close()
-		
+
 		done <- nil
 	}()
-	
+
 	select {
 	case err := <-done:
 		return err

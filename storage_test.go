@@ -2,13 +2,13 @@ package main
 
 import (
 	"archive/tar"
+	"arker/internal/archivers"
+	"arker/internal/storage"
 	"bytes"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
-	"arker/internal/storage"
-	"arker/internal/archivers"
 )
 
 func TestFSStorage(t *testing.T) {
@@ -73,7 +73,7 @@ func TestAddDirToTar(t *testing.T) {
 	if err := os.Mkdir(subDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	// Create test files
 	f1, err := os.Create(filepath.Join(tempDir, "file1.txt"))
 	if err != nil {
@@ -100,7 +100,7 @@ func TestAddDirToTar(t *testing.T) {
 	// Verify tar content
 	tr := tar.NewReader(buf)
 	files := make(map[string]bool)
-	
+
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -125,19 +125,19 @@ func TestGenerateShortID(t *testing.T) {
 	// This test would require setting up an in-memory database
 	// For now, just test that the alphabet contains valid characters
 	alphabet := "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	
+
 	if len(alphabet) != 62 {
 		t.Error("Alphabet should contain 62 characters")
 	}
-	
+
 	// Test basic ID characteristics
 	id1 := "abc12"
 	id2 := "xyz78"
-	
+
 	if id1 == id2 {
 		t.Error("Different IDs should not be equal")
 	}
-	
+
 	if len(id1) != 5 {
 		t.Error("ID should be 5 characters")
 	}

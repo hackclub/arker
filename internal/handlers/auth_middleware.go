@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"arker/internal/models"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
-	"arker/internal/models"
 )
 
 // RequireAPIKey middleware validates API key authentication
@@ -44,7 +44,7 @@ func RequireAPIKey(db *gorm.DB) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		
+
 		keyPrefix := strings.Join(parts[:3], "_") // username_appname_environment
 
 		var dbAPIKey models.APIKey

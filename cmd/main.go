@@ -5,10 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"log"
-	"log/slog"
-	"os"
-	"time"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
@@ -19,15 +15,19 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivermigrate"
 	"github.com/riverqueue/river/rivertype"
+	"log"
+	"log/slog"
+	"os"
+	"time"
 
-	"golang.org/x/crypto/bcrypt"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	"riverqueue.com/riverui"
 	"arker/internal/archivers"
 	"arker/internal/handlers"
 	"arker/internal/models"
 	"arker/internal/monitoring"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"riverqueue.com/riverui"
 
 	"arker/internal/storage"
 	"arker/internal/utils"
@@ -35,22 +35,22 @@ import (
 )
 
 type Config struct {
-	DBURL          string `envconfig:"DB_URL" default:"host=localhost user=user password=pass dbname=arker port=5432 sslmode=disable"`
-	StoragePath    string `envconfig:"STORAGE_PATH" default:"./storage"`
-	CachePath      string `envconfig:"CACHE_PATH" default:"./cache"`
-	MaxWorkers     int    `envconfig:"MAX_WORKERS" default:"5"`
-	Port           string `envconfig:"PORT" default:"8080"`
-	SessionSecret  string `envconfig:"SESSION_SECRET"`
-	AdminUsername  string `envconfig:"ADMIN_USERNAME" default:"admin"`
-	AdminPassword  string `envconfig:"ADMIN_PASSWORD" default:"admin"`
-	LoginText      string `envconfig:"LOGIN_TEXT"`
+	DBURL         string `envconfig:"DB_URL" default:"host=localhost user=user password=pass dbname=arker port=5432 sslmode=disable"`
+	StoragePath   string `envconfig:"STORAGE_PATH" default:"./storage"`
+	CachePath     string `envconfig:"CACHE_PATH" default:"./cache"`
+	MaxWorkers    int    `envconfig:"MAX_WORKERS" default:"5"`
+	Port          string `envconfig:"PORT" default:"8080"`
+	SessionSecret string `envconfig:"SESSION_SECRET"`
+	AdminUsername string `envconfig:"ADMIN_USERNAME" default:"admin"`
+	AdminPassword string `envconfig:"ADMIN_PASSWORD" default:"admin"`
+	LoginText     string `envconfig:"LOGIN_TEXT"`
 }
 
 // CustomErrorHandler implements the River ErrorHandler interface
 type CustomErrorHandler struct{}
 
 func (h *CustomErrorHandler) HandleError(ctx context.Context, job *rivertype.JobRow, err error) *river.ErrorHandlerResult {
-	slog.Error("Job error", 
+	slog.Error("Job error",
 		"job_id", job.ID,
 		"kind", job.Kind,
 		"attempt", job.Attempt,
@@ -59,7 +59,7 @@ func (h *CustomErrorHandler) HandleError(ctx context.Context, job *rivertype.Job
 }
 
 func (h *CustomErrorHandler) HandlePanic(ctx context.Context, job *rivertype.JobRow, panicErr any, trace string) *river.ErrorHandlerResult {
-	slog.Error("Job panicked", 
+	slog.Error("Job panicked",
 		"job_id", job.ID,
 		"kind", job.Kind,
 		"attempt", job.Attempt,
@@ -94,58 +94,54 @@ func getOrCreateConfigValue(db *gorm.DB, key string, defaultValue string) (strin
 	return config.Value, nil
 }
 
-
-
 func populateFileSizes(db *gorm.DB, storage storage.Storage) {
 	var items []models.ArchiveItem
 	// Find completed archive items that don't have file size set
 	db.Where("status = ? AND (file_size = 0 OR file_size IS NULL) AND storage_key != ''", "completed").Find(&items)
-	
+
 	if len(items) == 0 {
 		return
 	}
-	
+
 	log.Printf("Populating file sizes for %d existing archives...", len(items))
 	updated := 0
-	
+
 	for _, item := range items {
 		if item.StorageKey == "" {
 			continue
 		}
-		
+
 		size, err := storage.Size(item.StorageKey)
 		if err != nil {
 			log.Printf("Warning: Could not get size for %s: %v", item.StorageKey, err)
 			continue
 		}
-		
+
 		if size > 0 {
 			db.Model(&item).Update("file_size", size)
 			updated++
 		}
 	}
-	
+
 	if updated > 0 {
 		log.Printf("Updated file sizes for %d archives", updated)
 	}
 }
 
-
-
 func main() {
 	// Initialize structured logging
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level:     slog.LevelInfo,
 		AddSource: false,
 	})))
-	
+
 	var cfg Config
 	err := envconfig.Process("", &cfg)
 	if err != nil {
 		slog.Error("Failed to process environment variables", "error", err)
 		log.Fatalf("Failed to process config: %v", err)
 	}
-	
+
 	slog.Info("Starting Arker archive server",
 		"max_workers", cfg.MaxWorkers,
 		"storage_path", cfg.StoragePath,
@@ -172,7 +168,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize GORM with shared pool: %v", err)
 	}
-	
+
 	// Auto-migrate database models
 	if err := db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.Config{}); err != nil {
 		slog.Error("AutoMigrate failed with detailed error", "error", err, "error_type", fmt.Sprintf("%T", err), "error_string", err.Error())
@@ -202,7 +198,7 @@ func main() {
 
 	fsStorage := storage.NewFSStorage(cfg.StoragePath)
 	storageInstance := storage.NewZSTDStorage(fsStorage)
-	
+
 	// Populate file sizes for existing archives
 	populateFileSizes(db, storageInstance)
 
@@ -215,8 +211,6 @@ func main() {
 	} else {
 		log.Println("All health checks passed")
 	}
-	
-
 
 	// Default user
 	var user models.User
@@ -243,12 +237,10 @@ func main() {
 	// Initialize browser monitoring
 	monitor := monitoring.GetGlobalMonitor()
 	slog.Info("Browser monitoring initialized")
-	
 
-	
 	// Initialize River job queue
 	slog.Info("Starting River job queue", "worker_count", cfg.MaxWorkers)
-	
+
 	// Run River migrations using shared pool
 	migrator, err := rivermigrate.New(riverpgxv5.New(dbPool), nil)
 	if err != nil {
@@ -264,18 +256,16 @@ func main() {
 	archiveWorker := workers.NewArchiveWorker(storageInstance, db, archiversMap)
 	river.AddWorker(riverWorkers, archiveWorker)
 
-
-
 	// Create River client with configuration
 	riverClient, err := river.NewClient(riverpgxv5.New(dbPool), &river.Config{
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: cfg.MaxWorkers},
 			"high_priority":    {MaxWorkers: max(2, cfg.MaxWorkers/2)}, // At least 2 workers, or half of total workers
 		},
-		Workers: riverWorkers,
-		JobTimeout: 30 * time.Minute,           // Kill jobs running longer than 30 minutes
+		Workers:              riverWorkers,
+		JobTimeout:           30 * time.Minute, // Kill jobs running longer than 30 minutes
 		RescueStuckJobsAfter: 35 * time.Minute, // Rescue stuck jobs after 35 minutes (must be >= JobTimeout)
-		ErrorHandler: &CustomErrorHandler{},
+		ErrorHandler:         &CustomErrorHandler{},
 	})
 	if err != nil {
 		log.Fatalf("Failed to create River client: %v", err)
@@ -286,10 +276,6 @@ func main() {
 		log.Fatalf("Failed to start River client: %v", err)
 	}
 	defer riverClient.Stop(context.Background())
-
-
-
-
 
 	// Setup River UI
 	riverUIServer, err := riverui.NewServer(&riverui.ServerOpts{
@@ -306,7 +292,7 @@ func main() {
 	if err := riverUIServer.Start(context.Background()); err != nil {
 		log.Fatalf("Failed to start River UI server: %v", err)
 	}
-	
+
 	// Log initial browser status
 	monitor.LogCurrentStatus()
 
