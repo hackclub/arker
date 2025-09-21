@@ -44,6 +44,16 @@ type Config struct {
 	AdminUsername string `envconfig:"ADMIN_USERNAME" default:"admin"`
 	AdminPassword string `envconfig:"ADMIN_PASSWORD" default:"admin"`
 	LoginText     string `envconfig:"LOGIN_TEXT"`
+	
+	// S3 Configuration
+	StorageType      string `envconfig:"STORAGE_TYPE" default:"filesystem"` // "filesystem" or "s3"
+	S3Endpoint       string `envconfig:"S3_ENDPOINT"`                       // For S3-compatible services
+	S3Region         string `envconfig:"S3_REGION" default:"us-east-1"`
+	S3AccessKeyID    string `envconfig:"S3_ACCESS_KEY_ID"`
+	S3SecretKey      string `envconfig:"S3_SECRET_ACCESS_KEY"`
+	S3Bucket         string `envconfig:"S3_BUCKET"`
+	S3Prefix         string `envconfig:"S3_PREFIX"`                         // Optional prefix for all keys
+	S3ForcePathStyle bool   `envconfig:"S3_FORCE_PATH_STYLE" default:"false"` // Required for MinIO
 }
 
 // CustomErrorHandler implements the River ErrorHandler interface
@@ -196,8 +206,38 @@ func main() {
 		}
 	}
 
-	fsStorage := storage.NewFSStorage(cfg.StoragePath)
-	storageInstance := storage.NewZSTDStorage(fsStorage)
+	// Initialize storage backend
+	var baseStorage storage.SeekableStorage
+	var storageErr error
+	
+	switch cfg.StorageType {
+	case "s3":
+		log.Printf("Initializing S3 storage (bucket: %s, region: %s)", cfg.S3Bucket, cfg.S3Region)
+		if cfg.S3Bucket == "" {
+			log.Fatal("S3_BUCKET environment variable is required when using S3 storage")
+		}
+		
+		s3Config := storage.S3Config{
+			Endpoint:        cfg.S3Endpoint,
+			Region:          cfg.S3Region,
+			AccessKeyID:     cfg.S3AccessKeyID,
+			SecretAccessKey: cfg.S3SecretKey,
+			Bucket:          cfg.S3Bucket,
+			Prefix:          cfg.S3Prefix,
+			ForcePathStyle:  cfg.S3ForcePathStyle,
+		}
+		
+		baseStorage, storageErr = storage.NewS3Storage(context.Background(), s3Config)
+		if storageErr != nil {
+			log.Fatalf("Failed to initialize S3 storage: %v", storageErr)
+		}
+		
+	default: // "filesystem"
+		log.Printf("Initializing filesystem storage (path: %s)", cfg.StoragePath)
+		baseStorage = storage.NewFSStorage(cfg.StoragePath)
+	}
+	
+	storageInstance := storage.NewZSTDStorage(baseStorage)
 
 	// Populate file sizes for existing archives
 	populateFileSizes(db, storageInstance)

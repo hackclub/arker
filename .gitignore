@@ -1,5 +1,6 @@
 # Binaries
 arker
+arker-*
 *.exe
 
 # Test coverage
@@ -26,3 +27,8 @@ tmp/
 # Temporary files
 *.tmp
 *.bak
+cookies.txt
+*_benchmark_report.md
+
+# Secrets
+.env

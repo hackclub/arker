@@ -38,6 +38,14 @@ services:
       CACHE_PATH: /cache
       MAX_WORKERS: 2
       GIN_MODE: debug # Enable Gin debug mode
+      # S3 Storage Configuration (MinIO)
+      STORAGE_TYPE: s3
+      S3_ENDPOINT: http://host.docker.internal:9000
+      S3_BUCKET: arker
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY_ID: minioadmin
+      S3_SECRET_ACCESS_KEY: minioadmin
+      S3_FORCE_PATH_STYLE: "true"
     working_dir: /app
     # Keep container running for development
     tty: true

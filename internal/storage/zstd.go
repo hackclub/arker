@@ -23,8 +23,8 @@ func (z *ZSTDStorage) Writer(key string) (io.WriteCloser, error) {
 		return nil, err
 	}
 
-	// Create zstd encoder
-	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+	// Create zstd encoder with level 6 for better compression
+	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(6)))
 	if err != nil {
 		w.Close()
 		return nil, err
