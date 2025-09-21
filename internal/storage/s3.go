@@ -1,12 +1,14 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -17,9 +19,10 @@ import (
 
 // S3Storage implements the Storage interface for S3-compatible storage
 type S3Storage struct {
-	client *s3.Client
-	bucket string
-	prefix string // Optional prefix for all keys
+	client  *s3.Client
+	bucket  string
+	prefix  string // Optional prefix for all keys
+	tempDir string // Temp directory for upload buffering
 }
 
 // S3Config holds configuration for S3 storage
@@ -31,6 +34,7 @@ type S3Config struct {
 	Bucket          string
 	Prefix          string // Optional prefix for all keys (e.g., "arker/")
 	ForcePathStyle  bool   // Required for MinIO and some S3-compatible services
+	TempDir         string // Temp directory for upload buffering
 }
 
 // NewS3Storage creates a new S3 storage instance
@@ -71,9 +75,10 @@ func NewS3Storage(ctx context.Context, cfg S3Config) (*S3Storage, error) {
 	client := s3.NewFromConfig(awsConfig, s3Options)
 
 	return &S3Storage{
-		client: client,
-		bucket: cfg.Bucket,
-		prefix: cfg.Prefix,
+		client:  client,
+		bucket:  cfg.Bucket,
+		prefix:  cfg.Prefix,
+		tempDir: cfg.TempDir,
 	}, nil
 }
 
@@ -92,11 +97,23 @@ func (s *S3Storage) buildKey(key string) string {
 
 // Writer creates a writer for the given key
 func (s *S3Storage) Writer(key string) (io.WriteCloser, error) {
-	return &s3Writer{
-		storage: s,
-		key:     s.buildKey(key),
-		buffer:  &bytes.Buffer{},
-	}, nil
+	// Create temporary file for buffering
+	tempFile, err := os.CreateTemp(s.tempDir, "arker-s3-upload-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	}
+
+	writer := &s3Writer{
+		storage:  s,
+		key:      s.buildKey(key),
+		tempFile: tempFile,
+		tempPath: tempFile.Name(),
+	}
+	
+	// Set finalizer to ensure cleanup if Close() is never called
+	runtime.SetFinalizer(writer, (*s3Writer).cleanup)
+	
+	return writer, nil
 }
 
 // Reader creates a reader for the given key
@@ -166,22 +183,63 @@ func (s *S3Storage) SeekableReader(key string) (ReadSeekCloser, error) {
 
 // s3Writer implements io.WriteCloser for S3 uploads
 type s3Writer struct {
-	storage *S3Storage
-	key     string
-	buffer  *bytes.Buffer
+	storage   *S3Storage
+	key       string
+	tempFile  *os.File
+	tempPath  string
+	closed    bool
+	cleanedUp bool
+	mu        sync.Mutex
 }
 
 func (w *s3Writer) Write(p []byte) (n int, err error) {
-	return w.buffer.Write(p)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	
+	if w.closed {
+		return 0, fmt.Errorf("cannot write to closed writer")
+	}
+	
+	n, err = w.tempFile.Write(p)
+	if err != nil {
+		// If write fails, cleanup immediately
+		w.cleanup()
+	}
+	return n, err
 }
 
 func (w *s3Writer) Close() error {
-	ctx := context.Background()
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	
-	_, err := w.storage.client.PutObject(ctx, &s3.PutObjectInput{
+	if w.closed {
+		return nil // Already closed
+	}
+	w.closed = true
+	
+	// Clear finalizer since we're handling cleanup properly
+	runtime.SetFinalizer(w, nil)
+	
+	// Ensure cleanup happens regardless of success/failure
+	defer w.cleanup()
+	
+	// Close the temp file first
+	if err := w.tempFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+	
+	// Open file for reading and upload
+	file, err := os.Open(w.tempPath)
+	if err != nil {
+		return fmt.Errorf("failed to reopen temp file: %w", err)
+	}
+	defer file.Close()
+	
+	ctx := context.Background()
+	_, err = w.storage.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(w.storage.bucket),
 		Key:    aws.String(w.key),
-		Body:   bytes.NewReader(w.buffer.Bytes()),
+		Body:   file, // Stream directly from disk
 	})
 	
 	if err != nil {
@@ -189,6 +247,24 @@ func (w *s3Writer) Close() error {
 	}
 	
 	return nil
+}
+
+// cleanup removes the temporary file - safe to call multiple times
+func (w *s3Writer) cleanup() {
+	if w.cleanedUp {
+		return
+	}
+	w.cleanedUp = true
+	
+	// Close file if still open
+	if w.tempFile != nil {
+		w.tempFile.Close()
+	}
+	
+	// Remove temp file
+	if w.tempPath != "" {
+		os.Remove(w.tempPath)
+	}
 }
 
 // s3SeekableReader implements a seekable reader for S3 objects using range requests

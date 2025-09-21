@@ -54,6 +54,7 @@ type Config struct {
 	S3Bucket         string `envconfig:"S3_BUCKET"`
 	S3Prefix         string `envconfig:"S3_PREFIX"`                         // Optional prefix for all keys
 	S3ForcePathStyle bool   `envconfig:"S3_FORCE_PATH_STYLE" default:"false"` // Required for MinIO
+	S3TempDir        string `envconfig:"S3_TEMP_DIR" default:"/tmp"`         // Temp directory for upload buffering
 }
 
 // CustomErrorHandler implements the River ErrorHandler interface
@@ -225,6 +226,7 @@ func main() {
 			Bucket:          cfg.S3Bucket,
 			Prefix:          cfg.S3Prefix,
 			ForcePathStyle:  cfg.S3ForcePathStyle,
+			TempDir:         cfg.S3TempDir,
 		}
 		
 		baseStorage, storageErr = storage.NewS3Storage(context.Background(), s3Config)
