@@ -102,7 +102,9 @@ func (b *PWBundle) CreateBrowser() error {
 
 	// Create a new browser context for isolation
 	// Each context is like an incognito window with its own storage
-	contextOptions := playwright.BrowserNewContextOptions{}
+	contextOptions := playwright.BrowserNewContextOptions{
+		UserAgent: playwright.String("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"),
+	}
 
 	context, err := browser.NewContext(contextOptions)
 	if err != nil {
