@@ -223,6 +223,16 @@ func TestGetArchiveTypes(t *testing.T) {
 			expected: []string{"mhtml", "screenshot", "youtube"},
 		},
 		{
+			name:     "Instagram reel",
+			url:      "https://www.instagram.com/reel/DPAid-WDi67/",
+			expected: []string{"mhtml", "screenshot", "youtube"},
+		},
+		{
+			name:     "Instagram post",
+			url:      "https://www.instagram.com/p/ABC123/",
+			expected: []string{"mhtml", "screenshot", "youtube"},
+		},
+		{
 			name:     "Regular website",
 			url:      "https://example.com",
 			expected: []string{"mhtml", "screenshot"},
@@ -241,6 +251,35 @@ func TestGetArchiveTypes(t *testing.T) {
 					t.Errorf("GetArchiveTypes(%q) = %v, expected %v", tt.url, result, tt.expected)
 					break
 				}
+			}
+		})
+	}
+}
+
+func TestIsInstagramURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		expected bool
+	}{
+		// Should be detected as Instagram URLs
+		{"Instagram reel", "https://www.instagram.com/reel/DPAid-WDi67/", true},
+		{"Instagram reel without www", "https://instagram.com/reel/ABC123/", true},
+		{"Instagram post", "https://www.instagram.com/p/XYZ789/", true},
+		{"Instagram TV", "https://www.instagram.com/tv/DEF456/", true},
+		
+		// Should NOT be detected as Instagram URLs
+		{"Instagram profile", "https://www.instagram.com/username/", false},
+		{"Instagram home", "https://www.instagram.com/", false},
+		{"Instagram stories", "https://www.instagram.com/stories/username/", false},
+		{"Regular website", "https://example.com", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := utils.IsInstagramURL(tt.url)
+			if result != tt.expected {
+				t.Errorf("IsInstagramURL(%q) = %v, expected %v", tt.url, result, tt.expected)
 			}
 		})
 	}
