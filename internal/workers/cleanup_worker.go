@@ -64,7 +64,7 @@ func (w *CleanupWorker) RunCleanup(ctx context.Context) error {
 		slog.Info("Cleaned up orphaned processing items", "count", processingResult.RowsAffected)
 	}
 
-	// Items with discarded jobs
+	// Items with discarded jobs (but no active jobs)
 	discardedResult := w.db.Exec(`
 		UPDATE archive_items 
 		SET status = 'failed',
@@ -78,6 +78,12 @@ func (w *CleanupWorker) RunCleanup(ctx context.Context) error {
 			  WHERE rj.args::json->>'short_id' = c.short_id 
 				AND rj.args::json->>'type' = archive_items.type
 				AND rj.state = 'discarded'
+		  )
+		  AND NOT EXISTS (
+			  SELECT 1 FROM river_job rj 
+			  WHERE rj.args::json->>'short_id' = c.short_id 
+				AND rj.args::json->>'type' = archive_items.type
+				AND rj.state IN ('running', 'available', 'retryable', 'scheduled')
 		  )
 	`)
 	if discardedResult.Error != nil {
