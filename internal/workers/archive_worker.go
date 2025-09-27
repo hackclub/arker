@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"time"
 
 	"github.com/riverqueue/river"
 	"gorm.io/gorm"
@@ -72,15 +73,23 @@ func (w *ArchiveWorker) Work(ctx context.Context, job *river.Job[ArchiveJobArgs]
 	})
 
 	// Process the job. This function contains its own timeout logic.
-	err := processArchiveJob(args, &item, w.storage, w.db, w.archiversMap)
+	err := processArchiveJob(ctx, args, &item, w.storage, w.db, w.archiversMap)
 
 	if err != nil {
 		logger.Error("Job processing failed", "error", err)
-		// On the final attempt, mark as failed permanently.
+
+		// On the final attempt, mark as failed permanently and append a clear message
 		if job.Attempt+1 >= job.MaxAttempts {
-			w.db.Model(&item).Update("status", "failed")
+			_ = w.db.Model(&item).Updates(map[string]interface{}{
+				"status":     "failed",
+				"updated_at": time.Now(),
+				"logs":       gorm.Expr("COALESCE(logs, '') || ?", fmt.Sprintf("\n\nFinal attempt failed after %d tries: %v", job.MaxAttempts, err)),
+			}).Error
+			slog.Error("Archive job permanently failed",
+				"short_id", args.ShortID, "type", args.Type,
+				"attempts", job.MaxAttempts, "error", err)
 		}
-		// Return the error to let River handle the retry.
+		// Let River retry (if any attempts left)
 		return err
 	}
 
@@ -89,7 +98,7 @@ func (w *ArchiveWorker) Work(ctx context.Context, job *river.Job[ArchiveJobArgs]
 }
 
 // processArchiveJob handles the logic for a single job attempt.
-func processArchiveJob(jobArgs ArchiveJobArgs, item *models.ArchiveItem, storage storage.Storage, db *gorm.DB, archiversMap map[string]archivers.Archiver) error {
+func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models.ArchiveItem, storage storage.Storage, db *gorm.DB, archiversMap map[string]archivers.Archiver) error {
 	arch, ok := archiversMap[jobArgs.Type]
 	if !ok {
 		return fmt.Errorf("unknown archiver %s", jobArgs.Type)
@@ -104,7 +113,7 @@ func processArchiveJob(jobArgs ArchiveJobArgs, item *models.ArchiveItem, storage
 		"attempt", item.RetryCount)
 
 	timeout := utils.TimeoutForJobType(jobArgs.Type)
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout) // respect River cancellation
 	defer cancel()
 
 	// Archive the content. PWBundle is returned for browser-based archivers.

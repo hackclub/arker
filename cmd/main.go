@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -57,26 +58,61 @@ type Config struct {
 	S3TempDir        string `envconfig:"S3_TEMP_DIR" default:"/tmp"`         // Temp directory for upload buffering
 }
 
-// CustomErrorHandler implements the River ErrorHandler interface
-type CustomErrorHandler struct{}
+// CustomErrorHandler implements the River ErrorHandler interface and updates archive items.
+type CustomErrorHandler struct {
+	db *gorm.DB
+}
 
 func (h *CustomErrorHandler) HandleError(ctx context.Context, job *rivertype.JobRow, err error) *river.ErrorHandlerResult {
-	slog.Error("Job error",
-		"job_id", job.ID,
-		"kind", job.Kind,
-		"attempt", job.Attempt,
-		"error", err)
-	return nil // Let River handle the retry
+	slog.Error("Job error", "job_id", job.ID, "kind", job.Kind, "attempt", job.Attempt, "max_attempts", job.MaxAttempts, "error", err)
+
+	// Only mark archive item as failed on the final attempt to avoid premature failures.
+	if job.Kind == (workers.ArchiveJobArgs{}).Kind() && (job.Attempt+1) >= job.MaxAttempts {
+		h.markArchiveItemAsFailed(job, fmt.Sprintf("River job errored on final attempt (%d/%d): %v", job.Attempt+1, job.MaxAttempts, err))
+	}
+	return nil // Let River manage retries normally
 }
 
 func (h *CustomErrorHandler) HandlePanic(ctx context.Context, job *rivertype.JobRow, panicErr any, trace string) *river.ErrorHandlerResult {
-	slog.Error("Job panicked",
-		"job_id", job.ID,
-		"kind", job.Kind,
-		"attempt", job.Attempt,
-		"panic", panicErr,
-		"trace", trace)
-	return nil // Let River handle the retry
+	slog.Error("Job panicked", "job_id", job.ID, "kind", job.Kind, "attempt", job.Attempt, "max_attempts", job.MaxAttempts, "panic", panicErr, "trace", trace)
+
+	// Same policy: only flip to failed on final attempt
+	if job.Kind == (workers.ArchiveJobArgs{}).Kind() && (job.Attempt+1) >= job.MaxAttempts {
+		h.markArchiveItemAsFailed(job, fmt.Sprintf("River job panicked on final attempt (%d/%d): %v", job.Attempt+1, job.MaxAttempts, panicErr))
+	}
+	return nil
+}
+
+func (h *CustomErrorHandler) markArchiveItemAsFailed(job *rivertype.JobRow, reason string) {
+	// Parse archive job args safely
+	var args workers.ArchiveJobArgs
+	if err := json.Unmarshal(job.EncodedArgs, &args); err != nil {
+		slog.Error("Failed to parse job args for archive failure update", "job_id", job.ID, "error", err)
+		return
+	}
+	if args.ShortID == "" || args.Type == "" {
+		slog.Error("Invalid archive job args for failure update", "job_id", job.ID, "args", args)
+		return
+	}
+
+	// Update archive item: only touch items still pending/processing
+	msg := fmt.Sprintf("River job discarded after %d attempts at %s: %s", job.MaxAttempts, time.Now().Format(time.RFC3339), reason)
+	result := h.db.Model(&models.ArchiveItem{}).
+		Joins("JOIN captures ON archive_items.capture_id = captures.id").
+		Where("captures.short_id = ? AND archive_items.type = ? AND archive_items.status IN ('pending','processing')", args.ShortID, args.Type).
+		Updates(map[string]interface{}{
+			"status":     "failed",
+			"updated_at": time.Now(),
+			"logs":       gorm.Expr("COALESCE(logs, '') || ?", "\n\n"+msg),
+		})
+
+	if result.Error != nil {
+		slog.Error("Failed to update archive item after job discard", "short_id", args.ShortID, "type", args.Type, "error", result.Error)
+		return
+	}
+	if result.RowsAffected > 0 {
+		slog.Info("Marked archive item as failed due to final River job failure", "short_id", args.ShortID, "type", args.Type)
+	}
 }
 
 func generateRandomSecret() string {
@@ -299,6 +335,7 @@ func main() {
 	river.AddWorker(riverWorkers, archiveWorker)
 
 	// Create River client with configuration
+	errorHandler := &CustomErrorHandler{db: db}
 	riverClient, err := river.NewClient(riverpgxv5.New(dbPool), &river.Config{
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: cfg.MaxWorkers},
@@ -307,7 +344,7 @@ func main() {
 		Workers:              riverWorkers,
 		JobTimeout:           30 * time.Minute, // Kill jobs running longer than 30 minutes
 		RescueStuckJobsAfter: 35 * time.Minute, // Rescue stuck jobs after 35 minutes (must be >= JobTimeout)
-		ErrorHandler:         &CustomErrorHandler{},
+		ErrorHandler:         errorHandler,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create River client: %v", err)
@@ -318,6 +355,27 @@ func main() {
 		log.Fatalf("Failed to start River client: %v", err)
 	}
 	defer riverClient.Stop(context.Background())
+
+	// Initialize cleanup worker and start periodic cleanup
+	cleanupWorker := workers.NewCleanupWorker(db)
+
+	// Kick off an initial pass on startup (non-blocking):
+	go func() {
+		if err := cleanupWorker.RunCleanup(context.Background()); err != nil {
+			slog.Error("Initial cleanup routine failed", "error", err)
+		}
+	}()
+
+	// Then run every 10 minutes:
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := cleanupWorker.RunCleanup(context.Background()); err != nil {
+				slog.Error("Cleanup routine failed", "error", err)
+			}
+		}
+	}()
 
 	// Setup River UI
 	riverUIServer, err := riverui.NewServer(&riverui.ServerOpts{
