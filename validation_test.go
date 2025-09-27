@@ -233,6 +233,11 @@ func TestGetArchiveTypes(t *testing.T) {
 			expected: []string{"mhtml", "screenshot", "youtube"},
 		},
 		{
+			name:     "TikTok video",
+			url:      "https://www.tiktok.com/@voidfrida/video/7495821166951566599",
+			expected: []string{"mhtml", "screenshot", "youtube"},
+		},
+		{
 			name:     "Regular website",
 			url:      "https://example.com",
 			expected: []string{"mhtml", "screenshot"},
@@ -280,6 +285,34 @@ func TestIsInstagramURL(t *testing.T) {
 			result := utils.IsInstagramURL(tt.url)
 			if result != tt.expected {
 				t.Errorf("IsInstagramURL(%q) = %v, expected %v", tt.url, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsTikTokURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		expected bool
+	}{
+		// Should be detected as TikTok URLs
+		{"TikTok video", "https://www.tiktok.com/@voidfrida/video/7495821166951566599", true},
+		{"TikTok video without www", "https://tiktok.com/@user/video/123456789", true},
+		{"TikTok video with mobile", "https://m.tiktok.com/@user/video/987654321", true},
+		
+		// Should NOT be detected as TikTok URLs
+		{"TikTok profile", "https://www.tiktok.com/@username", false},
+		{"TikTok home", "https://www.tiktok.com/", false},
+		{"TikTok discover", "https://www.tiktok.com/discover", false},
+		{"Regular website", "https://example.com", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := utils.IsTikTokURL(tt.url)
+			if result != tt.expected {
+				t.Errorf("IsTikTokURL(%q) = %v, expected %v", tt.url, result, tt.expected)
 			}
 		})
 	}

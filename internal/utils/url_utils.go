@@ -113,9 +113,15 @@ func IsInstagramURL(url string) bool {
 	return strings.Contains(lowerURL, "instagram.com") && (strings.Contains(lowerURL, "/reel/") || strings.Contains(lowerURL, "/p/") || strings.Contains(lowerURL, "/tv/"))
 }
 
-// Check if URL is a video URL (YouTube, Vimeo, Instagram, etc.)
+// Check if URL is a TikTok URL
+func IsTikTokURL(url string) bool {
+	lowerURL := strings.ToLower(url)
+	return strings.Contains(lowerURL, "tiktok.com") && strings.Contains(lowerURL, "/video/")
+}
+
+// Check if URL is a video URL (YouTube, Vimeo, Instagram, TikTok, etc.)
 func IsVideoURL(url string) bool {
-	return IsYouTubeURL(url) || IsVimeoURL(url) || IsInstagramURL(url)
+	return IsYouTubeURL(url) || IsVimeoURL(url) || IsInstagramURL(url) || IsTikTokURL(url)
 }
 
 // Get archive types based on URL patterns
