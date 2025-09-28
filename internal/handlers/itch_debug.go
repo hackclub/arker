@@ -14,28 +14,9 @@ import (
 func ServeItchDebug(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
 	shortID := c.Param("shortid")
 	
-	c.Header("X-Debug-Route", "itch-debug")
-	c.Header("X-Debug-ShortID", shortID)
-	
-	// Test database lookup
-	var item models.ArchiveItem
-	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
-		Where("captures.short_id = ? AND archive_items.type = ?", shortID, "itch").
-		First(&item).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "archive not found",
-			"shortid": shortID,
-			"db_error": err.Error(),
-		})
-		return
-	}
-	
 	c.JSON(http.StatusOK, gin.H{
-		"status": "debug success",
+		"debug": "basic test",
 		"shortid": shortID,
-		"item_id": item.ID,
-		"item_status": item.Status,
-		"storage_key": item.StorageKey,
-		"file_size": item.FileSize,
+		"timestamp": fmt.Sprintf("%d", 1759084600),
 	})
 }
