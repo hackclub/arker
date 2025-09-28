@@ -12,15 +12,27 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
+// ServeItchHealth serves a simple health check for itch routes
+func ServeItchHealth(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status": "itch routes working",
+		"time": fmt.Sprintf("%d", time.Now().Unix()),
+	})
+}
+
 // ServeItchFile serves individual files from an itch archive
 func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
 	shortID := c.Param("shortid")
 	filePath := c.Param("filepath")
+	
+	// Add timeout to prevent hanging
+	c.Header("X-Debug-Route", "itch-file-serving")
 
 
 
@@ -70,12 +82,16 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 	defer reader.Close()
 
 	// Read the entire archive into memory for this request
+	// TODO: This is inefficient - should use seekable ZSTD for production
 	archiveData, err := io.ReadAll(reader)
 	if err != nil {
-
+		c.Header("X-Debug-Error", "failed-to-read-archive")
 		c.Status(http.StatusInternalServerError)
 		return
 	}
+	
+	// Add debug header with archive size
+	c.Header("X-Debug-Archive-Size", fmt.Sprintf("%d", len(archiveData)))
 
 
 
