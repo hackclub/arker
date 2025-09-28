@@ -72,17 +72,7 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 		return
 	}
 	
-	// Quick test: if requesting metadata.json, return a simple response first
-	if filePath == "metadata.json" {
-		c.Header("X-Debug-Step", "metadata-shortcut")
-		c.JSON(http.StatusOK, gin.H{
-			"debug": "metadata shortcut",
-			"shortid": shortID,
-			"status": item.Status,
-			"storage_key": item.StorageKey,
-		})
-		return
-	}
+
 
 	if err := db.Where("short_id = ?", shortID).First(&capture).Error; err != nil {
 		c.Status(http.StatusNotFound)
