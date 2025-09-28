@@ -94,6 +94,34 @@ S3_ACCESS_KEY_ID=your-b2-key-id
 S3_SECRET_ACCESS_KEY=your-b2-secret
 ```
 
+## Deployment Notes
+
+### Docker Deployment
+
+The Dockerfile includes all necessary dependencies including `itch-dl`. For production deployment:
+
+1. **Set Environment Variables:**
+   ```bash
+   ITCH_API_KEY=your_itch_api_key_here  # Required for itch.io archiving
+   ```
+
+2. **Build and Deploy:**
+   ```bash
+   docker build -t arker .
+   docker run -e ITCH_API_KEY="your_key" -p 8080:8080 arker
+   ```
+
+### Manual Installation
+
+If not using Docker, install the Python dependencies manually:
+
+```bash
+# Install itch-dl for itch.io game archiving
+pip3 install itch-dl
+
+# Verify installation
+python3 -m itch_dl --help
+```
 
 ## License
 
