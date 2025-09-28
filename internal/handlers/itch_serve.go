@@ -81,6 +81,23 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 	}
 	defer reader.Close()
 
+	// Check archive size first to prevent memory issues
+	if zstdStorage, ok := storageInstance.(*storage.ZSTDStorage); ok {
+		if uncompressedSize, err := zstdStorage.UncompressedSize(item.StorageKey); err == nil {
+			c.Header("X-Debug-Uncompressed-Size", fmt.Sprintf("%d", uncompressedSize))
+			// Limit to 100MB uncompressed to prevent memory issues
+			if uncompressedSize > 100*1024*1024 {
+				c.Header("X-Debug-Error", "archive-too-large")
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+					"error": "Archive too large for individual file serving",
+					"size": uncompressedSize,
+					"limit": 100*1024*1024,
+				})
+				return
+			}
+		}
+	}
+
 	// Read the entire archive into memory for this request
 	// TODO: This is inefficient - should use seekable ZSTD for production
 	archiveData, err := io.ReadAll(reader)
