@@ -56,6 +56,10 @@ type Config struct {
 	S3Prefix         string `envconfig:"S3_PREFIX"`                         // Optional prefix for all keys
 	S3ForcePathStyle bool   `envconfig:"S3_FORCE_PATH_STYLE" default:"false"` // Required for MinIO
 	S3TempDir        string `envconfig:"S3_TEMP_DIR" default:"/tmp"`         // Temp directory for upload buffering
+	
+	// Itch.io Configuration
+	ItchAPIKey string `envconfig:"ITCH_API_KEY"`
+	ItchDlPath string `envconfig:"ITCH_DL_PATH" default:"itch-dl"`
 }
 
 // CustomErrorHandler implements the River ErrorHandler interface and updates archive items.
@@ -308,6 +312,7 @@ func main() {
 		"screenshot": &archivers.ScreenshotArchiver{},
 		"git":        &archivers.GitArchiver{},
 		"youtube":    &archivers.YTArchiver{},
+		"itch":       &archivers.ItchArchiver{ItchDlPath: cfg.ItchDlPath, APIKey: cfg.ItchAPIKey},
 	}
 
 	os.MkdirAll(cfg.CachePath, 0755)
@@ -448,6 +453,8 @@ func main() {
 	r.GET("/logs/:shortid/:type", func(c *gin.Context) { handlers.GetLogs(c, db) })
 	r.GET("/archive/:shortid/:type", func(c *gin.Context) { handlers.ServeArchive(c, storageInstance, db) })
 	r.GET("/archive/:shortid/mhtml/html", func(c *gin.Context) { handlers.ServeMHTMLAsHTML(c, storageInstance, db) })
+	r.GET("/itch/:shortid/file/*filepath", func(c *gin.Context) { handlers.ServeItchFile(c, storageInstance, db) })
+	r.GET("/itch/:shortid/list", func(c *gin.Context) { handlers.ServeItchGameList(c, storageInstance, db) })
 	r.Any("/git/*path", func(c *gin.Context) { handlers.GitHandler(c, storageInstance, db, cfg.CachePath) })
 	r.GET("/:shortid/:type", func(c *gin.Context) { handlers.DisplayType(c, db) })
 	r.GET("/:shortid", func(c *gin.Context) { handlers.DisplayDefault(c, db) })

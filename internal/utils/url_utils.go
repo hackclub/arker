@@ -124,9 +124,20 @@ func IsVideoURL(url string) bool {
 	return IsYouTubeURL(url) || IsVimeoURL(url) || IsInstagramURL(url) || IsTikTokURL(url)
 }
 
+// Check if URL is an itch.io URL
+func IsItchURL(url string) bool {
+	lowerURL := strings.ToLower(url)
+	return strings.Contains(lowerURL, ".itch.io/")
+}
+
 // Get archive types based on URL patterns
 func GetArchiveTypes(url string) []string {
 	types := []string{"mhtml", "screenshot"}
+
+	// Add itch archiver for itch.io URLs
+	if IsItchURL(url) {
+		types = append(types, "itch")
+	}
 
 	// Add YouTube archiver for video URLs (YouTube, Vimeo, etc.)
 	if IsVideoURL(url) {

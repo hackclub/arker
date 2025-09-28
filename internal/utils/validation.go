@@ -250,6 +250,7 @@ func (r *ArchiveRequest) Validate() error {
 			"screenshot": true,
 			"git":        true,
 			"youtube":    true,
+			"itch":       true,
 		}
 
 		for _, archiveType := range r.Types {

@@ -12,6 +12,7 @@ type HealthCheckConfig struct {
 	CheckYtDlp      bool
 	CheckPlaywright bool
 	CheckAria2c     bool
+	CheckItchDl     bool
 	Timeout         time.Duration
 }
 
@@ -21,6 +22,7 @@ func DefaultHealthCheckConfig() HealthCheckConfig {
 		CheckYtDlp:      true,
 		CheckPlaywright: true,
 		CheckAria2c:     true,
+		CheckItchDl:     true,
 		Timeout:         10 * time.Second,
 	}
 }
@@ -42,6 +44,12 @@ func RunHealthChecks(config HealthCheckConfig) error {
 	if config.CheckPlaywright {
 		if err := CheckPlaywrightAvailability(config.Timeout); err != nil {
 			return fmt.Errorf("playwright health check failed: %v", err)
+		}
+	}
+
+	if config.CheckItchDl {
+		if err := CheckItchDlAvailability(config.Timeout); err != nil {
+			return fmt.Errorf("itch-dl health check failed: %v", err)
 		}
 	}
 
@@ -126,5 +134,29 @@ func CheckPlaywrightAvailability(timeout time.Duration) error {
 		return err
 	case <-time.After(timeout):
 		return fmt.Errorf("playwright health check timed out after %v", timeout)
+	}
+}
+
+// CheckItchDlAvailability checks if itch-dl is available and working
+func CheckItchDlAvailability(timeout time.Duration) error {
+	done := make(chan error, 1)
+	
+	go func() {
+		// Check if itch-dl is available
+		cmd := exec.Command("python3", "-m", "itch_dl", "--help")
+		_, err := cmd.CombinedOutput()
+		if err != nil {
+			done <- fmt.Errorf("itch-dl not available: %v", err)
+			return
+		}
+		
+		done <- nil
+	}()
+	
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		return fmt.Errorf("itch-dl health check timed out after %v", timeout)
 	}
 }

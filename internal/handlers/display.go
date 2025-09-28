@@ -40,10 +40,14 @@ func internalTypeToURLType(internalType string) string {
 }
 
 func getDisplayName(internalType string) string {
-	if internalType == "mhtml" {
+	switch internalType {
+	case "mhtml":
 		return "Web"
+	case "itch":
+		return "Itch"
+	default:
+		return internalType
 	}
-	return internalType
 }
 
 // DisplayDefault serves the default archive type view directly (no redirect)
@@ -62,9 +66,23 @@ func DisplayDefault(c *gin.Context, db *gorm.DB) {
 	// Determine the default archive type based on URL type
 	isGit := utils.IsGitURL(archivedURL.Original)
 	isVideo := utils.IsVideoURL(archivedURL.Original)
+	isItch := utils.IsItchURL(archivedURL.Original)
 	var defaultType string
 
-	if isGit {
+	if isItch {
+		// For itch.io URLs, prefer itch -> mhtml -> screenshot -> youtube -> git
+		for _, preferredType := range []string{"itch", "mhtml", "screenshot", "youtube", "git"} {
+			for _, item := range capture.ArchiveItems {
+				if item.Type == preferredType {
+					defaultType = preferredType
+					break
+				}
+			}
+			if defaultType != "" {
+				break
+			}
+		}
+	} else if isGit {
 		// For git repositories, prefer git -> mhtml -> screenshot -> youtube
 		for _, preferredType := range []string{"git", "mhtml", "screenshot", "youtube"} {
 			for _, item := range capture.ArchiveItems {

@@ -55,6 +55,9 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 	case "git":
 		ct = "application/zstd"
 		attach = true
+	case "itch":
+		ct = "application/zip"
+		attach = true
 	default:
 		ct = "application/octet-stream"
 		attach = true
