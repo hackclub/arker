@@ -64,11 +64,23 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 	}
 	
 	c.Header("X-Debug-Step", "found-archive-item")
+	c.Header("X-Debug-Status", item.Status)
 	
-
-
 	if item.Status != "completed" {
+		c.Header("X-Debug-Error", "archive-not-completed")
 		c.Status(http.StatusNotFound)
+		return
+	}
+	
+	// Quick test: if requesting metadata.json, return a simple response first
+	if filePath == "metadata.json" {
+		c.Header("X-Debug-Step", "metadata-shortcut")
+		c.JSON(http.StatusOK, gin.H{
+			"debug": "metadata shortcut",
+			"shortid": shortID,
+			"status": item.Status,
+			"storage_key": item.StorageKey,
+		})
 		return
 	}
 
