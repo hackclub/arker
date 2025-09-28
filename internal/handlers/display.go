@@ -171,6 +171,7 @@ func DisplayDefault(c *gin.Context, db *gorm.DB) {
 		"original_url":      archivedURL.Original,
 		"is_git":            isGit,
 		"is_video":          isVideo,
+		"is_itch":           isItch,
 		"git_repo_name":     gitRepoName,
 		"download_filename": filename,
 		"queue_position":    queuePosition,
@@ -212,6 +213,7 @@ func DisplayType(c *gin.Context, db *gorm.DB) {
 	// Check if this is a git repository and generate clone info
 	isGit := utils.IsGitURL(archivedURL.Original)
 	isVideo := utils.IsVideoURL(archivedURL.Original)
+	isItch := utils.IsItchURL(archivedURL.Original)
 	var gitRepoName string
 	if isGit {
 		gitRepoName = utils.ExtractRepoName(archivedURL.Original)
@@ -234,6 +236,7 @@ func DisplayType(c *gin.Context, db *gorm.DB) {
 		"original_url":      archivedURL.Original,
 		"is_git":            isGit,
 		"is_video":          isVideo,
+		"is_itch":           isItch,
 		"git_repo_name":     gitRepoName,
 		"download_filename": filename,
 		"queue_position":    queuePosition,
