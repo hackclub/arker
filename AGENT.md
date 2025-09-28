@@ -56,6 +56,7 @@ When using Amp with `make dev` running in another window:
 - **PostgreSQL 15**
 - **Git** (for repository archiving)
 - **Python 3 + yt-dlp** (for YouTube archiving)
+- **Python 3 + itch-dl** (for itch.io game archiving)
 - **Playwright + Chromium** (for MHTML and screenshots)
 
 ## Project Structure
@@ -70,6 +71,7 @@ When using Amp with `make dev` running in another window:
 │   │   ├── screenshot.go   # Full-page screenshot capture
 │   │   ├── git.go          # Git repository cloning
 │   │   ├── youtube.go      # YouTube video downloading
+│   │   ├── itch.go         # itch.io game archiving
 │   │   └── browser_utils.go # Shared browser utilities
 │   ├── handlers/           # HTTP handlers
 │   │   ├── admin.go        # Admin interface endpoints
@@ -77,6 +79,7 @@ When using Amp with `make dev` running in another window:
 │   │   ├── auth.go         # Authentication handlers
 │   │   ├── display.go      # Archive display pages
 │   │   ├── git.go          # Git HTTP backend
+│   │   ├── itch_serve.go   # itch.io individual file serving
 │   │   └── serve.go        # File serving with streaming
 │   ├── models/             # Database models & types
 │   │   └── models.go       # User, ArchivedURL, Capture, ArchiveItem
@@ -99,7 +102,7 @@ When using Amp with `make dev` running in another window:
   - Current: Filesystem storage with zstd compression
 - **`Archiver`** - Different archiving strategies
   - Methods: `Archive(url, writer)`, content type detection
-  - Types: MHTML, Screenshot, Git, YouTube
+  - Types: MHTML, Screenshot, Git, YouTube, Itch
 
 ### Performance Features
 - **Browser Instance Reuse**: Playwright browsers reused across jobs for efficiency
@@ -130,6 +133,8 @@ When using Amp with `make dev` running in another window:
 - `GET /archive/:shortid/:type` - Download specific archive type
 - `GET /archive/:shortid/mhtml/html` - View MHTML as rendered HTML
 - `GET /git/:shortid` - Git HTTP backend for cloning repositories
+- `GET /itch/:shortid/file/*filepath` - Stream individual files from itch.io game archives
+- `GET /itch/:shortid/list` - JSON list of files in itch.io game archive
 
 ### Admin Interface (Session Authentication)
 - `GET /login` - Admin login page
@@ -159,6 +164,8 @@ git clone https://archive.selfhosted.hackclub.com/git/{shortid}
 - `MAX_WORKERS` - Worker pool size (default: `5`)
 - `PORT` - HTTP server port (default: `8080`)
 - `GIN_MODE` - Gin framework mode (`debug` for development)
+- `ITCH_API_KEY` - itch.io API key for downloading games (required for itch.io archiving)
+- `ITCH_DL_PATH` - Path to itch-dl command (default: `itch-dl`)
 
 - `LOGIN_TEXT` - Text to display under login form
 

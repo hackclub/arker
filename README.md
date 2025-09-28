@@ -3,7 +3,7 @@
 A self-hostable minimalist version of <https://archive.org>.
 
 - Creates Chrome snapshots of URLs and serves them at nice short URLs like <https://archive.hackclub.com/p9OGi>
-- Also supports git clones, YouTube videos, and website screenshots
+- Also supports git clones, YouTube videos, itch.io games, and website screenshots
 - Comprehensive API
 
 - Stores everything compressed using [zstd](https://github.com/facebook/zstd) level 6 (seekable format for random access)
@@ -25,6 +25,15 @@ Try out the demo instance at <https://arker-demo.hackclub.com>.
 - `ADMIN_PASSWORD` - Admin login password (default: `admin`)
 - `LOGIN_TEXT` - Custom text to display under the login form. Useful for providing demo credentials (e.g., `LOGIN_TEXT="Demo: admin/admin"`). Supports basic HTML.
 - `GIN_MODE` - Gin framework mode (`debug` for development)
+
+### Itch.io Game Archiving
+
+- `ITCH_API_KEY` - itch.io API key for downloading games (required for itch.io archiving)
+- `ITCH_DL_PATH` - Path to itch-dl command (default: `itch-dl`)
+
+**Dependencies for itch.io support:**
+- Python 3.10+ with `itch-dl` package: `pip install itch-dl`
+- itch.io API key: Generate at https://itch.io/user/settings → API Keys
 
 ### Storage Configuration
 
