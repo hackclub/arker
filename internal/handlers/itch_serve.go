@@ -33,6 +33,8 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 	
 	// Add timeout to prevent hanging
 	c.Header("X-Debug-Route", "itch-file-serving")
+	c.Header("X-Debug-ShortID", shortID)
+	c.Header("X-Debug-FilePath", filePath)
 
 
 
@@ -50,15 +52,18 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 
 
 	// Find the itch archive item
+	c.Header("X-Debug-Step", "database-lookup")
 	var item models.ArchiveItem
 	var capture models.Capture
 	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
 		Where("captures.short_id = ? AND archive_items.type = ?", shortID, "itch").
 		First(&item).Error; err != nil {
-
+		c.Header("X-Debug-Error", "archive-not-found")
 		c.Status(http.StatusNotFound)
 		return
 	}
+	
+	c.Header("X-Debug-Step", "found-archive-item")
 	
 
 
