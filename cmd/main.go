@@ -453,11 +453,16 @@ func main() {
 	r.GET("/logs/:shortid/:type", func(c *gin.Context) { handlers.GetLogs(c, db) })
 	r.GET("/archive/:shortid/:type", func(c *gin.Context) { handlers.ServeArchive(c, storageInstance, db) })
 	r.GET("/archive/:shortid/mhtml/html", func(c *gin.Context) { handlers.ServeMHTMLAsHTML(c, storageInstance, db) })
+	
+	// Itch routes - MUST come before /:shortid/:type catch-all
 	r.GET("/itch/health", handlers.ServeItchHealth)
 	r.GET("/itch/:shortid/debug", func(c *gin.Context) { handlers.ServeItchDebug(c, storageInstance, db) })
 	r.GET("/itch/:shortid/file/*filepath", func(c *gin.Context) { handlers.ServeItchFile(c, storageInstance, db) })
 	r.GET("/itch/:shortid/list", func(c *gin.Context) { handlers.ServeItchGameList(c, storageInstance, db) })
+	
 	r.Any("/git/*path", func(c *gin.Context) { handlers.GitHandler(c, storageInstance, db, cfg.CachePath) })
+	
+	// Catch-all routes - MUST come last
 	r.GET("/:shortid/:type", func(c *gin.Context) { handlers.DisplayType(c, db) })
 	r.GET("/:shortid", func(c *gin.Context) { handlers.DisplayDefault(c, db) })
 	r.GET("/", func(c *gin.Context) { handlers.AdminGet(c, db) })
