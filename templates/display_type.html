@@ -397,8 +397,15 @@
                         console.error('Error loading game metadata:', error);
                         document.getElementById('itch-content').innerHTML = `
                             <div style="text-align: center; padding: 40px; color: #dc3545;">
-                                <h3>❌ Error loading game</h3>
-                                <p>Could not load game information. The archive may still be downloadable below.</p>
+                                <h3>❌ Itch.io file serving not available</h3>
+                                <p>The itch.io individual file serving routes are not deployed yet.</p>
+                                <p>The full game archive is still available for download below.</p>
+                                <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                                    <strong>Archive contains:</strong><br>
+                                    • Game files (playable or executable)<br>
+                                    • Game metadata and screenshots<br>
+                                    • Original itch.io page HTML
+                                </div>
                             </div>
                         `;
                     });
