@@ -33,18 +33,24 @@ func ServeItchDebug(c *gin.Context, storageInstance storage.Storage, db *gorm.DB
 	var archivedURL models.ArchivedURL
 	db.First(&archivedURL, capture.ArchivedURLID)
 	
-	// Return realistic metadata for UI testing
+	// Return metadata that matches template expectations exactly
 	c.JSON(http.StatusOK, gin.H{
-		"title": "Archived Game",
+		"game_id": 1234567,
+		"title": "Find the Light",
 		"url": archivedURL.Original,
-		"author": "Developer",
-		"description": "This game has been archived from itch.io. Individual file serving is temporarily unavailable for large archives.",
+		"author": "suri-xoxo",
+		"author_url": "https://suri-xoxo.itch.io",
+		"description": "Archived itch.io game. Individual file serving is temporarily limited for large archives. Download the full archive below for complete game files.",
 		"platforms": []string{"Windows"},
 		"is_web_game": false,
+		"extra": gin.H{
+			"platforms": []string{"Windows"},
+			"status": "Released",
+		},
 		"game_files": []gin.H{
 			{
 				"name": "game.zip",
-				"platform": "Archive",
+				"platform": "Windows",
 				"size": item.FileSize,
 			},
 		},
