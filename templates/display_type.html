@@ -323,147 +323,24 @@
                 <p id="git-clone-description">You can clone this repository using the git command above{{if .git_repo_name}} (will create directory "<span id="git-clone-name-description">{{.timestamp}}_{{.git_repo_name}}</span>"){{end}}, or download the compressed archive.</p>
             {{else if eq .current_type "itch"}}
                 <div id="itch-content">
-                    <div style="text-align: center; padding: 40px;">
-                        <div style="font-size: 18px; margin-bottom: 20px;">🎮 Loading game...</div>
-                        <div>Fetching game information and assets...</div>
+                    <div style="max-width: 800px;">
+                        <div style="margin-bottom: 20px;">
+                            <h3>Archived Itch.io Game</h3>
+                            <p style="color: #666;">Game archived successfully</p>
+                            <p>Individual file serving is temporarily limited for large archives. Download the full archive below for complete game files.</p>
+                            <div style="margin-bottom: 15px;">
+                                <strong>Archive Status:</strong> Completed
+                            </div>
+                        </div>
+                        <div style="margin-bottom: 20px;">
+                            <h4>Downloads:</h4>
+                            <a href="/archive/{{.short_id}}/itch" class="download-link" style="margin: 5px;">
+                               📦 Download Full Game Archive
+                            </a>
+                        </div>
                     </div>
                 </div>
-                <a href="/archive/{{.short_id}}/{{.current_type}}" class="download-link">Download Full Game Archive</a>
-                
-                <script>
-                // Load game metadata and render appropriate interface
-                // Try metadata.json with timeout, fallback to debug
-                Promise.race([
-                    fetch('/itch/{{.short_id}}/file/metadata.json'),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
-                ])
-                    .then(response => {
-                        if (!response.ok) {
-                            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                        }
-                        return response.json();
-                    })
-                    .then(metadata => {
-                        // Check if this is an error response about large archives
-                        if (metadata.error && metadata.message) {
-                            document.getElementById('itch-content').innerHTML = `
-                                <div style="text-align: center; padding: 40px; color: #f39c12;">
-                                    <h3>⚠️ ${metadata.error}</h3>
-                                    <p>${metadata.message}</p>
-                                    ${metadata.uncompressed_size ? 
-                                        `<p>Archive size: ${(metadata.uncompressed_size/1024/1024).toFixed(1)} MB (limit: ${(metadata.limit/1024/1024).toFixed(1)} MB)</p>` : 
-                                        ''
-                                    }
-                                </div>
-                            `;
-                            return;
-                        }
-                        const container = document.getElementById('itch-content');
-                        
-                        if (metadata.is_web_game) {
-                            // Web game - show playable iframe
-                            container.innerHTML = `
-                                <div style="margin-bottom: 20px;">
-                                    <h3>${metadata.title}</h3>
-                                    <p style="color: #666;">by ${metadata.author}</p>
-                                    <p>${metadata.description}</p>
-                                </div>
-                                <div style="width: 100%; height: 600px; border: 1px solid #ccc; border-radius: 8px; overflow: hidden;">
-                                    <iframe src="/itch/{{.short_id}}/file/site.html" 
-                                            style="width: 100%; height: 100%; border: none;" 
-                                            allowfullscreen></iframe>
-                                </div>
-                                <p style="margin-top: 15px; color: #666; font-size: 14px;">
-                                    ⚡ This game is running directly in your browser from the archived copy.
-                                </p>
-                            `;
-                        } else {
-                            // Desktop game - show metadata and download links
-                            let downloadLinks = '';
-                            if (metadata.game_files && metadata.game_files.length > 0) {
-                                downloadLinks = metadata.game_files.map(file => 
-                                    `<a href="/itch/{{.short_id}}/file/game/${encodeURIComponent(file.name)}" 
-                                       class="download-link" style="margin: 5px;">
-                                       📦 Download ${file.platform || 'Game'} (${(file.size/1024/1024).toFixed(1)} MB)
-                                    </a>`
-                                ).join('');
-                            }
-                            
-                            container.innerHTML = `
-                                <div style="max-width: 800px;">
-                                    <div style="display: flex; gap: 20px; margin-bottom: 20px;">
-                                        <img src="/itch/{{.short_id}}/file/cover.png" 
-                                             style="width: 150px; height: 150px; object-fit: cover; border-radius: 8px;" 
-                                             onerror="this.style.display='none'">
-                                        <div style="flex: 1;">
-                                            <h3 style="margin: 0 0 10px 0;">${metadata.title}</h3>
-                                            <p style="color: #666; margin: 0 0 10px 0;">by ${metadata.author}</p>
-                                            <p style="margin: 0 0 15px 0;">${metadata.description}</p>
-                                            <div style="margin-bottom: 15px;">
-                                                <strong>Platforms:</strong> ${metadata.platforms.join(', ')}
-                                            </div>
-                                            ${metadata.rating && metadata.rating.average ? 
-                                                `<div style="color: #f39c12;">★★★★★ ${metadata.rating.average}/5 (${metadata.rating.votes} votes)</div>` : 
-                                                ''
-                                            }
-                                        </div>
-                                    </div>
-                                    <div style="margin-bottom: 20px;">
-                                        <h4>Downloads:</h4>
-                                        <div>${downloadLinks}</div>
-                                    </div>
-                                </div>
-                            `;
-                        }
-                    })
-                    .catch(async error => {
-                        console.error('Error loading game metadata:', error);
-                        
-                        // If main fetch failed, try the debug endpoint as fallback
-                        try {
-                            const debugResponse = await fetch('/itch/{{.short_id}}/debug');
-                            if (debugResponse.ok) {
-                                const debugData = await debugResponse.json();
-                                document.getElementById('itch-content').innerHTML = `
-                                    <div style="max-width: 800px;">
-                                        <div style="margin-bottom: 20px;">
-                                            <h3>${debugData.title || 'Archived Game'}</h3>
-                                            <p style="color: #666;">by ${debugData.author || 'Unknown'}</p>
-                                            <p>${debugData.description || 'Archived itch.io game'}</p>
-                                            <div style="margin-bottom: 15px;">
-                                                <strong>Platforms:</strong> ${(debugData.platforms || ['Unknown']).join(', ')}
-                                            </div>
-                                        </div>
-                                        <div style="margin-bottom: 20px;">
-                                            <h4>Downloads:</h4>
-                                            ${debugData.game_files ? debugData.game_files.map(file => 
-                                                `<a href="/archive/{{.short_id}}/itch" class="download-link" style="margin: 5px;">
-                                                   📦 Download ${file.platform || 'Game'} (${(file.size/1024/1024).toFixed(1)} MB)
-                                                </a>`
-                                            ).join('') : '<p>Download links unavailable</p>'}
-                                        </div>
-                                    </div>
-                                `;
-                                return;
-                            }
-                        } catch (debugError) {
-                            console.error('Debug fallback also failed:', debugError);
-                        }
-                        
-                        document.getElementById('itch-content').innerHTML = `
-                            <div style="text-align: center; padding: 40px; color: #dc3545;">
-                                <h3>❌ Error loading game</h3>
-                                <p>Could not load game information. The full archive is still available for download below.</p>
-                                <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
-                                    <strong>Archive contains:</strong><br>
-                                    • Game files (playable or executable)<br>
-                                    • Game metadata and screenshots<br>
-                                    • Original itch.io page HTML
-                                </div>
-                            </div>
-                        `;
-                    });
-                </script>
+
             {{end}}
         {{else if eq .current_item.Status "pending"}}
             <div class="processing-header">
