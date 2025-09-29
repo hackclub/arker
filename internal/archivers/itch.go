@@ -422,10 +422,10 @@ func extractWebGameToZip(zipWriter *zip.Writer, webGameZipPath string, logWriter
 			continue
 		}
 
-		// Create ZIP entry with Store method
+		// Create ZIP entry with Deflate compression
 		header := &zip.FileHeader{
 			Name:   zipPath,
-			Method: zip.Store, // No compression
+			Method: zip.Deflate, // Use ZIP compression
 		}
 		header.SetModTime(file.FileHeader.Modified)
 
@@ -462,7 +462,7 @@ func addFileToZip(zipWriter *zip.Writer, name string, data interface{}, isJSON b
 
 	header := &zip.FileHeader{
 		Name:   name,
-		Method: zip.Store, // No compression
+		Method: zip.Deflate, // Use ZIP compression
 	}
 
 	writer, err := zipWriter.CreateHeader(header)
@@ -489,7 +489,7 @@ func addFileFromDiskToZip(zipWriter *zip.Writer, zipPath, sourcePath string) err
 
 	header := &zip.FileHeader{
 		Name:   zipPath,
-		Method: zip.Store, // No compression
+		Method: zip.Deflate, // Use ZIP compression
 	}
 	header.SetModTime(info.ModTime())
 

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"archive/zip"
 	"arker/internal/models"
 	"arker/internal/storage"
 	"arker/internal/utils/zipfs"
@@ -108,6 +109,16 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 	
 
 
+	// Check if this is a new-style uncompressed itch archive
+	isUncompressed := !strings.HasSuffix(item.StorageKey, ".zst")
+	
+	if isUncompressed {
+		// New approach: Direct ZIP file access (no ZSTD)
+		serveFromUncompressedZip(c, item, filePath, storageInstance, db)
+		return
+	}
+	
+	// Old approach: ZSTD compressed archives (fallback)
 	if err := db.Where("short_id = ?", shortID).First(&capture).Error; err != nil {
 		c.Status(http.StatusNotFound)
 		return
@@ -368,4 +379,65 @@ func ServeItchGameList(c *gin.Context, storageInstance storage.Storage, db *gorm
 		"shortid": shortID,
 		"files":   files,
 	})
+}
+
+// serveFromUncompressedZip serves individual files from uncompressed ZIP archives
+func serveFromUncompressedZip(c *gin.Context, item models.ArchiveItem, filePath string, storageInstance storage.Storage, db *gorm.DB) {
+	// Get base storage to access uncompressed ZIP directly
+	baseStorage := storageInstance
+	if zstdStorage, ok := storageInstance.(*storage.ZSTDStorage); ok {
+		baseStorage = zstdStorage.GetBaseStorage()
+	}
+	
+	// Open ZIP file directly
+	reader, err := baseStorage.Reader(item.StorageKey)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	defer reader.Close()
+	
+	// Read file into memory (this should be smaller now with ZIP compression)
+	zipData, err := io.ReadAll(reader)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	
+	// Open ZIP reader
+	zipReader, err := zip.NewReader(&bytesReaderAt{data: zipData}, int64(len(zipData)))
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	
+	// Find the requested file
+	for _, file := range zipReader.File {
+		if file.Name == filePath {
+			// Found the file, serve it
+			rc, err := file.Open()
+			if err != nil {
+				c.Status(http.StatusInternalServerError)
+				return
+			}
+			defer rc.Close()
+			
+			// Set headers
+			contentType := mime.TypeByExtension(path.Ext(filePath))
+			if contentType == "" {
+				contentType = "application/octet-stream"
+			}
+			
+			c.Header("Content-Type", contentType)
+			c.Header("Content-Length", fmt.Sprintf("%d", file.UncompressedSize64))
+			c.Header("X-Debug-Method", "uncompressed-zip")
+			
+			// Stream the file
+			io.Copy(c.Writer, rc)
+			return
+		}
+	}
+	
+	// File not found
+	c.Status(http.StatusNotFound)
 }

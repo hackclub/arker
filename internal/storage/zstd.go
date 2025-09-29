@@ -17,6 +17,11 @@ func NewZSTDStorage(storage SeekableStorage) *ZSTDStorage {
 	return &ZSTDStorage{storage: storage}
 }
 
+// GetBaseStorage returns the underlying storage without ZSTD compression
+func (z *ZSTDStorage) GetBaseStorage() Storage {
+	return z.storage
+}
+
 func (z *ZSTDStorage) Writer(key string) (io.WriteCloser, error) {
 	w, err := z.storage.Writer(key)
 	if err != nil {
