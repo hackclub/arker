@@ -92,16 +92,24 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 	if zstdStorage, ok := storageInstance.(*storage.ZSTDStorage); ok {
 		if uncompressedSize, err := zstdStorage.UncompressedSize(item.StorageKey); err == nil {
 			c.Header("X-Debug-Uncompressed-Size", fmt.Sprintf("%d", uncompressedSize))
-			// Limit to 100MB uncompressed to prevent memory issues
-			if uncompressedSize > 100*1024*1024 {
+			// Limit to 20MB uncompressed to prevent memory issues in production
+			if uncompressedSize > 20*1024*1024 {
 				c.Header("X-Debug-Error", "archive-too-large")
-				c.JSON(http.StatusRequestEntityTooLarge, gin.H{
-					"error": "Archive too large for individual file serving",
-					"size": uncompressedSize,
-					"limit": 100*1024*1024,
+				c.JSON(http.StatusServiceUnavailable, gin.H{
+					"error": "Individual file serving temporarily unavailable for large archives",
+					"message": "This feature is being optimized for large archives. Download the full archive below.",
+					"uncompressed_size": uncompressedSize,
+					"limit": 20*1024*1024,
 				})
 				return
 			}
+		} else {
+			c.Header("X-Debug-Error", "size-check-failed")
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error": "Cannot determine archive size",
+				"message": "Individual file serving temporarily unavailable. Download the full archive below.",
+			})
+			return
 		}
 	}
 

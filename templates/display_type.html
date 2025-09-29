@@ -333,8 +333,27 @@
                 <script>
                 // Load game metadata and render appropriate interface
                 fetch('/itch/{{.short_id}}/file/metadata.json')
-                    .then(response => response.json())
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                        }
+                        return response.json();
+                    })
                     .then(metadata => {
+                        // Check if this is an error response about large archives
+                        if (metadata.error && metadata.message) {
+                            document.getElementById('itch-content').innerHTML = `
+                                <div style="text-align: center; padding: 40px; color: #f39c12;">
+                                    <h3>⚠️ ${metadata.error}</h3>
+                                    <p>${metadata.message}</p>
+                                    ${metadata.uncompressed_size ? 
+                                        `<p>Archive size: ${(metadata.uncompressed_size/1024/1024).toFixed(1)} MB (limit: ${(metadata.limit/1024/1024).toFixed(1)} MB)</p>` : 
+                                        ''
+                                    }
+                                </div>
+                            `;
+                            return;
+                        }
                         const container = document.getElementById('itch-content');
                         
                         if (metadata.is_web_game) {
