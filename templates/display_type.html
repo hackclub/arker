@@ -332,7 +332,11 @@
                 
                 <script>
                 // Load game metadata and render appropriate interface
-                fetch('/itch/{{.short_id}}/debug')
+                // Try metadata.json with timeout, fallback to debug
+                Promise.race([
+                    fetch('/itch/{{.short_id}}/file/metadata.json'),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+                ])
                     .then(response => {
                         if (!response.ok) {
                             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -415,31 +419,35 @@
                     .catch(async error => {
                         console.error('Error loading game metadata:', error);
                         
-                        // Try to get more details about the error
+                        // If main fetch failed, try the debug endpoint as fallback
                         try {
-                            const response = await fetch('/itch/{{.short_id}}/file/metadata.json');
-                            if (response.status === 503) {
-                                const errorData = await response.json();
+                            const debugResponse = await fetch('/itch/{{.short_id}}/debug');
+                            if (debugResponse.ok) {
+                                const debugData = await debugResponse.json();
                                 document.getElementById('itch-content').innerHTML = `
-                                    <div style="text-align: center; padding: 40px; color: #f39c12;">
-                                        <h3>⚠️ ${errorData.error || 'Archive too large'}</h3>
-                                        <p>${errorData.message || 'Individual file serving unavailable for large archives'}</p>
-                                        ${errorData.uncompressed_size ? 
-                                            `<p>Archive size: ${(errorData.uncompressed_size/1024/1024).toFixed(1)} MB (limit: ${(errorData.limit/1024/1024).toFixed(1)} MB)</p>` : 
-                                            ''
-                                        }
-                                        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
-                                            <strong>Archive contains:</strong><br>
-                                            • Game files (playable or executable)<br>
-                                            • Game metadata and screenshots<br>
-                                            • Original itch.io page HTML
+                                    <div style="max-width: 800px;">
+                                        <div style="margin-bottom: 20px;">
+                                            <h3>${debugData.title || 'Archived Game'}</h3>
+                                            <p style="color: #666;">by ${debugData.author || 'Unknown'}</p>
+                                            <p>${debugData.description || 'Archived itch.io game'}</p>
+                                            <div style="margin-bottom: 15px;">
+                                                <strong>Platforms:</strong> ${(debugData.platforms || ['Unknown']).join(', ')}
+                                            </div>
+                                        </div>
+                                        <div style="margin-bottom: 20px;">
+                                            <h4>Downloads:</h4>
+                                            ${debugData.game_files ? debugData.game_files.map(file => 
+                                                `<a href="/archive/{{.short_id}}/itch" class="download-link" style="margin: 5px;">
+                                                   📦 Download ${file.platform || 'Game'} (${(file.size/1024/1024).toFixed(1)} MB)
+                                                </a>`
+                                            ).join('') : '<p>Download links unavailable</p>'}
                                         </div>
                                     </div>
                                 `;
                                 return;
                             }
-                        } catch (e) {
-                            console.error('Failed to get error details:', e);
+                        } catch (debugError) {
+                            console.error('Debug fallback also failed:', debugError);
                         }
                         
                         document.getElementById('itch-content').innerHTML = `
