@@ -3,7 +3,6 @@ package handlers
 import (
 	"arker/internal/models"
 	"arker/internal/storage"
-	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"

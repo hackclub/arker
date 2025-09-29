@@ -72,6 +72,40 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 		return
 	}
 	
+	// For metadata.json requests, return a basic response to get the UI working
+	if filePath == "metadata.json" {
+		// Get the original URL to determine game type
+		var capture models.Capture
+		if err := db.Where("short_id = ?", shortID).First(&capture).Error; err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		
+		var archivedURL models.ArchivedURL
+		if err := db.First(&archivedURL, capture.ArchivedURLID).Error; err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		
+		// Create basic metadata response
+		c.JSON(http.StatusOK, gin.H{
+			"title": "Game Archive",
+			"url": archivedURL.Original,
+			"author": "Unknown",
+			"description": "Archived game from itch.io. Individual file serving is temporarily limited due to archive size. Download the full archive below.",
+			"platforms": []string{"Unknown"},
+			"is_web_game": false, // Default to false to show download interface
+			"game_files": []gin.H{
+				{
+					"name": "game.zip",
+					"platform": "Archive", 
+					"size": item.FileSize,
+				},
+			},
+		})
+		return
+	}
+	
 
 
 	if err := db.Where("short_id = ?", shortID).First(&capture).Error; err != nil {
