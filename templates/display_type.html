@@ -332,7 +332,7 @@
                 
                 <script>
                 // Load game metadata and render appropriate interface
-                fetch('/itch/{{.short_id}}/file/metadata.json')
+                fetch('/itch/{{.short_id}}/debug')
                     .then(response => {
                         if (!response.ok) {
                             throw new Error(`HTTP ${response.status}: ${response.statusText}`);

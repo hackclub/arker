@@ -26,11 +26,27 @@ func ServeItchDebug(c *gin.Context, storageInstance storage.Storage, db *gorm.DB
 		return
 	}
 	
+	// Get URL info for a more realistic metadata response
+	var capture models.Capture
+	db.Where("short_id = ?", shortID).First(&capture)
+	
+	var archivedURL models.ArchivedURL
+	db.First(&archivedURL, capture.ArchivedURLID)
+	
+	// Return realistic metadata for UI testing
 	c.JSON(http.StatusOK, gin.H{
-		"debug": "database_query_success",
-		"shortid": shortID,
-		"item_id": item.ID,
-		"status": item.Status,
-		"storage_key": item.StorageKey,
+		"title": "Archived Game",
+		"url": archivedURL.Original,
+		"author": "Developer",
+		"description": "This game has been archived from itch.io. Individual file serving is temporarily unavailable for large archives.",
+		"platforms": []string{"Windows"},
+		"is_web_game": false,
+		"game_files": []gin.H{
+			{
+				"name": "game.zip",
+				"platform": "Archive",
+				"size": item.FileSize,
+			},
+		},
 	})
 }
