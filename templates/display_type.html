@@ -412,13 +412,40 @@
                             `;
                         }
                     })
-                    .catch(error => {
+                    .catch(async error => {
                         console.error('Error loading game metadata:', error);
+                        
+                        // Try to get more details about the error
+                        try {
+                            const response = await fetch('/itch/{{.short_id}}/file/metadata.json');
+                            if (response.status === 503) {
+                                const errorData = await response.json();
+                                document.getElementById('itch-content').innerHTML = `
+                                    <div style="text-align: center; padding: 40px; color: #f39c12;">
+                                        <h3>⚠️ ${errorData.error || 'Archive too large'}</h3>
+                                        <p>${errorData.message || 'Individual file serving unavailable for large archives'}</p>
+                                        ${errorData.uncompressed_size ? 
+                                            `<p>Archive size: ${(errorData.uncompressed_size/1024/1024).toFixed(1)} MB (limit: ${(errorData.limit/1024/1024).toFixed(1)} MB)</p>` : 
+                                            ''
+                                        }
+                                        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                                            <strong>Archive contains:</strong><br>
+                                            • Game files (playable or executable)<br>
+                                            • Game metadata and screenshots<br>
+                                            • Original itch.io page HTML
+                                        </div>
+                                    </div>
+                                `;
+                                return;
+                            }
+                        } catch (e) {
+                            console.error('Failed to get error details:', e);
+                        }
+                        
                         document.getElementById('itch-content').innerHTML = `
                             <div style="text-align: center; padding: 40px; color: #dc3545;">
-                                <h3>❌ Itch.io file serving not available</h3>
-                                <p>The itch.io individual file serving routes are not deployed yet.</p>
-                                <p>The full game archive is still available for download below.</p>
+                                <h3>❌ Error loading game</h3>
+                                <p>Could not load game information. The full archive is still available for download below.</p>
                                 <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
                                     <strong>Archive contains:</strong><br>
                                     • Game files (playable or executable)<br>
