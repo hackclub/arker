@@ -28,25 +28,41 @@ func AdminGet(c *gin.Context, db *gorm.DB) {
 		}
 	}
 
+	// Get search parameter
+	search := c.Query("search")
+
 	const limit = 1000
 	offset := (page - 1) * limit
 
-	// Get total count for pagination info
-	var total int64
-	db.Model(&models.ArchivedURL{}).
+	// Build base query with search filter
+	baseQuery := db.Model(&models.ArchivedURL{}).
 		Joins("LEFT JOIN captures ON archived_urls.id = captures.archived_url_id").
 		Joins("LEFT JOIN archive_items ON captures.id = archive_items.capture_id").
-		Group("archived_urls.id").Count(&total)
+		Group("archived_urls.id")
 
-	var urls []models.ArchivedURL
-	// Sort by most recent archive creation (not URL creation) with pagination
-	db.Preload("Captures.ArchiveItems").Preload("Captures.APIKey").Preload("Captures", func(db *gorm.DB) *gorm.DB {
+	if search != "" {
+		baseQuery = baseQuery.Where("archived_urls.original ILIKE ?", "%"+search+"%")
+	}
+
+	// Get total count for pagination info
+	var total int64
+	baseQuery.Count(&total)
+
+	// Build query for fetching URLs with same search filter
+	urlQuery := db.Preload("Captures.ArchiveItems").Preload("Captures.APIKey").Preload("Captures", func(db *gorm.DB) *gorm.DB {
 		return db.Order("created_at DESC")
 	}).Joins("LEFT JOIN captures ON archived_urls.id = captures.archived_url_id").
 		Joins("LEFT JOIN archive_items ON captures.id = archive_items.capture_id").
 		Group("archived_urls.id").
 		Order("MAX(archive_items.created_at) DESC").
-		Offset(offset).Limit(limit).Find(&urls)
+		Offset(offset).Limit(limit)
+
+	if search != "" {
+		urlQuery = urlQuery.Where("archived_urls.original ILIKE ?", "%"+search+"%")
+	}
+
+	var urls []models.ArchivedURL
+	urlQuery.Find(&urls)
 
 	// Add queue status summary for dashboard
 	var queueSummary struct {
@@ -72,6 +88,7 @@ func AdminGet(c *gin.Context, db *gorm.DB) {
 	c.HTML(http.StatusOK, "admin.html", gin.H{
 		"urls":         urls,
 		"queueSummary": queueSummary,
+		"search":       search,
 		"pagination": gin.H{
 			"currentPage": page,
 			"totalPages":  totalPages,
