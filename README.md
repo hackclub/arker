@@ -13,7 +13,22 @@ Try out the demo instance at <https://arker-demo.hackclub.com>.
 
 ## Configuration
 
-### Basic Settings
+### Using .env Files
+
+Arker supports loading configuration from a `.env` file for easier local development and deployment. 
+
+1. **Copy the example file:**
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Edit the `.env` file** with your specific configuration values
+
+3. **Run the server** - it will automatically load the `.env` file if present
+
+The `.env` file is optional. If it doesn't exist, Arker will use environment variables or default values. Environment variables always take precedence over `.env` file values.
+
+### Environment Variables
 
 - `DB_URL` - PostgreSQL connection string (default: `host=localhost user=user password=pass dbname=arker port=5432 sslmode=disable`)
 - `STORAGE_PATH` - Archive storage directory (default: `./storage`) - *only used when `STORAGE_TYPE=filesystem`*

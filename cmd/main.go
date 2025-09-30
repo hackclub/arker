@@ -6,25 +6,28 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/kelseyhightower/envconfig"
-	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/riverdriver/riverpgxv5"
-	"github.com/riverqueue/river/rivermigrate"
-	"github.com/riverqueue/river/rivertype"
 	"log"
 	"log/slog"
 	"os"
 	"time"
 
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/sessions/cookie"
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/joho/godotenv"
+	"github.com/kelseyhightower/envconfig"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivermigrate"
+	"github.com/riverqueue/river/rivertype"
+
 	"arker/internal/archivers"
 	"arker/internal/handlers"
 	"arker/internal/models"
 	"arker/internal/monitoring"
+
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -45,7 +48,7 @@ type Config struct {
 	AdminUsername string `envconfig:"ADMIN_USERNAME" default:"admin"`
 	AdminPassword string `envconfig:"ADMIN_PASSWORD" default:"admin"`
 	LoginText     string `envconfig:"LOGIN_TEXT"`
-	
+
 	// S3 Configuration
 	StorageType      string `envconfig:"STORAGE_TYPE" default:"filesystem"` // "filesystem" or "s3"
 	S3Endpoint       string `envconfig:"S3_ENDPOINT"`                       // For S3-compatible services
@@ -53,10 +56,10 @@ type Config struct {
 	S3AccessKeyID    string `envconfig:"S3_ACCESS_KEY_ID"`
 	S3SecretKey      string `envconfig:"S3_SECRET_ACCESS_KEY"`
 	S3Bucket         string `envconfig:"S3_BUCKET"`
-	S3Prefix         string `envconfig:"S3_PREFIX"`                         // Optional prefix for all keys
+	S3Prefix         string `envconfig:"S3_PREFIX"`                           // Optional prefix for all keys
 	S3ForcePathStyle bool   `envconfig:"S3_FORCE_PATH_STYLE" default:"false"` // Required for MinIO
-	S3TempDir        string `envconfig:"S3_TEMP_DIR" default:"/tmp"`         // Temp directory for upload buffering
-	
+	S3TempDir        string `envconfig:"S3_TEMP_DIR" default:"/tmp"`          // Temp directory for upload buffering
+
 	// Itch.io Configuration
 	ItchAPIKey string `envconfig:"ITCH_API_KEY"`
 	ItchDlPath string `envconfig:"ITCH_DL_PATH" default:"itch-dl"`
@@ -186,6 +189,14 @@ func main() {
 		AddSource: false,
 	})))
 
+	// Load .env file if it exists
+	if err := godotenv.Load(); err != nil {
+		// .env file is optional, so we don't fail if it doesn't exist
+		slog.Debug("No .env file found or error loading .env file", "error", err)
+	} else {
+		slog.Info("Loaded .env file")
+	}
+
 	var cfg Config
 	err := envconfig.Process("", &cfg)
 	if err != nil {
@@ -250,14 +261,14 @@ func main() {
 	// Initialize storage backend
 	var baseStorage storage.SeekableStorage
 	var storageErr error
-	
+
 	switch cfg.StorageType {
 	case "s3":
 		log.Printf("Initializing S3 storage (bucket: %s, region: %s)", cfg.S3Bucket, cfg.S3Region)
 		if cfg.S3Bucket == "" {
 			log.Fatal("S3_BUCKET environment variable is required when using S3 storage")
 		}
-		
+
 		s3Config := storage.S3Config{
 			Endpoint:        cfg.S3Endpoint,
 			Region:          cfg.S3Region,
@@ -268,17 +279,17 @@ func main() {
 			ForcePathStyle:  cfg.S3ForcePathStyle,
 			TempDir:         cfg.S3TempDir,
 		}
-		
+
 		baseStorage, storageErr = storage.NewS3Storage(context.Background(), s3Config)
 		if storageErr != nil {
 			log.Fatalf("Failed to initialize S3 storage: %v", storageErr)
 		}
-		
+
 	default: // "filesystem"
 		log.Printf("Initializing filesystem storage (path: %s)", cfg.StoragePath)
 		baseStorage = storage.NewFSStorage(cfg.StoragePath)
 	}
-	
+
 	storageInstance := storage.NewZSTDStorage(baseStorage)
 
 	// Populate file sizes for existing archives
@@ -453,15 +464,15 @@ func main() {
 	r.GET("/logs/:shortid/:type", func(c *gin.Context) { handlers.GetLogs(c, db) })
 	r.GET("/archive/:shortid/:type", func(c *gin.Context) { handlers.ServeArchive(c, storageInstance, db) })
 	r.GET("/archive/:shortid/mhtml/html", func(c *gin.Context) { handlers.ServeMHTMLAsHTML(c, storageInstance, db) })
-	
+
 	// Itch routes - MUST come before /:shortid/:type catch-all
 	r.GET("/itch/health", handlers.ServeItchHealth)
 	r.GET("/itch/:shortid/debug", func(c *gin.Context) { handlers.ServeItchDebug(c, storageInstance, db) })
 	r.GET("/itch/:shortid/file/*filepath", func(c *gin.Context) { handlers.ServeItchFile(c, storageInstance, db) })
 	r.GET("/itch/:shortid/list", func(c *gin.Context) { handlers.ServeItchGameList(c, storageInstance, db) })
-	
+
 	r.Any("/git/*path", func(c *gin.Context) { handlers.GitHandler(c, storageInstance, db, cfg.CachePath) })
-	
+
 	// Catch-all routes - MUST come last
 	r.GET("/:shortid/:type", func(c *gin.Context) { handlers.DisplayType(c, db) })
 	r.GET("/:shortid", func(c *gin.Context) { handlers.DisplayDefault(c, db) })
