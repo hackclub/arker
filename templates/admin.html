@@ -27,10 +27,6 @@
         .add-url-form { background: #e9ecef; padding: 20px; border-radius: 5px; margin-bottom: 20px; }
         .add-url-form input { padding: 10px; border: 1px solid #ccc; border-radius: 4px; margin-right: 10px; width: 400px; }
         .add-url-form button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        .search-form { background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; border: 1px solid #dee2e6; }
-        .search-form input { padding: 8px; border: 1px solid #ccc; border-radius: 4px; margin-right: 10px; width: 300px; }
-        .search-form button { padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        .search-form .clear-btn { background: #6c757d; }
         .status { font-style: italic; color: #666; }
         .archive-items { margin-left: 20px; margin-top: 10px; }
         .archive-item { margin: 5px 0; padding: 8px; background: #ffffff; border: 1px solid #eee; border-radius: 3px; display: flex; justify-content: space-between; align-items: center; }
@@ -49,12 +45,124 @@
         .alert-success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
         .alert-error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
         .hidden { display: none; }
-        .pagination { display: flex; justify-content: center; align-items: center; margin: 20px 0; gap: 10px; }
-        .pagination a { padding: 8px 12px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; }
-        .pagination a:hover { background: #0056b3; }
-        .pagination a.current { background: #6c757d; cursor: default; }
-        .pagination a.current:hover { background: #6c757d; }
-        .pagination .info { color: #666; font-size: 14px; margin: 0 15px; }
+        .search-pagination { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            margin: 20px 0; 
+            padding: 15px 20px; 
+            background: #f8f9fa; 
+            border-radius: 5px; 
+            border: 1px solid #dee2e6;
+        }
+        .search-box { 
+            display: flex; 
+            align-items: center; 
+            gap: 8px;
+        }
+        .search-form-inline { 
+            display: flex; 
+            align-items: center; 
+            gap: 8px;
+        }
+        .search-input { 
+            padding: 6px 10px; 
+            border: 1px solid #ccc; 
+            border-radius: 4px; 
+            width: 200px; 
+            font-size: 14px;
+        }
+        .search-input:focus { 
+            outline: none; 
+            border-color: #007bff; 
+            box-shadow: 0 0 0 2px rgba(0,123,255,0.25);
+        }
+        .search-btn { 
+            padding: 6px 10px; 
+            background: #007bff; 
+            color: white; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-size: 14px;
+        }
+        .search-btn:hover { 
+            background: #0056b3;
+        }
+        .clear-search { 
+            padding: 6px 8px; 
+            background: #6c757d; 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 4px; 
+            font-size: 12px;
+        }
+        .clear-search:hover { 
+            background: #5a6268;
+        }
+        .pagination { 
+            display: flex; 
+            align-items: center; 
+            gap: 10px; 
+        }
+        .pagination a { 
+            padding: 8px 12px; 
+            background: #007bff; 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 4px; 
+        }
+        .pagination a:hover { 
+            background: #0056b3; 
+        }
+        .pagination a.current { 
+            background: #6c757d; 
+            cursor: default; 
+        }
+        .pagination a.current:hover { 
+            background: #6c757d; 
+        }
+        .pagination .info { 
+            color: #666; 
+            font-size: 14px; 
+            margin: 0 15px; 
+        }
+        
+        /* Responsive design improvements */
+        @media (max-width: 768px) {
+            .search-pagination {
+                flex-direction: column;
+                gap: 15px;
+                padding: 15px;
+            }
+            .search-box {
+                width: 100%;
+                justify-content: center;
+            }
+            .search-input {
+                width: 100%;
+                max-width: 250px;
+            }
+            .pagination {
+                justify-content: center;
+            }
+        }
+        
+        /* Enhanced search results styling */
+        .url-item {
+            border-radius: 5px;
+        }
+        .url-row:hover {
+            background: #f8f9fa;
+        }
+        
+        /* Search highlighting */
+        .search-highlight {
+            background: #fff3cd;
+            padding: 1px 2px;
+            border-radius: 2px;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -68,25 +176,6 @@
         </div>
     </div>
     
-    <!-- Search Form -->
-    <div class="search-form">
-        <h4>Search Archived URLs</h4>
-        <form method="GET" style="display: flex; align-items: center; margin-top: 10px;">
-            <input type="text" name="search" placeholder="Search URLs..." value="{{.search}}" style="flex: 1; max-width: 400px;">
-            {{if .search}}
-            <input type="hidden" name="page" value="1">
-            {{end}}
-            <button type="submit">🔍 Search</button>
-            {{if .search}}
-            <a href="/" class="clear-btn" style="padding: 8px 16px; background: #6c757d; color: white; text-decoration: none; border-radius: 4px; margin-left: 10px;">Clear</a>
-            {{end}}
-        </form>
-        {{if .search}}
-        <div style="margin-top: 8px; font-size: 14px; color: #666;">
-            Showing results for: <strong>"{{.search}}"</strong>
-        </div>
-        {{end}}
-    </div>
 
     
     <div class="add-url-form" style="position: relative;">
@@ -111,19 +200,35 @@
 
     <div id="notification" class="hidden"></div>
 
-    {{if .pagination}}
-    <div class="pagination">
-        {{if .pagination.hasPrev}}
-            <a href="?page={{.pagination.prevPage}}{{if .search}}&search={{.search}}{{end}}">← Previous</a>
-        {{end}}
+    <!-- Search and Pagination -->
+    <div class="search-pagination">
+        <div class="search-box">
+            <form method="GET" class="search-form-inline">
+                <input type="text" name="search" placeholder="Search URLs..." value="{{.search}}" class="search-input">
+                {{if .search}}
+                <input type="hidden" name="page" value="1">
+                {{end}}
+                <button type="submit" class="search-btn">🔍</button>
+                {{if .search}}
+                <a href="/" class="clear-search">✕</a>
+                {{end}}
+            </form>
+        </div>
         
-        <span class="info">Page {{.pagination.currentPage}} of {{.pagination.totalPages}} ({{.pagination.totalItems}} total items)</span>
-        
-        {{if .pagination.hasNext}}
-            <a href="?page={{.pagination.nextPage}}{{if .search}}&search={{.search}}{{end}}">Next →</a>
+        {{if .pagination}}
+        <div class="pagination">
+            {{if .pagination.hasPrev}}
+                <a href="?page={{.pagination.prevPage}}{{if .search}}&search={{.search}}{{end}}">← Previous</a>
+            {{end}}
+            
+            <span class="info">Page {{.pagination.currentPage}} of {{.pagination.totalPages}} ({{.pagination.totalItems}} total items)</span>
+            
+            {{if .pagination.hasNext}}
+                <a href="?page={{.pagination.nextPage}}{{if .search}}&search={{.search}}{{end}}">Next →</a>
+            {{end}}
+        </div>
         {{end}}
     </div>
-    {{end}}
 
     {{range .urls}}
     <div class="url-item">
@@ -210,20 +315,6 @@
     </div>
     {{end}}
 
-    {{if .pagination}}
-    <div class="pagination">
-        {{if .pagination.hasPrev}}
-            <a href="?page={{.pagination.prevPage}}{{if .search}}&search={{.search}}{{end}}">← Previous</a>
-        {{end}}
-        
-        <span class="info">Page {{.pagination.currentPage}} of {{.pagination.totalPages}} ({{.pagination.totalItems}} total items)</span>
-        
-        {{if .pagination.hasNext}}
-            <a href="?page={{.pagination.nextPage}}{{if .search}}&search={{.search}}{{end}}">Next →</a>
-        {{end}}
-    </div>
-    {{end}}
-
     <!-- Log Modal -->
     <div id="logModal" class="log-modal">
         <div class="log-modal-content">
@@ -234,6 +325,39 @@
     </div>
 
     <script>
+        // Search enhancements
+        document.addEventListener('DOMContentLoaded', function() {
+            const searchInput = document.querySelector('.search-input');
+            const searchForm = document.querySelector('.search-form-inline');
+            
+            if (searchInput) {
+                // Add search input enhancements
+                searchInput.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        searchForm.submit();
+                    }
+                });
+            }
+            
+            // Add search term highlighting
+            const searchTerm = '{{.search}}';
+            if (searchTerm) {
+                highlightSearchTerms(searchTerm);
+            }
+        });
+        
+        function highlightSearchTerms(searchTerm) {
+            const urlElements = document.querySelectorAll('.url-original');
+            const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+            
+            urlElements.forEach(element => {
+                const originalText = element.textContent;
+                const highlightedText = originalText.replace(regex, '<span class="search-highlight">$1</span>');
+                element.innerHTML = highlightedText;
+            });
+        }
+
         function formatBytes(bytes) {
             if (bytes === 0) return '0 B';
             const k = 1024;
