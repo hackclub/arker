@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"arker/internal/models"
 	"arker/internal/storage"
-	"arker/internal/utils/zipfs"
 	"fmt"
 	"io"
 	"mime"
@@ -23,7 +22,7 @@ import (
 func ServeItchHealth(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status": "itch routes working",
-		"time": fmt.Sprintf("%d", time.Now().Unix()),
+		"time":   fmt.Sprintf("%d", time.Now().Unix()),
 	})
 }
 
@@ -31,13 +30,11 @@ func ServeItchHealth(c *gin.Context) {
 func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
 	shortID := c.Param("shortid")
 	filePath := c.Param("filepath")
-	
+
 	// Add timeout to prevent hanging
 	c.Header("X-Debug-Route", "itch-file-serving")
 	c.Header("X-Debug-ShortID", shortID)
 	c.Header("X-Debug-FilePath", filePath)
-
-
 
 	// URL decode and clean the file path
 	decodedPath, err := url.QueryUnescape(filePath)
@@ -45,17 +42,15 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 		// If URL decoding fails, use original path
 		decodedPath = filePath
 	}
-	
+
 	filePath = path.Clean(strings.TrimPrefix(decodedPath, "/"))
 	if filePath == "." {
 		filePath = ""
 	}
 
-
 	// Find the itch archive item
 	c.Header("X-Debug-Step", "database-lookup")
 	var item models.ArchiveItem
-	var capture models.Capture
 	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
 		Where("captures.short_id = ? AND archive_items.type = ?", shortID, "itch").
 		First(&item).Error; err != nil {
@@ -63,16 +58,16 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 		c.Status(http.StatusNotFound)
 		return
 	}
-	
+
 	c.Header("X-Debug-Step", "found-archive-item")
 	c.Header("X-Debug-Status", item.Status)
-	
+
 	if item.Status != "completed" {
 		c.Header("X-Debug-Error", "archive-not-completed")
 		c.Status(http.StatusNotFound)
 		return
 	}
-	
+
 	// For metadata.json requests, return a basic response to get the UI working
 	if filePath == "metadata.json" {
 		// Get the original URL to determine game type
@@ -81,117 +76,98 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 			c.Status(http.StatusNotFound)
 			return
 		}
-		
+
 		var archivedURL models.ArchivedURL
 		if err := db.First(&archivedURL, capture.ArchivedURLID).Error; err != nil {
 			c.Status(http.StatusNotFound)
 			return
 		}
-		
+
 		// Create basic metadata response
 		c.JSON(http.StatusOK, gin.H{
-			"title": "Game Archive",
-			"url": archivedURL.Original,
-			"author": "Unknown",
+			"title":       "Game Archive",
+			"url":         archivedURL.Original,
+			"author":      "Unknown",
 			"description": "Archived game from itch.io. Individual file serving is temporarily limited due to archive size. Download the full archive below.",
-			"platforms": []string{"Unknown"},
+			"platforms":   []string{"Unknown"},
 			"is_web_game": false, // Default to false to show download interface
 			"game_files": []gin.H{
 				{
-					"name": "game.zip",
-					"platform": "Archive", 
-					"size": item.FileSize,
+					"name":     "game.zip",
+					"platform": "Archive",
+					"size":     item.FileSize,
 				},
 			},
 		})
 		return
 	}
-	
 
-
-	// Check if this is a new-style uncompressed itch archive
-	isUncompressed := !strings.HasSuffix(item.StorageKey, ".zst")
-	
-	if isUncompressed {
-		// New approach: Direct ZIP file access (no ZSTD)
-		serveFromUncompressedZip(c, item, filePath, storageInstance, db)
-		return
-	}
-	
-	// Old approach: ZSTD compressed archives (fallback)
-	if err := db.Where("short_id = ?", shortID).First(&capture).Error; err != nil {
-		c.Status(http.StatusNotFound)
+	// Check archive size first to prevent memory issues
+	if archiveSize, err := storageInstance.Size(item.StorageKey); err == nil {
+		c.Header("X-Debug-Archive-Size", fmt.Sprintf("%d", archiveSize))
+		// Limit to 200MB to prevent memory issues in production
+		if archiveSize > 200*1024*1024 {
+			c.Header("X-Debug-Error", "archive-too-large")
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error":        "Individual file serving temporarily unavailable for large archives",
+				"message":      "This feature is being optimized for large archives. Download the full archive below.",
+				"archive_size": archiveSize,
+				"limit":        200 * 1024 * 1024,
+			})
+			return
+		}
+	} else {
+		c.Header("X-Debug-Error", "size-check-failed")
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":   "Cannot determine archive size",
+			"message": "Individual file serving temporarily unavailable. Download the full archive below.",
+		})
 		return
 	}
 
 	// Get a fresh reader for this request
 	reader, err := storageInstance.Reader(item.StorageKey)
 	if err != nil {
-
 		c.Status(http.StatusInternalServerError)
 		return
 	}
 	defer reader.Close()
 
-	// Check archive size first to prevent memory issues
-	if zstdStorage, ok := storageInstance.(*storage.ZSTDStorage); ok {
-		if uncompressedSize, err := zstdStorage.UncompressedSize(item.StorageKey); err == nil {
-			c.Header("X-Debug-Uncompressed-Size", fmt.Sprintf("%d", uncompressedSize))
-			// Limit to 20MB uncompressed to prevent memory issues in production
-			if uncompressedSize > 20*1024*1024 {
-				c.Header("X-Debug-Error", "archive-too-large")
-				c.JSON(http.StatusServiceUnavailable, gin.H{
-					"error": "Individual file serving temporarily unavailable for large archives",
-					"message": "This feature is being optimized for large archives. Download the full archive below.",
-					"uncompressed_size": uncompressedSize,
-					"limit": 20*1024*1024,
-				})
-				return
-			}
-		} else {
-			c.Header("X-Debug-Error", "size-check-failed")
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"error": "Cannot determine archive size",
-				"message": "Individual file serving temporarily unavailable. Download the full archive below.",
-			})
-			return
-		}
-	}
-
 	// Read the entire archive into memory for this request
-	// TODO: This is inefficient - should use seekable ZSTD for production
 	archiveData, err := io.ReadAll(reader)
 	if err != nil {
 		c.Header("X-Debug-Error", "failed-to-read-archive")
 		c.Status(http.StatusInternalServerError)
 		return
 	}
-	
+
 	// Add debug header with archive size
 	c.Header("X-Debug-Archive-Size", fmt.Sprintf("%d", len(archiveData)))
 
-
-
-	// Create a bytes reader for the archive
-	archiveReader := &bytesReaderAt{data: archiveData}
-	
-	// Open ZIP archive
-	archive, err := zipfs.OpenArchive(archiveReader, int64(len(archiveData)))
+	// Open ZIP archive using standard library
+	zipReader, err := zip.NewReader(&bytesReaderAt{data: archiveData}, int64(len(archiveData)))
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
 		return
 	}
 
 	// Find the requested file
-	entry, found := archive.Lookup(filePath)
-	if !found {
+	var targetFile *zip.File
+	for _, file := range zipReader.File {
+		if file.Name == filePath {
+			targetFile = file
+			break
+		}
+	}
+
+	if targetFile == nil {
 		c.Status(http.StatusNotFound)
 		return
 	}
 
 	// Check if this is a range request
 	rangeHeader := c.GetHeader("Range")
-	
+
 	// Get content type
 	contentType := mime.TypeByExtension(path.Ext(filePath))
 	if contentType == "" {
@@ -203,7 +179,7 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 	c.Header("Accept-Ranges", "bytes")
 
 	// Generate ETag
-	etag := fmt.Sprintf("\"%s-%d-%x\"", item.StorageKey, entry.UncompressedSize, entry.CRC32)
+	etag := fmt.Sprintf("\"%s-%d-%x\"", item.StorageKey, targetFile.UncompressedSize64, targetFile.CRC32)
 	c.Header("ETag", etag)
 
 	// Check if-none-match
@@ -213,19 +189,20 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 	}
 
 	// Open the file
-	fileReader, err := entry.Open(archive)
+	fileReader, err := targetFile.Open()
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
 		return
 	}
+	defer fileReader.Close()
 
 	// Handle range requests
 	if rangeHeader != "" && strings.HasPrefix(rangeHeader, "bytes=") {
-		serveRangeRequest(c, fileReader, rangeHeader, int64(entry.UncompressedSize), contentType)
+		serveRangeRequest(c, fileReader, rangeHeader, int64(targetFile.UncompressedSize64), contentType)
 	} else {
 		// Serve full file
 		c.Header("Content-Type", contentType)
-		c.Header("Content-Length", fmt.Sprintf("%d", entry.UncompressedSize))
+		c.Header("Content-Length", fmt.Sprintf("%d", targetFile.UncompressedSize64))
 		c.Status(http.StatusOK)
 		io.Copy(c.Writer, fileReader)
 	}
@@ -267,7 +244,7 @@ func serveRangeRequest(c *gin.Context, reader io.Reader, rangeHeader string, fil
 			c.Status(http.StatusBadRequest)
 			return
 		}
-		
+
 		if parts[1] == "" {
 			// Open-ended range: bytes=500-
 			end = fileSize - 1
@@ -316,12 +293,12 @@ func (r *bytesReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 	if off < 0 || off >= int64(len(r.data)) {
 		return 0, io.EOF
 	}
-	
+
 	n = copy(p, r.data[off:])
 	if n < len(p) {
 		err = io.EOF
 	}
-	
+
 	return n, err
 }
 
@@ -357,8 +334,8 @@ func ServeItchGameList(c *gin.Context, storageInstance storage.Storage, db *gorm
 		return
 	}
 
-	archiveReader := &bytesReaderAt{data: archiveData}
-	archive, err := zipfs.OpenArchive(archiveReader, int64(len(archiveData)))
+	// Open ZIP archive using standard library
+	zipReader, err := zip.NewReader(&bytesReaderAt{data: archiveData}, int64(len(archiveData)))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open archive"})
 		return
@@ -366,12 +343,12 @@ func ServeItchGameList(c *gin.Context, storageInstance storage.Storage, db *gorm
 
 	// Build file list
 	files := make([]gin.H, 0)
-	for name, entry := range archive.Files() {
+	for _, file := range zipReader.File {
 		files = append(files, gin.H{
-			"name":             name,
-			"size":             entry.UncompressedSize,
-			"compressed_size":  entry.CompressedSize,
-			"url":              fmt.Sprintf("/itch/%s/file/%s", shortID, url.PathEscape(name)),
+			"name":            file.Name,
+			"size":            file.UncompressedSize64,
+			"compressed_size": file.CompressedSize64,
+			"url":             fmt.Sprintf("/itch/%s/file/%s", shortID, url.PathEscape(file.Name)),
 		})
 	}
 
@@ -379,65 +356,4 @@ func ServeItchGameList(c *gin.Context, storageInstance storage.Storage, db *gorm
 		"shortid": shortID,
 		"files":   files,
 	})
-}
-
-// serveFromUncompressedZip serves individual files from uncompressed ZIP archives
-func serveFromUncompressedZip(c *gin.Context, item models.ArchiveItem, filePath string, storageInstance storage.Storage, db *gorm.DB) {
-	// Get base storage to access uncompressed ZIP directly
-	baseStorage := storageInstance
-	if zstdStorage, ok := storageInstance.(*storage.ZSTDStorage); ok {
-		baseStorage = zstdStorage.GetBaseStorage()
-	}
-	
-	// Open ZIP file directly
-	reader, err := baseStorage.Reader(item.StorageKey)
-	if err != nil {
-		c.Status(http.StatusInternalServerError)
-		return
-	}
-	defer reader.Close()
-	
-	// Read file into memory (this should be smaller now with ZIP compression)
-	zipData, err := io.ReadAll(reader)
-	if err != nil {
-		c.Status(http.StatusInternalServerError)
-		return
-	}
-	
-	// Open ZIP reader
-	zipReader, err := zip.NewReader(&bytesReaderAt{data: zipData}, int64(len(zipData)))
-	if err != nil {
-		c.Status(http.StatusInternalServerError)
-		return
-	}
-	
-	// Find the requested file
-	for _, file := range zipReader.File {
-		if file.Name == filePath {
-			// Found the file, serve it
-			rc, err := file.Open()
-			if err != nil {
-				c.Status(http.StatusInternalServerError)
-				return
-			}
-			defer rc.Close()
-			
-			// Set headers
-			contentType := mime.TypeByExtension(path.Ext(filePath))
-			if contentType == "" {
-				contentType = "application/octet-stream"
-			}
-			
-			c.Header("Content-Type", contentType)
-			c.Header("Content-Length", fmt.Sprintf("%d", file.UncompressedSize64))
-			c.Header("X-Debug-Method", "uncompressed-zip")
-			
-			// Stream the file
-			io.Copy(c.Writer, rc)
-			return
-		}
-	}
-	
-	// File not found
-	c.Status(http.StatusNotFound)
 }

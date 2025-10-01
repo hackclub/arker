@@ -5,11 +5,12 @@ import (
 	"arker/internal/storage"
 	"arker/internal/utils"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 	"io"
 	"log"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
@@ -53,7 +54,7 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 	case "youtube":
 		ct = "video/mp4"
 	case "git":
-		ct = "application/zstd"
+		ct = "application/x-tar"
 		attach = true
 	case "itch":
 		ct = "application/zip"
@@ -75,32 +76,9 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 	}
 
-	// Try to get uncompressed size efficiently from zstd storage
-	{
-		if zstdStorage, ok := storageInstance.(*storage.ZSTDStorage); ok {
-			if uncompressedSize, err := zstdStorage.UncompressedSize(item.StorageKey); err == nil {
-				// Validate file integrity by trying to read first few bytes
-				testReader, testErr := storageInstance.Reader(item.StorageKey)
-				if testErr == nil {
-					testBuf := make([]byte, 100)
-					_, testReadErr := testReader.Read(testBuf)
-					testReader.Close()
-
-					if testReadErr != nil && testReadErr != io.EOF {
-						log.Printf("File integrity check failed for %s: %v", item.StorageKey, testReadErr)
-						c.Status(http.StatusInternalServerError)
-						return
-					}
-				}
-
-				c.Header("Content-Length", fmt.Sprintf("%d", uncompressedSize))
-				log.Printf("Set Content-Length to %d for %s", uncompressedSize, item.StorageKey)
-			} else {
-				log.Printf("Failed to get uncompressed size for %s: %v", item.StorageKey, err)
-			}
-		} else {
-			log.Printf("Storage is not ZSTDStorage type for %s", item.StorageKey)
-		}
+	// Set content length from storage
+	if fileSize, err := storageInstance.Size(item.StorageKey); err == nil {
+		c.Header("Content-Length", fmt.Sprintf("%d", fileSize))
 	}
 
 	// Stream the file directly

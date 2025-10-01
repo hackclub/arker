@@ -132,7 +132,7 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 
 	// Save the resulting data to storage.
 	// Save the resulting data to storage.
-	key := fmt.Sprintf("%s/%s%s.zst", jobArgs.ShortID, jobArgs.Type, ext)
+	key := fmt.Sprintf("%s/%s%s", jobArgs.ShortID, jobArgs.Type, ext)
 	err = saveArchiveData(data, key, ext, storage, db, item, dbLogWriter)
 	if err != nil {
 		slog.Error("Failed to save archive data", "short_id", jobArgs.ShortID, "type", jobArgs.Type, "error", err)

@@ -2,18 +2,80 @@ package handlers
 
 import (
 	"arker/internal/models"
+	"arker/internal/storage"
 	"arker/internal/utils"
 	"arker/internal/workers"
 	"fmt"
+	"math"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 	"gorm.io/gorm"
-	"math"
-	"net/http"
-	"strconv"
-	"time"
 )
+
+// MigrateZstdKeys removes .zst suffix from storage keys and recomputes file sizes
+func MigrateZstdKeys(c *gin.Context, db *gorm.DB, storage storage.Storage) {
+	if !RequireLogin(c) {
+		return
+	}
+
+	var items []models.ArchiveItem
+	result := db.Where("storage_key LIKE '%.zst'").Find(&items)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find items with .zst keys"})
+		return
+	}
+
+	updated := 0
+	failed := 0
+
+	for _, item := range items {
+		// Remove .zst suffix
+		newKey := strings.TrimSuffix(item.StorageKey, ".zst")
+
+		// Check if the new key exists in storage
+		exists, err := storage.Exists(newKey)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to check storage for %s: %v", newKey, err)})
+			return
+		}
+
+		if !exists {
+			failed++
+			continue
+		}
+
+		// Get new file size
+		newSize, err := storage.Size(newKey)
+		if err != nil {
+			failed++
+			continue
+		}
+
+		// Update database
+		if err := db.Model(&item).Updates(map[string]interface{}{
+			"storage_key": newKey,
+			"file_size":   newSize,
+		}).Error; err != nil {
+			failed++
+			continue
+		}
+
+		updated++
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":     "Migration completed",
+		"total_found": len(items),
+		"updated":     updated,
+		"failed":      failed,
+	})
+}
 
 func AdminGet(c *gin.Context, db *gorm.DB) {
 	if !RequireLogin(c) {

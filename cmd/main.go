@@ -290,7 +290,7 @@ func main() {
 		baseStorage = storage.NewFSStorage(cfg.StoragePath)
 	}
 
-	storageInstance := storage.NewZSTDStorage(baseStorage)
+	storageInstance := baseStorage
 
 	// Populate file sizes for existing archives
 	populateFileSizes(db, storageInstance)
@@ -443,6 +443,7 @@ func main() {
 	r.POST("/admin/retry-failed", func(c *gin.Context) { handlers.RetryAllFailedJobs(c, db, riverClient) })
 	r.POST("/admin/url/:id/capture", func(c *gin.Context) { handlers.RequestCapture(c, db, riverClient) })
 	r.POST("/admin/archive", func(c *gin.Context) { handlers.AdminArchive(c, db, riverClient) })
+	r.POST("/admin/migrate-zstd", func(c *gin.Context) { handlers.MigrateZstdKeys(c, db, storageInstance) })
 	r.GET("/admin/item/:id/log", func(c *gin.Context) { handlers.GetItemLog(c, db) })
 	// Create protected River UI routes
 	r.GET("/queue", func(c *gin.Context) {
@@ -463,6 +464,7 @@ func main() {
 	r.GET("/web/past-archives", func(c *gin.Context) { handlers.WebPastArchives(c, db) })
 	r.GET("/logs/:shortid/:type", func(c *gin.Context) { handlers.GetLogs(c, db) })
 	r.GET("/archive/:shortid/:type", func(c *gin.Context) { handlers.ServeArchive(c, storageInstance, db) })
+	r.HEAD("/archive/:shortid/:type", func(c *gin.Context) { handlers.ServeArchive(c, storageInstance, db) })
 	r.GET("/archive/:shortid/mhtml/html", func(c *gin.Context) { handlers.ServeMHTMLAsHTML(c, storageInstance, db) })
 
 	// Itch routes - MUST come before /:shortid/:type catch-all
