@@ -558,29 +558,6 @@
             }
         }
 
-        async function migrateItchArchives() {
-            if (!confirm('Are you sure you want to migrate itch archives? This will:\n\n1. Delete all existing itch archive files\n2. Mark them as failed for retry\n3. Allow them to be re-archived with the new format\n\nThis action cannot be undone.')) {
-                return;
-            }
-            
-            try {
-                const response = await fetch('/admin/migrate-itch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
-                });
-                
-                const result = await response.json();
-                if (response.ok) {
-                    showNotification(`Migration completed: ${result.deleted_files} files deleted, ${result.marked_failed} items marked as failed`, 'success');
-                    // Reload after delay to show updated status
-                    setTimeout(() => location.reload(), 2000);
-                } else {
-                    showNotification('Error: ' + result.error, 'error');
-                }
-            } catch (error) {
-                showNotification('Error migrating itch archives: ' + error.message, 'error');
-            }
-        }
     </script>
 
     {{if .queueSummary}}{{if gt .queueSummary.Failed 0}}
@@ -594,14 +571,5 @@
     </div>
     {{end}}{{end}}
 
-    <!-- Itch Migration Section -->
-    <div style="margin-top: 20px; padding: 20px; border-top: 2px solid #ddd; text-align: center;">
-        <p style="color: #856404; margin-bottom: 15px; font-size: 14px;">
-            <strong>Itch Archive Migration</strong> - Update old itch archives to new format
-        </p>
-        <button onclick="migrateItchArchives()" class="view-logs-btn" style="background: #ffc107; color: #000;">
-            🔄 Migrate Itch Archives
-        </button>
-    </div>
 </body>
 </html>

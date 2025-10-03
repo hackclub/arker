@@ -443,8 +443,6 @@ func main() {
 	r.POST("/admin/retry-failed", func(c *gin.Context) { handlers.RetryAllFailedJobs(c, db, riverClient) })
 	r.POST("/admin/url/:id/capture", func(c *gin.Context) { handlers.RequestCapture(c, db, riverClient) })
 	r.POST("/admin/archive", func(c *gin.Context) { handlers.AdminArchive(c, db, riverClient) })
-	r.POST("/admin/migrate-zstd", func(c *gin.Context) { handlers.MigrateZstdKeys(c, db, storageInstance) })
-	r.POST("/admin/migrate-itch", func(c *gin.Context) { handlers.MigrateItchArchives(c, db, storageInstance) })
 	r.GET("/admin/item/:id/log", func(c *gin.Context) { handlers.GetItemLog(c, db) })
 	// Create protected River UI routes
 	r.GET("/queue", func(c *gin.Context) {
