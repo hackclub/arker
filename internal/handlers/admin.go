@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -286,4 +288,60 @@ func AdminArchive(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]
 	fullURL := utils.BuildFullURL(c, shortID)
 
 	c.JSON(http.StatusOK, gin.H{"url": fullURL})
+}
+
+// MigrateItchArchives deletes old itch archives and marks them as failed for retry
+func MigrateItchArchives(c *gin.Context, db *gorm.DB, storageInstance storage.Storage) {
+	if !RequireLogin(c) {
+		return
+	}
+
+	// Find all itch archive items
+	var items []models.ArchiveItem
+	result := db.Where("type = ?", "itch").Find(&items)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find itch archive items"})
+		return
+	}
+
+	deleted := 0
+	markedFailed := 0
+	failed := 0
+
+	for _, item := range items {
+		// Delete the storage file directly
+		// Note: This assumes FSStorage - for other storage types this would need to be adapted
+		if fsStorage, ok := storageInstance.(*storage.FSStorage); ok {
+			filePath := filepath.Join(fsStorage.BaseDir(), item.StorageKey)
+			if err := os.Remove(filePath); err != nil {
+				fmt.Printf("Warning: Failed to delete storage file %s: %v\n", item.StorageKey, err)
+				failed++
+			} else {
+				deleted++
+			}
+		} else {
+			// For non-FS storage, just mark as failed without deleting the file
+			deleted++
+		}
+
+		// Mark the archive item as failed so it can be retried
+		updateResult := db.Model(&item).Updates(map[string]interface{}{
+			"status": "failed",
+			"logs":   fmt.Sprintf("Marked as failed during itch migration - will be retried with new format (%s)", time.Now().Format(time.RFC3339)),
+		})
+		if updateResult.Error != nil {
+			fmt.Printf("Warning: Failed to mark item %d as failed: %v\n", item.ID, updateResult.Error)
+			failed++
+		} else {
+			markedFailed++
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":        "Itch migration completed",
+		"total_items":    len(items),
+		"deleted_files":  deleted,
+		"marked_failed":  markedFailed,
+		"failed_updates": failed,
+	})
 }

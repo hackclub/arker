@@ -35,6 +35,10 @@ func NewFSStorage(baseDir string) *FSStorage {
 	return &FSStorage{baseDir: baseDir}
 }
 
+func (s *FSStorage) BaseDir() string {
+	return s.baseDir
+}
+
 func (s *FSStorage) Writer(key string) (io.WriteCloser, error) {
 	path := filepath.Join(s.baseDir, key)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
