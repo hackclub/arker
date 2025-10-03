@@ -102,10 +102,10 @@
             padding: 20px; 
             min-height: 500px;
         }
-        .content.mhtml-active {
+        .content.mhtml-active, .content.itch-active {
             padding: 0;
         }
-        .content.mhtml-active .mhtml-iframe {
+        .content.mhtml-active .mhtml-iframe, .content.itch-active .itch-iframe {
             height: calc(100vh - 120px); /* Full height minus header and tabs */
         }
         .content.screenshot-active {
@@ -150,7 +150,7 @@
             margin: 0;
         }
         .video-player { max-width: 100%; height: auto; }
-        .mhtml-iframe { 
+        .mhtml-iframe, .itch-iframe { 
             width: 100%; 
             height: 100%; 
             border: none;
@@ -299,7 +299,7 @@
         {{end}}
     </ul>
 
-    <div class="content {{if eq .current_type "web"}}mhtml-active{{end}}{{if eq .current_type "screenshot"}}screenshot-active{{end}}">
+    <div class="content {{if eq .current_type "web"}}mhtml-active{{end}}{{if eq .current_type "screenshot"}}screenshot-active{{end}}{{if eq .current_type "itch"}}itch-active{{end}}">
         {{if eq .current_item.Status "completed"}}
             {{if eq .current_type "web"}}
                 <iframe src="/archive/{{.short_id}}/mhtml/html" class="mhtml-iframe" sandbox="allow-forms allow-scripts"></iframe>
@@ -322,24 +322,8 @@
                 <a href="/archive/{{.short_id}}/{{.current_type}}" class="download-link">Download Repository Archive</a>
                 <p id="git-clone-description">You can clone this repository using the git command above{{if .git_repo_name}} (will create directory "<span id="git-clone-name-description">{{.timestamp}}_{{.git_repo_name}}</span>"){{end}}, or download the compressed archive.</p>
             {{else if eq .current_type "itch"}}
-                <div id="itch-content">
-                    <div style="max-width: 800px;">
-                        <div style="margin-bottom: 20px;">
-                            <h3>Archived Itch.io Game</h3>
-                            <p style="color: #666;">Game archived successfully</p>
-                            <p>Individual file serving is temporarily limited for large archives. Download the full archive below for complete game files.</p>
-                            <div style="margin-bottom: 15px;">
-                                <strong>Archive Status:</strong> Completed
-                            </div>
-                        </div>
-                        <div style="margin-bottom: 20px;">
-                            <h4>Downloads:</h4>
-                            <a href="/archive/{{.short_id}}/itch" class="download-link" style="margin: 5px;">
-                               📦 Download Full Game Archive
-                            </a>
-                        </div>
-                    </div>
-                </div>
+                <iframe src="/itch/{{.short_id}}/file/site.html" class="itch-iframe"></iframe>
+                <a href="/archive/{{.short_id}}/itch" class="download-link mhtml-download-link">Download Game Archive</a>
 
             {{end}}
         {{else if eq .current_item.Status "pending"}}

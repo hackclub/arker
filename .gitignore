@@ -2,6 +2,7 @@
 arker
 arker-*
 *.exe
+main
 
 # Test coverage
 *.out
