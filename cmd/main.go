@@ -352,14 +352,17 @@ func main() {
 
 	// Create River client with configuration
 	errorHandler := &CustomErrorHandler{db: db}
+	timeoutConfig := utils.DefaultTimeoutConfig()
+	jobTimeout := timeoutConfig.YtDlpMaxTimeout + 30*time.Minute
+	rescueStuckJobsAfter := jobTimeout + 5*time.Minute
 	riverClient, err := river.NewClient(riverpgxv5.New(dbPool), &river.Config{
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: cfg.MaxWorkers},
 			"high_priority":    {MaxWorkers: max(2, cfg.MaxWorkers/2)}, // At least 2 workers, or half of total workers
 		},
 		Workers:              riverWorkers,
-		JobTimeout:           30 * time.Minute, // Kill jobs running longer than 30 minutes
-		RescueStuckJobsAfter: 35 * time.Minute, // Rescue stuck jobs after 35 minutes (must be >= JobTimeout)
+		JobTimeout:           jobTimeout,
+		RescueStuckJobsAfter: rescueStuckJobsAfter,
 		ErrorHandler:         errorHandler,
 	})
 	if err != nil {

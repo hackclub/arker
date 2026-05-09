@@ -112,7 +112,7 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 		"url", jobArgs.URL,
 		"attempt", item.RetryCount)
 
-	timeout := utils.TimeoutForJobType(jobArgs.Type)
+	timeout := utils.TimeoutForArchiveJob(ctx, jobArgs.Type, jobArgs.URL, dbLogWriter)
 	ctx, cancel := context.WithTimeout(ctx, timeout) // respect River cancellation
 	defer cancel()
 
