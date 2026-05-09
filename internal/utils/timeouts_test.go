@@ -81,14 +81,14 @@ func TestTimeoutForArchiveJobFallsBackWhenYoutubeProbeFails(t *testing.T) {
 func TestTimeoutForArchiveJobDoesNotProbeNonYoutubeJobs(t *testing.T) {
 	probed := false
 
-	got := timeoutForArchiveJob(context.Background(), "github", "https://github.com/hackclub/dns", nil, func(context.Context, string) (time.Duration, error) {
+	got := timeoutForArchiveJob(context.Background(), "git", "https://github.com/hackclub/dns", nil, func(context.Context, string) (time.Duration, error) {
 		probed = true
 		return 0, nil
 	})
 	want := DefaultTimeoutConfig().GitCloneTimeout
 
 	if got != want {
-		t.Fatalf("timeoutForArchiveJob(github) = %s, want %s", got, want)
+		t.Fatalf("timeoutForArchiveJob(git) = %s, want %s", got, want)
 	}
 	if probed {
 		t.Fatal("timeoutForArchiveJob probed duration for non-youtube job")

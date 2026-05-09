@@ -5,19 +5,20 @@ import (
 	"fmt"
 	"gorm.io/gorm"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 )
 
-// cmdReader wraps a pipe and ensures cmd.Wait() is called when the reader is closed
-type cmdReader struct {
-	io.ReadCloser
-	cmd *exec.Cmd
+type tempVideoReader struct {
+	*os.File
+	path string
 }
 
-func (cr *cmdReader) Close() error {
-	err1 := cr.ReadCloser.Close()
-	err2 := cr.cmd.Wait() // Reap the child process
+func (r *tempVideoReader) Close() error {
+	err1 := r.File.Close()
+	err2 := os.Remove(r.path)
 	if err1 != nil {
 		return err1
 	}
@@ -39,7 +40,6 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 
 	// Prepare command arguments
 	testArgs := []string{"--print", "title,duration,uploader"}
-	dlArgs := []string{"-f", "bestvideo+bestaudio/best", "--no-playlist", "--no-write-thumbnail", "--verbose", "-o", "-"}
 
 	// First, test if yt-dlp can access the video
 	fmt.Fprintf(logWriter, "Testing video accessibility with yt-dlp...\n")
@@ -60,70 +60,25 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	default:
 	}
 
+	tempBase, err := createTempVideoBase()
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to create temp video path: %v\n", err)
+		return nil, "", "", nil, err
+	}
+	keepTempFile := ""
+	defer func() {
+		cleanupTempVideoFilesExcept(tempBase, keepTempFile)
+	}()
+
+	outputTemplate := tempBase + ".%(ext)s"
 	cmd := exec.CommandContext(ctx, "yt-dlp")
-	cmd.Args = append(cmd.Args, dlArgs...)
+	cmd.Args = append(cmd.Args, ytDlpDownloadArgs(outputTemplate)...)
 	cmd.Args = append(cmd.Args, url)
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
 
 	// Set process group so we can kill the entire process tree on timeout
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	pr, err := cmd.StdoutPipe()
-	if err != nil {
-		fmt.Fprintf(logWriter, "Failed to create stdout pipe: %v\n", err)
-		return nil, "", "", nil, err
-	}
-
-	// Create a pipe for stderr so we can capture and forward logs
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		fmt.Fprintf(logWriter, "Failed to create stderr pipe: %v\n", err)
-		return nil, "", "", nil, err
-	}
-
-	// Start context-aware stderr capturing in a goroutine
-	go func() {
-		defer stderrPipe.Close()
-		buf := make([]byte, 1024)
-
-		for {
-			// Check context before each read
-			select {
-			case <-ctx.Done():
-				fmt.Fprintf(logWriter, "Context cancelled during yt-dlp stderr capture\n")
-				return
-			default:
-			}
-
-			// Use a timeout for the read operation to avoid blocking indefinitely
-			type readResult struct {
-				n   int
-				err error
-			}
-
-			readChan := make(chan readResult, 1)
-			go func() {
-				n, err := stderrPipe.Read(buf)
-				readChan <- readResult{n: n, err: err}
-			}()
-
-			// Wait for either read completion or context cancellation
-			select {
-			case <-ctx.Done():
-				fmt.Fprintf(logWriter, "Context cancelled during yt-dlp stderr capture\n")
-				return
-			case result := <-readChan:
-				if result.n > 0 {
-					logWriter.Write(buf[:result.n])
-				}
-				if result.err != nil {
-					if result.err != io.EOF {
-						fmt.Fprintf(logWriter, "yt-dlp stderr read error: %v\n", result.err)
-					}
-					return
-				}
-			}
-		}
-	}()
 
 	fmt.Fprintf(logWriter, "Starting yt-dlp download process...\n")
 	if err = cmd.Start(); err != nil {
@@ -132,17 +87,99 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	}
 
 	// Kill the whole process group when the context times out
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
-		<-ctx.Done()
-		if cmd.Process != nil {
-			fmt.Fprintf(logWriter, "Context cancelled, killing yt-dlp process group\n")
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		select {
+		case <-ctx.Done():
+			if cmd.Process != nil {
+				fmt.Fprintf(logWriter, "Context cancelled, killing yt-dlp process group\n")
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			}
+		case <-done:
 		}
 	}()
 
-	fmt.Fprintf(logWriter, "Video download started successfully\n")
+	if err = cmd.Wait(); err != nil {
+		fmt.Fprintf(logWriter, "yt-dlp download failed: %v\n", err)
+		return nil, "", "", nil, fmt.Errorf("yt-dlp download failed: %w", err)
+	}
 
-	// Create reader that guarantees Wait() is executed when closed
-	cmdPipeReader := &cmdReader{ReadCloser: pr, cmd: cmd}
-	return cmdPipeReader, ".mp4", "video/mp4", nil, nil
+	outputPath, err := findDownloadedMP4(tempBase)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to find downloaded MP4: %v\n", err)
+		return nil, "", "", nil, err
+	}
+
+	file, err := os.Open(outputPath)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to open downloaded MP4: %v\n", err)
+		return nil, "", "", nil, err
+	}
+	keepTempFile = outputPath
+
+	fmt.Fprintf(logWriter, "Video download completed successfully\n")
+
+	return &tempVideoReader{File: file, path: outputPath}, ".mp4", "video/mp4", nil, nil
+}
+
+func ytDlpDownloadArgs(outputTemplate string) []string {
+	return []string{
+		"-f", "bestvideo+bestaudio/best",
+		"--no-playlist",
+		"--no-write-thumbnail",
+		"--merge-output-format", "mp4",
+		"--remux-video", "mp4",
+		"--verbose",
+		"-o", outputTemplate,
+	}
+}
+
+func createTempVideoBase() (string, error) {
+	f, err := os.CreateTemp("", "arker-video-*")
+	if err != nil {
+		return "", err
+	}
+	path := f.Name()
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		return "", err
+	}
+	if err := os.Remove(path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func findDownloadedMP4(tempBase string) (string, error) {
+	path := tempBase + ".mp4"
+	if _, err := os.Stat(path); err == nil {
+		return path, nil
+	}
+
+	matches, err := filepath.Glob(tempBase + "*.mp4")
+	if err != nil {
+		return "", err
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("no MP4 output found for %s", tempBase)
+	}
+	return matches[0], nil
+}
+
+func cleanupTempVideoFiles(tempBase string) {
+	cleanupTempVideoFilesExcept(tempBase, "")
+}
+
+func cleanupTempVideoFilesExcept(tempBase, keep string) {
+	matches, err := filepath.Glob(tempBase + "*")
+	if err != nil {
+		return
+	}
+	for _, match := range matches {
+		if match == keep {
+			continue
+		}
+		_ = os.Remove(match)
+	}
 }
