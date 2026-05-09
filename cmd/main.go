@@ -9,6 +9,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-contrib/sessions"
@@ -39,15 +40,17 @@ import (
 )
 
 type Config struct {
-	DBURL         string `envconfig:"DB_URL" default:"host=localhost user=user password=pass dbname=arker port=5432 sslmode=disable"`
-	StoragePath   string `envconfig:"STORAGE_PATH" default:"./storage"`
-	CachePath     string `envconfig:"CACHE_PATH" default:"./cache"`
-	MaxWorkers    int    `envconfig:"MAX_WORKERS" default:"5"`
-	Port          string `envconfig:"PORT" default:"8080"`
-	SessionSecret string `envconfig:"SESSION_SECRET"`
-	AdminUsername string `envconfig:"ADMIN_USERNAME" default:"admin"`
-	AdminPassword string `envconfig:"ADMIN_PASSWORD" default:"admin"`
-	LoginText     string `envconfig:"LOGIN_TEXT"`
+	DBURL          string `envconfig:"DB_URL" default:"host=localhost user=user password=pass dbname=arker port=5432 sslmode=disable"`
+	StoragePath    string `envconfig:"STORAGE_PATH" default:"./storage"`
+	CachePath      string `envconfig:"CACHE_PATH" default:"./cache"`
+	MaxWorkers     int    `envconfig:"MAX_WORKERS" default:"5"`
+	Port           string `envconfig:"PORT" default:"8080"`
+	GinMode        string `envconfig:"GIN_MODE" default:"release"`
+	TrustedProxies string `envconfig:"TRUSTED_PROXIES" default:"127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"`
+	SessionSecret  string `envconfig:"SESSION_SECRET"`
+	AdminUsername  string `envconfig:"ADMIN_USERNAME" default:"admin"`
+	AdminPassword  string `envconfig:"ADMIN_PASSWORD" default:"admin"`
+	LoginText      string `envconfig:"LOGIN_TEXT"`
 
 	// S3 Configuration
 	StorageType      string `envconfig:"STORAGE_TYPE" default:"filesystem"` // "filesystem" or "s3"
@@ -182,6 +185,29 @@ func populateFileSizes(db *gorm.DB, storage storage.Storage) {
 	}
 }
 
+func normalizeGinMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case gin.DebugMode:
+		return gin.DebugMode
+	case gin.TestMode:
+		return gin.TestMode
+	default:
+		return gin.ReleaseMode
+	}
+}
+
+func parseTrustedProxies(value string) []string {
+	parts := strings.Split(value, ",")
+	proxies := make([]string, 0, len(parts))
+	for _, part := range parts {
+		proxy := strings.TrimSpace(part)
+		if proxy != "" {
+			proxies = append(proxies, proxy)
+		}
+	}
+	return proxies
+}
+
 func main() {
 	// Initialize structured logging
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
@@ -203,6 +229,8 @@ func main() {
 		slog.Error("Failed to process environment variables", "error", err)
 		log.Fatalf("Failed to process config: %v", err)
 	}
+
+	gin.SetMode(normalizeGinMode(cfg.GinMode))
 
 	slog.Info("Starting Arker archive server",
 		"max_workers", cfg.MaxWorkers,
@@ -226,7 +254,7 @@ func main() {
 	sqlDB := stdlib.OpenDBFromPool(dbPool)
 	db, err := gorm.Open(postgres.New(postgres.Config{
 		Conn: sqlDB,
-	}), &gorm.Config{})
+	}), &gorm.Config{PrepareStmt: true})
 	if err != nil {
 		log.Fatalf("Failed to initialize GORM with shared pool: %v", err)
 	}
@@ -429,6 +457,9 @@ func main() {
 	}()
 
 	r := gin.Default()
+	if err := r.SetTrustedProxies(parseTrustedProxies(cfg.TrustedProxies)); err != nil {
+		log.Fatalf("Failed to configure trusted proxies: %v", err)
+	}
 	r.LoadHTMLGlob("templates/*.html")
 	store := cookie.NewStore([]byte(sessionSecret))
 	r.Use(sessions.Sessions("session", store))
