@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -43,26 +44,7 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 		return
 	}
 	defer r.Close()
-	var ct string
-	attach := false
-	switch typ {
-	case "mhtml":
-		ct = "multipart/related" // Original MHTML content type for downloads
-		attach = true
-	case "screenshot":
-		ct = "image/webp"
-	case "youtube":
-		ct = "video/mp4"
-	case "git":
-		ct = "application/x-tar"
-		attach = true
-	case "itch":
-		ct = "application/zip"
-		attach = true
-	default:
-		ct = "application/octet-stream"
-		attach = true
-	}
+	ct, attach := contentTypeForArchive(typ, item.Extension)
 	c.Header("Content-Type", ct)
 
 	// Explicitly clear any automatic content-encoding detection
@@ -87,6 +69,28 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 		log.Printf("Error streaming file %s: %v", item.StorageKey, err)
 		// Note: We can't change the response status here since headers are already sent
 		// The connection will be closed which the client will detect
+	}
+}
+
+func contentTypeForArchive(typ, extension string) (string, bool) {
+	switch typ {
+	case "mhtml":
+		return "multipart/related", true // Original MHTML content type for downloads
+	case "screenshot":
+		return "image/webp", false
+	case "youtube":
+		switch strings.ToLower(extension) {
+		case ".webm":
+			return "video/webm", false
+		default:
+			return "video/mp4", false
+		}
+	case "git":
+		return "application/x-tar", true
+	case "itch":
+		return "application/zip", true
+	default:
+		return "application/octet-stream", true
 	}
 }
 
