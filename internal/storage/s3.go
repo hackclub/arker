@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"runtime"
@@ -217,6 +218,10 @@ func (s *S3Storage) DirectURL(ctx context.Context, key string, opts DirectURLOpt
 		expires = DefaultDirectURLExpiration
 	}
 
+	if strings.EqualFold(opts.Method, http.MethodHead) {
+		return s.presignHeadURL(ctx, objectKey, opts, expires)
+	}
+
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(objectKey),
@@ -236,6 +241,30 @@ func (s *S3Storage) DirectURL(ctx context.Context, key string, opts DirectURLOpt
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to presign S3 get object: %w", err)
+	}
+	return result.URL, nil
+}
+
+func (s *S3Storage) presignHeadURL(ctx context.Context, objectKey string, opts DirectURLOptions, expires time.Duration) (string, error) {
+	input := &s3.HeadObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(objectKey),
+	}
+	if opts.ContentType != "" {
+		input.ResponseContentType = aws.String(opts.ContentType)
+	}
+	if opts.ContentDisposition != "" {
+		input.ResponseContentDisposition = aws.String(opts.ContentDisposition)
+	}
+	if opts.ContentEncoding != "" {
+		input.ResponseContentEncoding = aws.String(opts.ContentEncoding)
+	}
+
+	result, err := s.presignClient.PresignHeadObject(ctx, input, func(options *s3.PresignOptions) {
+		options.Expires = expires
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to presign S3 head object: %w", err)
 	}
 	return result.URL, nil
 }

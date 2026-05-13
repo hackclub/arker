@@ -53,6 +53,7 @@ func serveArchiveContent(c *gin.Context, storageInstance storage.Storage, item m
 
 	if directStorage, ok := storageInstance.(storage.DirectURLStorage); ok {
 		directURL, err := directStorage.DirectURL(c.Request.Context(), item.StorageKey, storage.DirectURLOptions{
+			Method:             c.Request.Method,
 			ContentType:        ct,
 			ContentDisposition: contentDisposition,
 		})

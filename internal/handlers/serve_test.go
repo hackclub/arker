@@ -48,6 +48,9 @@ func TestServeArchiveContentRedirectsToDirectStorageURL(t *testing.T) {
 	if storageInstance.directOptions.ContentType != "video/mp4" {
 		t.Fatalf("DirectURL ContentType = %q, want %q", storageInstance.directOptions.ContentType, "video/mp4")
 	}
+	if storageInstance.directOptions.Method != http.MethodGet {
+		t.Fatalf("DirectURL Method = %q, want %q", storageInstance.directOptions.Method, http.MethodGet)
+	}
 	if storageInstance.directOptions.ContentDisposition != "" {
 		t.Fatalf("DirectURL ContentDisposition = %q, want empty for inline youtube video", storageInstance.directOptions.ContentDisposition)
 	}
@@ -84,6 +87,9 @@ func TestServeArchiveContentHeadRedirectsToDirectStorageURL(t *testing.T) {
 	}
 	if storageInstance.readerOpened || storageInstance.seekableReaderOpened {
 		t.Fatal("HEAD redirect path opened a proxy reader")
+	}
+	if storageInstance.directOptions.Method != http.MethodHead {
+		t.Fatalf("DirectURL Method = %q, want %q", storageInstance.directOptions.Method, http.MethodHead)
 	}
 }
 

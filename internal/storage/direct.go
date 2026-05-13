@@ -9,6 +9,7 @@ const DefaultDirectURLExpiration = 12 * time.Hour
 
 // DirectURLOptions carries response metadata overrides for direct object URLs.
 type DirectURLOptions struct {
+	Method             string
 	ContentType        string
 	ContentDisposition string
 	ContentEncoding    string
