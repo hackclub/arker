@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -38,13 +39,14 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 		c.Status(http.StatusNotFound)
 		return
 	}
-	r, err := storageInstance.Reader(item.StorageKey)
-	if err != nil {
-		c.Status(http.StatusInternalServerError)
-		return
-	}
-	defer r.Close()
-	ct, attach := contentTypeForArchive(typ, item.Extension)
+
+	serveArchiveContent(c, storageInstance, item, capture, archivedURL)
+}
+
+func serveArchiveContent(c *gin.Context, storageInstance storage.Storage, item models.ArchiveItem, capture models.Capture, archivedURL models.ArchivedURL) {
+	ct, attach := contentTypeForArchive(item.Type, item.Extension)
+	filename := utils.GenerateArchiveFilename(capture, archivedURL, item.Extension)
+
 	c.Header("Content-Type", ct)
 
 	// Explicitly clear any automatic content-encoding detection
@@ -54,13 +56,36 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 	c.Header("ETag", fmt.Sprintf("\"%s-%d\"", item.StorageKey, item.FileSize))
 
 	if attach {
-		filename := utils.GenerateArchiveFilename(capture, archivedURL, item.Extension)
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 	}
+
+	if seekableStorage, ok := storageInstance.(storage.SeekableStorage); ok {
+		r, err := seekableStorage.SeekableReader(item.StorageKey)
+		if err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		defer r.Close()
+
+		http.ServeContent(c.Writer, c.Request, filename, time.Time{}, r)
+		return
+	}
+
+	r, err := storageInstance.Reader(item.StorageKey)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	defer r.Close()
 
 	// Set content length from storage
 	if fileSize, err := storageInstance.Size(item.StorageKey); err == nil {
 		c.Header("Content-Length", fmt.Sprintf("%d", fileSize))
+	}
+
+	if c.Request.Method == http.MethodHead {
+		c.Status(http.StatusOK)
+		return
 	}
 
 	// Stream the file directly
