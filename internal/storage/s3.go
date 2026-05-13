@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -19,10 +21,13 @@ import (
 
 // S3Storage implements the Storage interface for S3-compatible storage
 type S3Storage struct {
-	client  *s3.Client
-	bucket  string
-	prefix  string // Optional prefix for all keys
-	tempDir string // Temp directory for upload buffering
+	client              *s3.Client
+	presignClient       *s3.PresignClient
+	bucket              string
+	prefix              string // Optional prefix for all keys
+	tempDir             string // Temp directory for upload buffering
+	publicBaseURL       string
+	directURLExpiration time.Duration
 }
 
 // S3Config holds configuration for S3 storage
@@ -35,6 +40,10 @@ type S3Config struct {
 	Prefix          string // Optional prefix for all keys (e.g., "arker/")
 	ForcePathStyle  bool   // Required for MinIO and some S3-compatible services
 	TempDir         string // Temp directory for upload buffering
+	PublicBaseURL   string // Optional public bucket/CDN base URL for direct object serving
+
+	// DirectURLExpiration controls presigned GET URL lifetime. Defaults to 12 hours.
+	DirectURLExpiration time.Duration
 }
 
 // NewS3Storage creates a new S3 storage instance
@@ -73,12 +82,20 @@ func NewS3Storage(ctx context.Context, cfg S3Config) (*S3Storage, error) {
 	}
 
 	client := s3.NewFromConfig(awsConfig, s3Options)
+	presignClient := s3.NewPresignClient(client)
+	directURLExpiration := cfg.DirectURLExpiration
+	if directURLExpiration <= 0 {
+		directURLExpiration = DefaultDirectURLExpiration
+	}
 
 	return &S3Storage{
-		client:  client,
-		bucket:  cfg.Bucket,
-		prefix:  cfg.Prefix,
-		tempDir: cfg.TempDir,
+		client:              client,
+		presignClient:       presignClient,
+		bucket:              cfg.Bucket,
+		prefix:              cfg.Prefix,
+		tempDir:             cfg.TempDir,
+		publicBaseURL:       strings.TrimRight(cfg.PublicBaseURL, "/"),
+		directURLExpiration: directURLExpiration,
 	}, nil
 }
 
@@ -109,17 +126,17 @@ func (s *S3Storage) Writer(key string) (io.WriteCloser, error) {
 		tempFile: tempFile,
 		tempPath: tempFile.Name(),
 	}
-	
+
 	// Set finalizer to ensure cleanup if Close() is never called
 	runtime.SetFinalizer(writer, (*s3Writer).cleanup)
-	
+
 	return writer, nil
 }
 
 // Reader creates a reader for the given key
 func (s *S3Storage) Reader(key string) (io.ReadCloser, error) {
 	ctx := context.Background()
-	
+
 	result, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(s.buildKey(key)),
@@ -127,19 +144,19 @@ func (s *S3Storage) Reader(key string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get object from S3: %w", err)
 	}
-	
+
 	return result.Body, nil
 }
 
 // Exists checks if an object exists
 func (s *S3Storage) Exists(key string) (bool, error) {
 	ctx := context.Background()
-	
+
 	_, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(s.buildKey(key)),
 	})
-	
+
 	if err != nil {
 		var noSuchKey *types.NoSuchKey
 		var notFound *types.NotFound
@@ -148,37 +165,105 @@ func (s *S3Storage) Exists(key string) (bool, error) {
 		}
 		return false, fmt.Errorf("failed to check if object exists: %w", err)
 	}
-	
+
 	return true, nil
 }
 
 // Size returns the size of an object
 func (s *S3Storage) Size(key string) (int64, error) {
 	ctx := context.Background()
-	
+
 	result, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(s.buildKey(key)),
 	})
-	
+
 	if err != nil {
 		return 0, fmt.Errorf("failed to get object metadata: %w", err)
 	}
-	
+
 	if result.ContentLength == nil {
 		return 0, nil
 	}
-	
+
 	return *result.ContentLength, nil
 }
 
-// SeekableReader creates a seekable reader (not fully seekable for S3, but supports range reads)  
+// SeekableReader creates a seekable reader (not fully seekable for S3, but supports range reads)
 func (s *S3Storage) SeekableReader(key string) (ReadSeekCloser, error) {
 	return &s3SeekableReader{
 		storage: s,
 		key:     s.buildKey(key),
 		pos:     0,
 	}, nil
+}
+
+// DirectURL returns a URL that serves the exact stored object directly from S3
+// or a configured public bucket/CDN base URL.
+func (s *S3Storage) DirectURL(ctx context.Context, key string, opts DirectURLOptions) (string, error) {
+	objectKey := s.buildKey(key)
+	if s.publicBaseURL != "" {
+		return s.publicDirectURL(objectKey, opts)
+	}
+	if s.presignClient == nil {
+		return "", errors.New("S3 presign client is not configured")
+	}
+
+	expires := opts.Expires
+	if expires <= 0 {
+		expires = s.directURLExpiration
+	}
+	if expires <= 0 {
+		expires = DefaultDirectURLExpiration
+	}
+
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(objectKey),
+	}
+	if opts.ContentType != "" {
+		input.ResponseContentType = aws.String(opts.ContentType)
+	}
+	if opts.ContentDisposition != "" {
+		input.ResponseContentDisposition = aws.String(opts.ContentDisposition)
+	}
+	if opts.ContentEncoding != "" {
+		input.ResponseContentEncoding = aws.String(opts.ContentEncoding)
+	}
+
+	result, err := s.presignClient.PresignGetObject(ctx, input, func(options *s3.PresignOptions) {
+		options.Expires = expires
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to presign S3 get object: %w", err)
+	}
+	return result.URL, nil
+}
+
+func (s *S3Storage) publicDirectURL(objectKey string, opts DirectURLOptions) (string, error) {
+	directURL, err := url.JoinPath(s.publicBaseURL, objectKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to build public object URL: %w", err)
+	}
+
+	parsed, err := url.Parse(directURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse public object URL: %w", err)
+	}
+
+	query := parsed.Query()
+	if opts.ContentType != "" {
+		query.Set("response-content-type", opts.ContentType)
+	}
+	if opts.ContentDisposition != "" {
+		query.Set("response-content-disposition", opts.ContentDisposition)
+	}
+	if opts.ContentEncoding != "" {
+		query.Set("response-content-encoding", opts.ContentEncoding)
+	}
+	parsed.RawQuery = query.Encode()
+
+	return parsed.String(), nil
 }
 
 // s3Writer implements io.WriteCloser for S3 uploads
@@ -195,11 +280,11 @@ type s3Writer struct {
 func (w *s3Writer) Write(p []byte) (n int, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	
+
 	if w.closed {
 		return 0, fmt.Errorf("cannot write to closed writer")
 	}
-	
+
 	n, err = w.tempFile.Write(p)
 	if err != nil {
 		// If write fails, cleanup immediately
@@ -211,41 +296,41 @@ func (w *s3Writer) Write(p []byte) (n int, err error) {
 func (w *s3Writer) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	
+
 	if w.closed {
 		return nil // Already closed
 	}
 	w.closed = true
-	
+
 	// Clear finalizer since we're handling cleanup properly
 	runtime.SetFinalizer(w, nil)
-	
+
 	// Ensure cleanup happens regardless of success/failure
 	defer w.cleanup()
-	
+
 	// Close the temp file first
 	if err := w.tempFile.Close(); err != nil {
 		return fmt.Errorf("failed to close temp file: %w", err)
 	}
-	
+
 	// Open file for reading and upload
 	file, err := os.Open(w.tempPath)
 	if err != nil {
 		return fmt.Errorf("failed to reopen temp file: %w", err)
 	}
 	defer file.Close()
-	
+
 	ctx := context.Background()
 	_, err = w.storage.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(w.storage.bucket),
 		Key:    aws.String(w.key),
 		Body:   file, // Stream directly from disk
 	})
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to upload object to S3: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -255,12 +340,12 @@ func (w *s3Writer) cleanup() {
 		return
 	}
 	w.cleanedUp = true
-	
+
 	// Close file if still open
 	if w.tempFile != nil {
 		w.tempFile.Close()
 	}
-	
+
 	// Remove temp file
 	if w.tempPath != "" {
 		os.Remove(w.tempPath)
@@ -283,7 +368,7 @@ func (r *s3SeekableReader) Read(p []byte) (n int, err error) {
 			return 0, err
 		}
 	}
-	
+
 	n, err = r.reader.Read(p)
 	r.pos += int64(n)
 	return n, err
@@ -295,7 +380,7 @@ func (r *s3SeekableReader) Seek(offset int64, whence int) (int64, error) {
 		r.reader.Close()
 		r.reader = nil
 	}
-	
+
 	// Get object size if not set
 	if !r.sizeSet {
 		size, err := r.storage.Size(strings.TrimPrefix(r.key, r.storage.prefix))
@@ -305,7 +390,7 @@ func (r *s3SeekableReader) Seek(offset int64, whence int) (int64, error) {
 		r.size = size
 		r.sizeSet = true
 	}
-	
+
 	// Calculate new position
 	switch whence {
 	case io.SeekStart:
@@ -317,7 +402,7 @@ func (r *s3SeekableReader) Seek(offset int64, whence int) (int64, error) {
 	default:
 		return 0, fmt.Errorf("invalid whence value")
 	}
-	
+
 	// Ensure position is valid
 	if r.pos < 0 {
 		r.pos = 0
@@ -325,7 +410,7 @@ func (r *s3SeekableReader) Seek(offset int64, whence int) (int64, error) {
 	if r.pos > r.size {
 		r.pos = r.size
 	}
-	
+
 	return r.pos, nil
 }
 
@@ -338,22 +423,22 @@ func (r *s3SeekableReader) Close() error {
 
 func (r *s3SeekableReader) openReader() error {
 	ctx := context.Background()
-	
+
 	var rangeHeader *string
 	if r.pos > 0 {
 		rangeHeader = aws.String(fmt.Sprintf("bytes=%d-", r.pos))
 	}
-	
+
 	result, err := r.storage.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(r.storage.bucket),
 		Key:    aws.String(r.key),
 		Range:  rangeHeader,
 	})
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to get object from S3: %w", err)
 	}
-	
+
 	r.reader = result.Body
 	return nil
 }

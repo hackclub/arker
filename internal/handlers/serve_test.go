@@ -1,6 +1,9 @@
 package handlers
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +14,103 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+func TestServeArchiveContentRedirectsToDirectStorageURL(t *testing.T) {
+	storageInstance := &fakeDirectURLStorage{
+		directURL: "https://objects.example.com/archive/Gxrbu/youtube.mp4?sig=abc",
+	}
+	c, recorder := newArchiveContentTestContext(http.MethodGet, "")
+	item := models.ArchiveItem{
+		Type:       "youtube",
+		StorageKey: "archive/Gxrbu/youtube.mp4",
+		Extension:  ".mp4",
+		FileSize:   1391726026,
+	}
+
+	serveArchiveContent(c, storageInstance, item, models.Capture{
+		ShortID: "Gxrbu",
+	}, models.ArchivedURL{
+		Original: "https://www.youtube.com/watch?v=esxk_nScxFQ",
+	})
+
+	if recorder.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusTemporaryRedirect)
+	}
+	if got := recorder.Header().Get("Location"); got != storageInstance.directURL {
+		t.Fatalf("Location = %q, want %q", got, storageInstance.directURL)
+	}
+	if got := recorder.Body.String(); got != "" {
+		t.Fatalf("body = %q, want empty", got)
+	}
+	if storageInstance.directKey != item.StorageKey {
+		t.Fatalf("DirectURL key = %q, want %q", storageInstance.directKey, item.StorageKey)
+	}
+	if storageInstance.directOptions.ContentType != "video/mp4" {
+		t.Fatalf("DirectURL ContentType = %q, want %q", storageInstance.directOptions.ContentType, "video/mp4")
+	}
+	if storageInstance.directOptions.ContentDisposition != "" {
+		t.Fatalf("DirectURL ContentDisposition = %q, want empty for inline youtube video", storageInstance.directOptions.ContentDisposition)
+	}
+	if storageInstance.readerOpened || storageInstance.seekableReaderOpened {
+		t.Fatal("redirect path opened a proxy reader")
+	}
+}
+
+func TestServeArchiveContentHeadRedirectsToDirectStorageURL(t *testing.T) {
+	storageInstance := &fakeDirectURLStorage{
+		directURL: "https://objects.example.com/archive/Gxrbu/youtube.mp4?sig=abc",
+	}
+	c, recorder := newArchiveContentTestContext(http.MethodHead, "")
+
+	serveArchiveContent(c, storageInstance, models.ArchiveItem{
+		Type:       "youtube",
+		StorageKey: "archive/Gxrbu/youtube.mp4",
+		Extension:  ".mp4",
+		FileSize:   1391726026,
+	}, models.Capture{
+		ShortID: "Gxrbu",
+	}, models.ArchivedURL{
+		Original: "https://www.youtube.com/watch?v=esxk_nScxFQ",
+	})
+
+	if recorder.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusTemporaryRedirect)
+	}
+	if got := recorder.Header().Get("Location"); got != storageInstance.directURL {
+		t.Fatalf("Location = %q, want %q", got, storageInstance.directURL)
+	}
+	if got := recorder.Body.Len(); got != 0 {
+		t.Fatalf("body length = %d, want 0", got)
+	}
+	if storageInstance.readerOpened || storageInstance.seekableReaderOpened {
+		t.Fatal("HEAD redirect path opened a proxy reader")
+	}
+}
+
+func TestServeArchiveContentDirectStorageURLIncludesAttachmentDisposition(t *testing.T) {
+	storageInstance := &fakeDirectURLStorage{
+		directURL: "https://objects.example.com/archive/test/mhtml.mhtml?sig=abc",
+	}
+	c, _ := newArchiveContentTestContext(http.MethodGet, "")
+
+	serveArchiveContent(c, storageInstance, models.ArchiveItem{
+		Type:       "mhtml",
+		StorageKey: "archive/test/mhtml.mhtml",
+		Extension:  ".mhtml",
+		FileSize:   10,
+	}, models.Capture{
+		ShortID: "test",
+	}, models.ArchivedURL{
+		Original: "https://example.com/path",
+	})
+
+	if storageInstance.directOptions.ContentType != "multipart/related" {
+		t.Fatalf("DirectURL ContentType = %q, want %q", storageInstance.directOptions.ContentType, "multipart/related")
+	}
+	if storageInstance.directOptions.ContentDisposition == "" {
+		t.Fatal("DirectURL ContentDisposition is empty, want attachment filename")
+	}
+}
 
 func TestServeArchiveContentRangeRequest(t *testing.T) {
 	storageInstance := newTestFSStorage(t, "videos/test.mp4", "0123456789")
@@ -70,6 +170,38 @@ func TestServeArchiveContentHeadRequest(t *testing.T) {
 	}
 	if got := recorder.Header().Get("Accept-Ranges"); got != "bytes" {
 		t.Fatalf("Accept-Ranges = %q, want %q", got, "bytes")
+	}
+}
+
+func TestServeArchiveContentFallsBackWhenDirectURLGenerationFails(t *testing.T) {
+	storageInstance := &fakeDirectURLStorage{
+		directURLError: errors.New("signing failed"),
+		data:           []byte("0123456789"),
+	}
+	c, recorder := newArchiveContentTestContext(http.MethodGet, "bytes=2-5")
+
+	serveArchiveContent(c, storageInstance, models.ArchiveItem{
+		Type:       "youtube",
+		StorageKey: "videos/test.mp4",
+		Extension:  ".mp4",
+		FileSize:   10,
+	}, models.Capture{
+		ShortID: "test",
+	}, models.ArchivedURL{
+		Original: "https://www.youtube.com/watch?v=test",
+	})
+
+	if recorder.Code != http.StatusPartialContent {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusPartialContent)
+	}
+	if got := recorder.Body.String(); got != "2345" {
+		t.Fatalf("body = %q, want %q", got, "2345")
+	}
+	if got := recorder.Header().Get("Content-Range"); got != "bytes 2-5/10" {
+		t.Fatalf("Content-Range = %q, want %q", got, "bytes 2-5/10")
+	}
+	if !storageInstance.seekableReaderOpened {
+		t.Fatal("fallback path did not open seekable reader")
 	}
 }
 
@@ -238,4 +370,53 @@ func newArchiveContentTestContext(method, rangeHeader string) (*gin.Context, *ht
 	c.Request = request
 
 	return c, recorder
+}
+
+type fakeDirectURLStorage struct {
+	directURL            string
+	directURLError       error
+	directKey            string
+	directOptions        storage.DirectURLOptions
+	data                 []byte
+	readerOpened         bool
+	seekableReaderOpened bool
+}
+
+func (s *fakeDirectURLStorage) DirectURL(_ context.Context, key string, opts storage.DirectURLOptions) (string, error) {
+	s.directKey = key
+	s.directOptions = opts
+	if s.directURLError != nil {
+		return "", s.directURLError
+	}
+	return s.directURL, nil
+}
+
+func (s *fakeDirectURLStorage) Writer(string) (io.WriteCloser, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (s *fakeDirectURLStorage) Reader(string) (io.ReadCloser, error) {
+	s.readerOpened = true
+	return io.NopCloser(bytes.NewReader(s.data)), nil
+}
+
+func (s *fakeDirectURLStorage) Exists(string) (bool, error) {
+	return true, nil
+}
+
+func (s *fakeDirectURLStorage) Size(string) (int64, error) {
+	return int64(len(s.data)), nil
+}
+
+func (s *fakeDirectURLStorage) SeekableReader(string) (storage.ReadSeekCloser, error) {
+	s.seekableReaderOpened = true
+	return &fakeReadSeekCloser{Reader: bytes.NewReader(s.data)}, nil
+}
+
+type fakeReadSeekCloser struct {
+	*bytes.Reader
+}
+
+func (r *fakeReadSeekCloser) Close() error {
+	return nil
 }

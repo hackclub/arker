@@ -46,6 +46,27 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 func serveArchiveContent(c *gin.Context, storageInstance storage.Storage, item models.ArchiveItem, capture models.Capture, archivedURL models.ArchivedURL) {
 	ct, attach := contentTypeForArchive(item.Type, item.Extension)
 	filename := utils.GenerateArchiveFilename(capture, archivedURL, item.Extension)
+	contentDisposition := ""
+	if attach {
+		contentDisposition = fmt.Sprintf("attachment; filename=\"%s\"", filename)
+	}
+
+	if directStorage, ok := storageInstance.(storage.DirectURLStorage); ok {
+		directURL, err := directStorage.DirectURL(c.Request.Context(), item.StorageKey, storage.DirectURLOptions{
+			ContentType:        ct,
+			ContentDisposition: contentDisposition,
+		})
+		if err == nil && directURL != "" {
+			c.Header("Location", directURL)
+			c.AbortWithStatus(http.StatusTemporaryRedirect)
+			return
+		}
+		if err != nil {
+			log.Printf("Failed to generate direct archive URL for short_id=%s storage_key=%s: %v", capture.ShortID, item.StorageKey, err)
+		} else {
+			log.Printf("Direct archive URL was empty for short_id=%s storage_key=%s", capture.ShortID, item.StorageKey)
+		}
+	}
 
 	c.Header("Content-Type", ct)
 
@@ -55,8 +76,8 @@ func serveArchiveContent(c *gin.Context, storageInstance storage.Storage, item m
 	// Add ETag for conditional requests
 	c.Header("ETag", fmt.Sprintf("\"%s-%d\"", item.StorageKey, item.FileSize))
 
-	if attach {
-		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+	if contentDisposition != "" {
+		c.Header("Content-Disposition", contentDisposition)
 	}
 
 	if seekableStorage, ok := storageInstance.(storage.SeekableStorage); ok {

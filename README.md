@@ -70,6 +70,8 @@ S3_SECRET_ACCESS_KEY=your-secret # Optional: uses AWS credential chain if omitte
 S3_ENDPOINT=https://s3.example.com  # Optional: for non-AWS S3-compatible services
 S3_PREFIX=arker/                 # Optional: prefix for all keys
 S3_FORCE_PATH_STYLE=true         # Required for MinIO and some providers
+S3_PUBLIC_BASE_URL=https://cdn.example.com  # Optional: public bucket/CDN base URL for direct downloads
+S3_DIRECT_URL_EXPIRATION=12h      # Optional: presigned GET URL lifetime when no public base URL is set
 ```
 
 **Supported S3-Compatible Services:**

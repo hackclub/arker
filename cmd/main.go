@@ -62,6 +62,10 @@ type Config struct {
 	S3Prefix         string `envconfig:"S3_PREFIX"`                           // Optional prefix for all keys
 	S3ForcePathStyle bool   `envconfig:"S3_FORCE_PATH_STYLE" default:"false"` // Required for MinIO
 	S3TempDir        string `envconfig:"S3_TEMP_DIR" default:"/tmp"`          // Temp directory for upload buffering
+	S3PublicBaseURL  string `envconfig:"S3_PUBLIC_BASE_URL"`                  // Optional public bucket/CDN base URL
+
+	// S3DirectURLExpiration controls presigned archive download URL lifetime.
+	S3DirectURLExpiration time.Duration `envconfig:"S3_DIRECT_URL_EXPIRATION" default:"12h"`
 
 	// Itch.io Configuration
 	ItchAPIKey string `envconfig:"ITCH_API_KEY"`
@@ -298,14 +302,16 @@ func main() {
 		}
 
 		s3Config := storage.S3Config{
-			Endpoint:        cfg.S3Endpoint,
-			Region:          cfg.S3Region,
-			AccessKeyID:     cfg.S3AccessKeyID,
-			SecretAccessKey: cfg.S3SecretKey,
-			Bucket:          cfg.S3Bucket,
-			Prefix:          cfg.S3Prefix,
-			ForcePathStyle:  cfg.S3ForcePathStyle,
-			TempDir:         cfg.S3TempDir,
+			Endpoint:            cfg.S3Endpoint,
+			Region:              cfg.S3Region,
+			AccessKeyID:         cfg.S3AccessKeyID,
+			SecretAccessKey:     cfg.S3SecretKey,
+			Bucket:              cfg.S3Bucket,
+			Prefix:              cfg.S3Prefix,
+			ForcePathStyle:      cfg.S3ForcePathStyle,
+			TempDir:             cfg.S3TempDir,
+			PublicBaseURL:       cfg.S3PublicBaseURL,
+			DirectURLExpiration: cfg.S3DirectURLExpiration,
 		}
 
 		baseStorage, storageErr = storage.NewS3Storage(context.Background(), s3Config)
