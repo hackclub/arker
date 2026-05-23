@@ -81,8 +81,8 @@ func (h *CustomErrorHandler) HandleError(ctx context.Context, job *rivertype.Job
 	slog.Error("Job error", "job_id", job.ID, "kind", job.Kind, "attempt", job.Attempt, "max_attempts", job.MaxAttempts, "error", err)
 
 	// Only mark archive item as failed on the final attempt to avoid premature failures.
-	if job.Kind == (workers.ArchiveJobArgs{}).Kind() && (job.Attempt+1) >= job.MaxAttempts {
-		h.markArchiveItemAsFailed(job, fmt.Sprintf("River job errored on final attempt (%d/%d): %v", job.Attempt+1, job.MaxAttempts, err))
+	if job.Kind == (workers.ArchiveJobArgs{}).Kind() && job.Attempt >= job.MaxAttempts {
+		h.markArchiveItemAsFailed(job, fmt.Sprintf("River job errored on final attempt (%d/%d): %v", job.Attempt, job.MaxAttempts, err))
 	}
 	return nil // Let River manage retries normally
 }
@@ -91,8 +91,8 @@ func (h *CustomErrorHandler) HandlePanic(ctx context.Context, job *rivertype.Job
 	slog.Error("Job panicked", "job_id", job.ID, "kind", job.Kind, "attempt", job.Attempt, "max_attempts", job.MaxAttempts, "panic", panicErr, "trace", trace)
 
 	// Same policy: only flip to failed on final attempt
-	if job.Kind == (workers.ArchiveJobArgs{}).Kind() && (job.Attempt+1) >= job.MaxAttempts {
-		h.markArchiveItemAsFailed(job, fmt.Sprintf("River job panicked on final attempt (%d/%d): %v", job.Attempt+1, job.MaxAttempts, panicErr))
+	if job.Kind == (workers.ArchiveJobArgs{}).Kind() && job.Attempt >= job.MaxAttempts {
+		h.markArchiveItemAsFailed(job, fmt.Sprintf("River job panicked on final attempt (%d/%d): %v", job.Attempt, job.MaxAttempts, panicErr))
 	}
 	return nil
 }
@@ -109,15 +109,23 @@ func (h *CustomErrorHandler) markArchiveItemAsFailed(job *rivertype.JobRow, reas
 		return
 	}
 
+	var item models.ArchiveItem
+	if err := h.db.Joins("JOIN captures ON archive_items.capture_id = captures.id").
+		Where("captures.short_id = ? AND archive_items.type = ? AND archive_items.status IN ('pending','processing')", args.ShortID, args.Type).
+		First(&item).Error; err != nil {
+		if err != gorm.ErrRecordNotFound {
+			slog.Error("Failed to find archive item after job discard", "short_id", args.ShortID, "type", args.Type, "error", err)
+		}
+		return
+	}
+
 	// Update archive item: only touch items still pending/processing
 	msg := fmt.Sprintf("River job discarded after %d attempts at %s: %s", job.MaxAttempts, time.Now().Format(time.RFC3339), reason)
 	result := h.db.Model(&models.ArchiveItem{}).
-		Joins("JOIN captures ON archive_items.capture_id = captures.id").
-		Where("captures.short_id = ? AND archive_items.type = ? AND archive_items.status IN ('pending','processing')", args.ShortID, args.Type).
+		Where("id = ? AND status IN ('pending','processing')", item.ID).
 		Updates(map[string]interface{}{
 			"status":     "failed",
 			"updated_at": time.Now(),
-			"logs":       gorm.Expr("COALESCE(logs, '') || ?", "\n\n"+msg),
 		})
 
 	if result.Error != nil {
@@ -125,6 +133,9 @@ func (h *CustomErrorHandler) markArchiveItemAsFailed(job *rivertype.JobRow, reas
 		return
 	}
 	if result.RowsAffected > 0 {
+		if err := utils.AppendArchiveItemLog(h.db, item.ID, job.Attempt, "\n\n"+msg); err != nil {
+			slog.Error("Failed to append archive item failure log", "short_id", args.ShortID, "type", args.Type, "error", err)
+		}
 		slog.Info("Marked archive item as failed due to final River job failure", "short_id", args.ShortID, "type", args.Type)
 	}
 }
@@ -264,9 +275,16 @@ func main() {
 	}
 
 	// Auto-migrate database models
-	if err := db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.Config{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.ArchiveItemLog{}, &models.Config{}); err != nil {
 		slog.Error("AutoMigrate failed with detailed error", "error", err, "error_type", fmt.Sprintf("%T", err), "error_string", err.Error())
 		slog.Info("Continuing startup despite AutoMigrate error")
+	}
+	if err := utils.ConfigureArchiveItemLogSchema(db); err != nil {
+		slog.Error("Archive log schema configuration failed", "error", err)
+	} else if err := utils.BackfillLegacyArchiveItemLogs(db); err != nil {
+		slog.Error("Legacy archive log backfill failed", "error", err)
+	} else {
+		slog.Info("Archive log schema and legacy backfill completed successfully")
 	}
 
 	// Get or generate session secret from database (overrides environment variable if not set)
@@ -451,17 +469,6 @@ func main() {
 
 	slog.Info("River job queue started successfully")
 
-	// Start log cleanup routine
-	go func() {
-		for {
-			time.Sleep(24 * time.Hour)
-			result := db.Model(&models.ArchiveItem{}).Where("status = ? AND updated_at < ?", "completed", time.Now().Add(-30*24*time.Hour)).Update("logs", "")
-			if result.RowsAffected > 0 {
-				log.Printf("Cleaned up logs for %d completed archives older than 30 days", result.RowsAffected)
-			}
-		}
-	}()
-
 	r := gin.Default()
 	if err := r.SetTrustedProxies(parseTrustedProxies(cfg.TrustedProxies)); err != nil {
 		log.Fatalf("Failed to configure trusted proxies: %v", err)
@@ -474,6 +481,7 @@ func main() {
 	r.GET("/health", handlers.HealthCheckHandler(db))
 	r.GET("/metrics/browser", handlers.BrowserMetricsHandler())
 	r.GET("/status/browser", handlers.BrowserStatusHandler())
+	r.GET("/status/db-storage", handlers.DBStorageStatusHandler(db))
 	r.GET("/login", func(c *gin.Context) { handlers.LoginGet(c, cfg.LoginText) })
 	r.POST("/login", func(c *gin.Context) { handlers.LoginPost(c, db, cfg.LoginText) })
 	r.GET("/admin/api-keys", func(c *gin.Context) { handlers.ApiKeysGet(c, db) })

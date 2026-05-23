@@ -1,8 +1,9 @@
 package models
 
 import (
-	"gorm.io/gorm"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // User represents an authenticated user
@@ -61,4 +62,14 @@ type ArchiveItem struct {
 	FileSize   int64  // file size in bytes
 	Logs       string `gorm:"type:text"`
 	RetryCount int
+}
+
+// ArchiveItemLog stores immutable log chunks for an archive item.
+type ArchiveItemLog struct {
+	ID            uint        `gorm:"primaryKey"`
+	ArchiveItemID uint        `gorm:"not null"`
+	ArchiveItem   ArchiveItem `gorm:"constraint:OnDelete:CASCADE;"`
+	Attempt       int         `gorm:"not null;default:0"`
+	Chunk         string      `gorm:"type:text;not null"`
+	CreatedAt     time.Time   `gorm:"not null"`
 }

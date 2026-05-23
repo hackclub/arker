@@ -71,6 +71,7 @@ func (w *ArchiveWorker) Work(ctx context.Context, job *river.Job[ArchiveJobArgs]
 		"status":      "processing",
 		"retry_count": job.Attempt,
 	})
+	item.RetryCount = job.Attempt
 
 	// Process the job. This function contains its own timeout logic.
 	err := processArchiveJob(ctx, args, &item, w.storage, w.db, w.archiversMap)
@@ -79,12 +80,12 @@ func (w *ArchiveWorker) Work(ctx context.Context, job *river.Job[ArchiveJobArgs]
 		logger.Error("Job processing failed", "error", err)
 
 		// On the final attempt, mark as failed permanently and append a clear message
-		if job.Attempt+1 >= job.MaxAttempts {
+		if job.Attempt >= job.MaxAttempts {
 			_ = w.db.Model(&item).Updates(map[string]interface{}{
 				"status":     "failed",
 				"updated_at": time.Now(),
-				"logs":       gorm.Expr("COALESCE(logs, '') || ?", fmt.Sprintf("\n\nFinal attempt failed after %d tries: %v", job.MaxAttempts, err)),
 			}).Error
+			_ = utils.AppendArchiveItemLog(w.db, item.ID, job.Attempt, fmt.Sprintf("\n\nFinal attempt failed after %d tries: %v", job.MaxAttempts, err))
 			slog.Error("Archive job permanently failed",
 				"short_id", args.ShortID, "type", args.Type,
 				"attempts", job.MaxAttempts, "error", err)
@@ -104,7 +105,12 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 		return fmt.Errorf("unknown archiver %s", jobArgs.Type)
 	}
 
-	dbLogWriter := utils.NewDBLogWriter(db, item.ID)
+	dbLogWriter := utils.NewDBLogWriterForAttempt(db, item.ID, item.RetryCount)
+	defer func() {
+		if err := dbLogWriter.Flush(); err != nil {
+			slog.Error("Failed to flush archive logs", "short_id", jobArgs.ShortID, "type", jobArgs.Type, "error", err)
+		}
+	}()
 
 	slog.Info("Starting archive operation",
 		"short_id", jobArgs.ShortID,
@@ -126,17 +132,16 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 
 	if err != nil {
 		slog.Error("Archive operation failed", "short_id", jobArgs.ShortID, "type", jobArgs.Type, "error", err)
-		db.Model(item).Updates(map[string]interface{}{"status": "failed", "logs": dbLogWriter.String()})
+		db.Model(item).Update("status", "failed")
 		return err
 	}
 
 	// Save the resulting data to storage.
-	// Save the resulting data to storage.
 	key := fmt.Sprintf("%s/%s%s", jobArgs.ShortID, jobArgs.Type, ext)
-	err = saveArchiveData(data, key, ext, storage, db, item, dbLogWriter)
+	err = saveArchiveData(data, key, ext, storage, db, item)
 	if err != nil {
 		slog.Error("Failed to save archive data", "short_id", jobArgs.ShortID, "type", jobArgs.Type, "error", err)
-		db.Model(item).Updates(map[string]interface{}{"status": "failed", "logs": dbLogWriter.String()})
+		db.Model(item).Update("status", "failed")
 		return err
 	}
 
@@ -149,7 +154,7 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 }
 
 // saveArchiveData handles writing archive data to storage and updating the database.
-func saveArchiveData(data io.Reader, key, ext string, storage storage.Storage, db *gorm.DB, item *models.ArchiveItem, logWriter *utils.DBLogWriter) error {
+func saveArchiveData(data io.Reader, key, ext string, storage storage.Storage, db *gorm.DB, item *models.ArchiveItem) error {
 	w, err := storage.Writer(key)
 	if err != nil {
 		return fmt.Errorf("failed to get storage writer: %w", err)
@@ -184,6 +189,5 @@ func saveArchiveData(data io.Reader, key, ext string, storage storage.Storage, d
 		"storage_key": key,
 		"extension":   ext,
 		"file_size":   fileSize,
-		"logs":        logWriter.String(),
 	}).Error
 }

@@ -158,6 +158,9 @@ func DisplayDefault(c *gin.Context, db *gorm.DB) {
 
 	// Calculate queue position if item is pending
 	queuePosition := calculateQueuePosition(db, targetItem)
+	if logs, err := utils.ArchiveItemLogString(db, targetItem.ID, targetItem.Logs); err == nil {
+		targetItem.Logs = logs
+	}
 
 	// Serve the default archive type view directly
 	c.HTML(http.StatusOK, "display_type.html", gin.H{
@@ -224,6 +227,9 @@ func DisplayType(c *gin.Context, db *gorm.DB) {
 
 	// Calculate queue position if item is pending
 	queuePosition := calculateQueuePosition(db, targetItem)
+	if logs, err := utils.ArchiveItemLogString(db, targetItem.ID, targetItem.Logs); err == nil {
+		targetItem.Logs = logs
+	}
 
 	c.HTML(http.StatusOK, "display_type.html", gin.H{
 		"date":              capture.Timestamp.Format(time.RFC1123),
@@ -257,5 +263,10 @@ func GetLogs(c *gin.Context, db *gorm.DB) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"logs": item.Logs, "status": item.Status})
+	logs, err := utils.ArchiveItemLogString(db, item.ID, item.Logs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get logs"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"logs": logs, "status": item.Status})
 }

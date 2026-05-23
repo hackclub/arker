@@ -136,7 +136,12 @@ func GetItemLog(c *gin.Context, db *gorm.DB) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"logs": item.Logs})
+	logs, err := utils.ArchiveItemLogString(db, item.ID, item.Logs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get logs"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"logs": logs})
 }
 
 // RetryAllFailedJobs directly retries all failed archive items
