@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -58,6 +60,8 @@ func GetGlobalMonitor() *BrowserMonitor {
 		globalMonitor = NewBrowserMonitor()
 		// Start background metrics collection
 		go globalMonitor.startMetricsCollection()
+		// Start the orphaned-browser reaper (no-op off Linux)
+		go globalMonitor.startProcessReaper()
 	})
 	return globalMonitor
 }
@@ -172,12 +176,18 @@ func (bm *BrowserMonitor) updateMetrics() {
 	bm.detectLeaks()
 }
 
+// chromeProcessLeakThreshold is the Chrome process count above which a leak is
+// suspected. Headless Chromium runs several processes per browser (browser, gpu,
+// renderer, utility), so with many concurrent workers a healthy count is well
+// into the dozens; the age-based reaper keeps genuine orphans bounded regardless.
+const chromeProcessLeakThreshold = 100
+
 // detectLeaks analyzes metrics to identify potential browser leaks
 func (bm *BrowserMonitor) detectLeaks() {
 	// Leak detection heuristics
 
-	// 1. More than 10 Chrome processes
-	if bm.metrics.ChromeProcessCount > 10 {
+	// 1. Excessive Chrome process count
+	if bm.metrics.ChromeProcessCount > chromeProcessLeakThreshold {
 		bm.metrics.LeakDetected = true
 		bm.metrics.LeakReason = fmt.Sprintf("High Chrome process count: %d", bm.metrics.ChromeProcessCount)
 		return
@@ -237,6 +247,75 @@ func (bm *BrowserMonitor) startMetricsCollection() {
 			}
 		}
 	}
+}
+
+// orphanReapAge is the age past which a Chromium process is treated as orphaned.
+// Browser archive jobs are hard-capped at a 2-minute context plus a bounded
+// teardown, so any Chromium process older than this is wedged or abandoned and is
+// safe to SIGKILL. Reaping the browser also lets the Playwright driver's
+// cmd.Wait() return, so a stuck teardown goroutine can finish.
+const orphanReapAge = 10 * time.Minute
+
+// reapInterval is how often the reaper scans for orphaned browsers.
+const reapInterval = 60 * time.Second
+
+// startProcessReaper periodically kills orphaned Chromium processes. It is a
+// no-op on non-Linux platforms (it relies on `ps -o etimes` and POSIX signals).
+func (bm *BrowserMonitor) startProcessReaper() {
+	if runtime.GOOS != "linux" {
+		return
+	}
+
+	ticker := time.NewTicker(reapInterval)
+	defer ticker.Stop()
+
+	slog.Info("Started orphaned browser reaper", "interval", reapInterval.String(), "max_age", orphanReapAge.String())
+
+	for range ticker.C {
+		bm.reapOrphanedBrowsers()
+	}
+}
+
+// reapOrphanedBrowsers SIGKILLs Chromium processes older than orphanReapAge.
+func (bm *BrowserMonitor) reapOrphanedBrowsers() {
+	// pid, elapsed-seconds, executable name
+	output, err := exec.Command("ps", "-eo", "pid=,etimes=,comm=").Output()
+	if err != nil {
+		slog.Error("Reaper: failed to list processes", "error", err)
+		return
+	}
+
+	thresholdSec := int(orphanReapAge.Seconds())
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		if !isChromeProcess(fields[2]) {
+			continue
+		}
+		ageSec, err := strconv.Atoi(fields[1])
+		if err != nil || ageSec < thresholdSec {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+			slog.Warn("Reaper: failed to kill orphaned browser", "pid", pid, "error", err)
+			continue
+		}
+		atomic.AddInt64(&bm.killCount, 1)
+		slog.Warn("Reaper: killed orphaned browser process", "pid", pid, "comm", fields[2], "age_seconds", ageSec)
+	}
+}
+
+// isChromeProcess reports whether a process name belongs to the headless browser.
+func isChromeProcess(comm string) bool {
+	return strings.Contains(comm, "chrome") ||
+		strings.Contains(comm, "chromium") ||
+		strings.Contains(comm, "headless")
 }
 
 // GetMetricsJSON returns metrics as JSON string

@@ -79,9 +79,11 @@ func (b *PWBundle) CreateBrowser() error {
 		"--use-angle=gl-egl",             // Use EGL backend through ANGLE (WORKING!)
 		"--enable-accelerated-2d-canvas", // Enable hardware-accelerated 2D canvas
 		"--enable-gpu-rasterization",     // Enable GPU-accelerated rasterization
-		// Critical args for preventing zombie processes in Docker containers (DO NOT REMOVE)
-		"--no-zygote",      // Disable zygote process forking (prevents orphaned child processes)
-		"--single-process", // Run renderer in the same process as browser (reduces process count)
+		// Reap renderer children directly so orphaned processes don't pile up in the
+		// container (which runs without a PID 1 init). NOTE: do not add --single-process
+		// here. It makes Chromium deadlock on shutdown, which wedges browser.Close()/
+		// pw.Stop() forever and previously deadlocked the whole archive queue.
+		"--no-zygote",
 	}
 
 	// Set EGL_PLATFORM for Intel GPU hardware acceleration
@@ -190,11 +192,35 @@ func (b *PWBundle) AddEventListener(page playwright.Page, event string, handler 
 	fmt.Fprintf(b.logWriter, "Registered event listener for: %s\n", event)
 }
 
-// Cleanup performs idempotent cleanup of all Playwright resources
-// This method can be called multiple times safely - only the first call does actual cleanup
+// cleanupTimeout bounds how long Cleanup blocks waiting for Playwright to tear
+// down the browser and driver. A healthy teardown takes ~1s; browser jobs are
+// hard-capped at a 2-minute context. If Close()/Stop() wedges (a stuck Chromium
+// whose process never exits makes the driver's cmd.Wait() block forever), we must
+// not hold the River worker goroutine hostage — that previously consumed every
+// worker slot and deadlocked the entire archive queue.
+const cleanupTimeout = 30 * time.Second
+
+// Cleanup performs idempotent cleanup of all Playwright resources.
+// It is safe to call multiple times; only the first call does actual cleanup.
+// Cleanup always returns within cleanupTimeout: if teardown wedges, the wait is
+// abandoned (the worker slot is freed) and the orphaned browser is reaped
+// out-of-band by the monitoring process reaper, which lets the still-running
+// performCleanup goroutine finish.
 func (b *PWBundle) Cleanup() {
 	b.once.Do(func() {
-		b.performCleanup()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			b.performCleanup()
+		}()
+
+		select {
+		case <-done:
+		case <-time.After(cleanupTimeout):
+			slog.Warn("PWBundle cleanup timed out; abandoning teardown to free worker slot",
+				"timeout", cleanupTimeout)
+			monitoring.GetGlobalMonitor().RecordPlaywrightKill()
+		}
 	})
 }
 
