@@ -238,6 +238,11 @@ func TestGetArchiveTypes(t *testing.T) {
 			expected: []string{"mhtml", "screenshot", "youtube"},
 		},
 		{
+			name:     "Facebook reel",
+			url:      "https://www.facebook.com/reel/1714939389160829/",
+			expected: []string{"mhtml", "screenshot", "youtube"},
+		},
+		{
 			name:     "Regular website",
 			url:      "https://example.com",
 			expected: []string{"mhtml", "screenshot"},
@@ -272,7 +277,7 @@ func TestIsInstagramURL(t *testing.T) {
 		{"Instagram reel without www", "https://instagram.com/reel/ABC123/", true},
 		{"Instagram post", "https://www.instagram.com/p/XYZ789/", true},
 		{"Instagram TV", "https://www.instagram.com/tv/DEF456/", true},
-		
+
 		// Should NOT be detected as Instagram URLs
 		{"Instagram profile", "https://www.instagram.com/username/", false},
 		{"Instagram home", "https://www.instagram.com/", false},
@@ -300,7 +305,7 @@ func TestIsTikTokURL(t *testing.T) {
 		{"TikTok video", "https://www.tiktok.com/@voidfrida/video/7495821166951566599", true},
 		{"TikTok video without www", "https://tiktok.com/@user/video/123456789", true},
 		{"TikTok video with mobile", "https://m.tiktok.com/@user/video/987654321", true},
-		
+
 		// Should NOT be detected as TikTok URLs
 		{"TikTok profile", "https://www.tiktok.com/@username", false},
 		{"TikTok home", "https://www.tiktok.com/", false},
@@ -313,6 +318,35 @@ func TestIsTikTokURL(t *testing.T) {
 			result := utils.IsTikTokURL(tt.url)
 			if result != tt.expected {
 				t.Errorf("IsTikTokURL(%q) = %v, expected %v", tt.url, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsFacebookURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		expected bool
+	}{
+		// Should be detected as Facebook video URLs
+		{"Facebook reel", "https://www.facebook.com/reel/1714939389160829/", true},
+		{"Facebook reel without www", "https://facebook.com/reel/123456789/", true},
+		{"Facebook watch", "https://www.facebook.com/watch/?v=1234567890", true},
+		{"Facebook page video", "https://www.facebook.com/hackclub/videos/1234567890/", true},
+		{"fb.watch short link", "https://fb.watch/abcDEF123/", true},
+
+		// Should NOT be detected as Facebook video URLs
+		{"Facebook profile", "https://www.facebook.com/zuck", false},
+		{"Facebook home", "https://www.facebook.com/", false},
+		{"Regular website", "https://example.com", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := utils.IsFacebookURL(tt.url)
+			if result != tt.expected {
+				t.Errorf("IsFacebookURL(%q) = %v, expected %v", tt.url, result, tt.expected)
 			}
 		})
 	}

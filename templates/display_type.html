@@ -213,7 +213,7 @@
             {{range .archives}}
             {{if ne .Type "itch"}}
             {{$urlType := .Type}}{{if eq .Type "mhtml"}}{{$urlType = "web"}}{{end}}
-            {{$displayName := .Type}}{{if eq .Type "mhtml"}}{{$displayName = "Web"}}{{end}}{{if eq .Type "youtube"}}{{$displayName = "YouTube"}}{{end}}
+            {{$displayName := .Type}}{{if eq .Type "mhtml"}}{{$displayName = "Web"}}{{end}}{{if eq .Type "youtube"}}{{$displayName = "Video"}}{{end}}
             <li><a href="/{{$.short_id}}/{{$urlType}}" class="{{if eq $urlType $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
                 {{$displayName}}
                 {{if eq .Status "processing"}} ⟳{{end}}
@@ -238,7 +238,7 @@
             {{range .archives}}
             {{if ne .Type "git"}}
             {{$urlType := .Type}}{{if eq .Type "mhtml"}}{{$urlType = "web"}}{{end}}
-            {{$displayName := .Type}}{{if eq .Type "mhtml"}}{{$displayName = "Web"}}{{end}}{{if eq .Type "youtube"}}{{$displayName = "YouTube"}}{{end}}
+            {{$displayName := .Type}}{{if eq .Type "mhtml"}}{{$displayName = "Web"}}{{end}}{{if eq .Type "youtube"}}{{$displayName = "Video"}}{{end}}
             <li><a href="/{{$.short_id}}/{{$urlType}}" class="{{if eq $urlType $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
                 {{$displayName}}
                 {{if eq .Status "processing"}} ⟳{{end}}
@@ -248,11 +248,11 @@
             {{end}}
             {{end}}
         {{else if .is_video}}
-            {{/* Show youtube tab first for YouTube URLs */}}
+            {{/* Show video tab first for video URLs */}}
             {{range .archives}}
             {{if eq .Type "youtube"}}
             <li><a href="/{{$.short_id}}/{{.Type}}" class="{{if eq .Type $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
-                YouTube
+                Video
                 {{if eq .Status "processing"}} ⟳{{end}}
                 {{if eq .Status "pending"}} ⏳{{end}}
                 {{if eq .Status "failed"}} ✗{{end}}
@@ -263,7 +263,7 @@
             {{range .archives}}
             {{if ne .Type "youtube"}}
             {{$urlType := .Type}}{{if eq .Type "mhtml"}}{{$urlType = "web"}}{{end}}
-            {{$displayName := .Type}}{{if eq .Type "mhtml"}}{{$displayName = "Web"}}{{end}}{{if eq .Type "youtube"}}{{$displayName = "YouTube"}}{{end}}
+            {{$displayName := .Type}}{{if eq .Type "mhtml"}}{{$displayName = "Web"}}{{end}}{{if eq .Type "youtube"}}{{$displayName = "Video"}}{{end}}
             <li><a href="/{{$.short_id}}/{{$urlType}}" class="{{if eq $urlType $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
                 {{$displayName}}
                 {{if eq .Status "processing"}} ⟳{{end}}
@@ -287,7 +287,7 @@
             {{/* Then show other tabs */}}
             {{range .archives}}
             {{if ne .Type "mhtml"}}
-            {{$displayName := .Type}}{{if eq .Type "youtube"}}{{$displayName = "YouTube"}}{{end}}
+            {{$displayName := .Type}}{{if eq .Type "youtube"}}{{$displayName = "Video"}}{{end}}
             <li><a href="/{{$.short_id}}/{{.Type}}" class="{{if eq .Type $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
                 {{$displayName}}
                 {{if eq .Status "processing"}} ⟳{{end}}
@@ -308,7 +308,7 @@
                 <img src="/archive/{{.short_id}}/{{.current_type}}" alt="Full page screenshot" class="screenshot-img">
                 <a href="/archive/{{.short_id}}/{{.current_type}}" class="download-link screenshot-download-link" id="screenshot-download-btn">Download Screenshot</a>
             {{else if eq .current_type "youtube"}}
-                <h3>YouTube Video</h3>
+                <h3>Video</h3>
                 <video src="/archive/{{.short_id}}/{{.current_type}}" controls class="video-player">
                     Your browser does not support the video tag.
                 </video>

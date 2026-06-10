@@ -119,9 +119,23 @@ func IsTikTokURL(url string) bool {
 	return strings.Contains(lowerURL, "tiktok.com") && strings.Contains(lowerURL, "/video/")
 }
 
-// Check if URL is a video URL (YouTube, Vimeo, Instagram, TikTok, etc.)
+// Check if URL is a Facebook video URL (reels, watch, and page videos)
+func IsFacebookURL(url string) bool {
+	lowerURL := strings.ToLower(url)
+	if strings.Contains(lowerURL, "fb.watch/") {
+		return true
+	}
+	if !strings.Contains(lowerURL, "facebook.com") {
+		return false
+	}
+	return strings.Contains(lowerURL, "/reel/") ||
+		strings.Contains(lowerURL, "/videos/") ||
+		strings.Contains(lowerURL, "/watch")
+}
+
+// Check if URL is a video URL (YouTube, Vimeo, Instagram, TikTok, Facebook, etc.)
 func IsVideoURL(url string) bool {
-	return IsYouTubeURL(url) || IsVimeoURL(url) || IsInstagramURL(url) || IsTikTokURL(url)
+	return IsYouTubeURL(url) || IsVimeoURL(url) || IsInstagramURL(url) || IsTikTokURL(url) || IsFacebookURL(url)
 }
 
 // Check if URL is an itch.io URL
