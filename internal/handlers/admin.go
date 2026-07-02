@@ -144,15 +144,21 @@ func GetItemLog(c *gin.Context, db *gorm.DB) {
 	c.JSON(http.StatusOK, gin.H{"logs": logs})
 }
 
-// RetryAllFailedJobs directly retries all failed archive items
+// RetryAllFailedJobs directly retries all failed archive items.
+// Pass ?type=youtube to retry only one archive type.
 func RetryAllFailedJobs(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
 	if !RequireLogin(c) {
 		return
 	}
 
+	query := db.Where("status = 'failed'")
+	if typ := c.Query("type"); typ != "" {
+		query = query.Where("type = ?", typ)
+	}
+
 	// Get all failed items
 	var items []models.ArchiveItem
-	if err := db.Where("status = 'failed'").Find(&items).Error; err != nil {
+	if err := query.Find(&items).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get failed items"})
 		return
 	}
@@ -213,17 +219,30 @@ func BackfillMissingVideoItems(c *gin.Context, db *gorm.DB, riverClient *river.C
 	}
 	dryRun := c.Query("dry_run") == "true"
 
-	var captures []models.Capture
-	if err := db.Preload("ArchivedURL").
+	// Pre-filter video URLs in SQL: loading every youtube-less capture and
+	// filtering in Go blows Postgres's 65535-parameter limit at production
+	// scale (~100k captures). IsVideoURL below stays the exact filter.
+	videoURLPattern := "(LOWER(archived_urls.original) LIKE '%youtube.com%' OR LOWER(archived_urls.original) LIKE '%youtu.be%' OR LOWER(archived_urls.original) LIKE '%vimeo.com%' OR LOWER(archived_urls.original) LIKE '%instagram.com%' OR LOWER(archived_urls.original) LIKE '%tiktok.com%' OR LOWER(archived_urls.original) LIKE '%facebook.com%' OR LOWER(archived_urls.original) LIKE '%fb.watch%')"
+
+	var candidates []struct {
+		ID       uint
+		ShortID  string
+		Original string
+	}
+	if err := db.Table("captures").
+		Select("captures.id, captures.short_id, archived_urls.original").
+		Joins("JOIN archived_urls ON archived_urls.id = captures.archived_url_id").
+		Where("captures.deleted_at IS NULL AND archived_urls.deleted_at IS NULL").
 		Where("NOT EXISTS (SELECT 1 FROM archive_items WHERE archive_items.capture_id = captures.id AND archive_items.type = 'youtube' AND archive_items.deleted_at IS NULL)").
-		Find(&captures).Error; err != nil {
+		Where(videoURLPattern).
+		Scan(&candidates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query captures"})
 		return
 	}
 
 	backfilled := []string{}
-	for _, capture := range captures {
-		if !utils.IsVideoURL(capture.ArchivedURL.Original) {
+	for _, capture := range candidates {
+		if !utils.IsVideoURL(capture.Original) {
 			continue
 		}
 		if dryRun {
@@ -239,7 +258,7 @@ func BackfillMissingVideoItems(c *gin.Context, db *gorm.DB, riverClient *river.C
 		args := workers.ArchiveJobArgs{
 			ShortID: capture.ShortID,
 			Type:    "youtube",
-			URL:     capture.ArchivedURL.Original,
+			URL:     capture.Original,
 		}
 		opts := &river.InsertOpts{
 			MaxAttempts: 3,
