@@ -75,7 +75,7 @@ type Config struct {
 	// requests from logged-out clients, so captures need session cookies.
 	YtDlpCookiesFile string `envconfig:"YTDLP_COOKIES_FILE"` // Path to a Netscape-format cookies.txt
 	YtDlpCookiesB64  string `envconfig:"YTDLP_COOKIES_B64"`  // Base64-encoded cookies.txt content (used when no file path is set)
-	YtDlpProxy       string `envconfig:"YTDLP_PROXY"`         // Optional proxy (e.g. residential) for yt-dlp; Instagram throttles datacenter IPs
+	YtDlpProxy       string `envconfig:"YTDLP_PROXY"`        // Optional proxy (e.g. residential) for yt-dlp; Instagram throttles datacenter IPs
 }
 
 // CustomErrorHandler implements the River ErrorHandler interface and updates archive items.
