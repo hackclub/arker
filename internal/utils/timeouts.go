@@ -145,6 +145,7 @@ func ProbeYtDlpDuration(ctx context.Context, url string) (time.Duration, error) 
 
 	args := []string{"--print", "duration", "--no-playlist", "--skip-download"}
 	args = append(args, cookieArgs...)
+	args = append(args, YtDlpProxyArgs()...)
 	args = append(args, url)
 	cmd := exec.CommandContext(probeCtx, "yt-dlp", args...)
 	output, err := cmd.CombinedOutput()

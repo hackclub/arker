@@ -12,7 +12,34 @@ import (
 var (
 	ytDlpCookiesMu       sync.RWMutex
 	ytDlpCookiesFilePath string
+
+	ytDlpProxyMu  sync.RWMutex
+	ytDlpProxyURL string
 )
+
+// InitYtDlpProxy configures an optional proxy passed to every yt-dlp invocation.
+// Instagram (and other sites) rate-limit datacenter IP ranges aggressively; a
+// residential/mobile proxy lets a server-hosted archiver fetch media that would
+// otherwise be throttled. proxyURL is a full proxy URL (http://, https://,
+// socks5://, optionally with credentials); empty disables it.
+func InitYtDlpProxy(proxyURL string) string {
+	url := strings.TrimSpace(proxyURL)
+	ytDlpProxyMu.Lock()
+	ytDlpProxyURL = url
+	ytDlpProxyMu.Unlock()
+	return url
+}
+
+// YtDlpProxyArgs returns the --proxy arguments for yt-dlp invocations, or nil
+// when no proxy is configured.
+func YtDlpProxyArgs() []string {
+	ytDlpProxyMu.RLock()
+	defer ytDlpProxyMu.RUnlock()
+	if ytDlpProxyURL == "" {
+		return nil
+	}
+	return []string{"--proxy", ytDlpProxyURL}
+}
 
 // InitYtDlpCookies configures the cookies file passed to every yt-dlp invocation.
 // Sites like Instagram refuse media requests from logged-out clients, so a

@@ -75,6 +75,7 @@ type Config struct {
 	// requests from logged-out clients, so captures need session cookies.
 	YtDlpCookiesFile string `envconfig:"YTDLP_COOKIES_FILE"` // Path to a Netscape-format cookies.txt
 	YtDlpCookiesB64  string `envconfig:"YTDLP_COOKIES_B64"`  // Base64-encoded cookies.txt content (used when no file path is set)
+	YtDlpProxy       string `envconfig:"YTDLP_PROXY"`         // Optional proxy (e.g. residential) for yt-dlp; Instagram throttles datacenter IPs
 }
 
 // CustomErrorHandler implements the River ErrorHandler interface and updates archive items.
@@ -361,6 +362,9 @@ func main() {
 		slog.Info("yt-dlp cookies configured", "path", cookiesPath)
 	} else {
 		slog.Warn("No yt-dlp cookies configured; videos on sites requiring login (e.g. Instagram) will fail to archive")
+	}
+	if proxy := utils.InitYtDlpProxy(cfg.YtDlpProxy); proxy != "" {
+		slog.Info("yt-dlp proxy configured")
 	}
 
 	// Perform health checks on startup

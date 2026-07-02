@@ -147,6 +147,25 @@ func TestInitYtDlpCookiesInvalidBase64Errors(t *testing.T) {
 	}
 }
 
+func TestInitYtDlpProxy(t *testing.T) {
+	t.Cleanup(func() { InitYtDlpProxy("") })
+
+	if args := YtDlpProxyArgs(); args != nil {
+		t.Fatalf("YtDlpProxyArgs with no proxy = %v, want nil", args)
+	}
+
+	InitYtDlpProxy("  http://user:pass@proxy.example.com:8080  ")
+	args := YtDlpProxyArgs()
+	if len(args) != 2 || args[0] != "--proxy" || args[1] != "http://user:pass@proxy.example.com:8080" {
+		t.Fatalf("YtDlpProxyArgs = %v, want [--proxy http://user:pass@proxy.example.com:8080] (trimmed)", args)
+	}
+
+	InitYtDlpProxy("")
+	if args := YtDlpProxyArgs(); args != nil {
+		t.Fatalf("YtDlpProxyArgs after clearing = %v, want nil", args)
+	}
+}
+
 func TestInitYtDlpCookiesFileTakesPrecedenceOverBase64(t *testing.T) {
 	resetYtDlpCookies(t)
 
