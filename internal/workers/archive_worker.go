@@ -2,6 +2,8 @@ package workers
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -136,11 +138,14 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 		return err
 	}
 
-	// Save the resulting data to storage.
-	key := fmt.Sprintf("%s/%s%s", jobArgs.ShortID, jobArgs.Type, ext)
+	// Save the resulting data to storage. The archive bucket forbids
+	// overwrites and deletes (bucket lock), so every upload attempt writes a
+	// fresh object; the item's storage_key records the key that succeeded.
+	key := fmt.Sprintf("%s/%s-%s%s", jobArgs.ShortID, jobArgs.Type, uploadNonce(), ext)
 	err = saveArchiveData(data, key, ext, storage, db, item)
 	if err != nil {
 		slog.Error("Failed to save archive data", "short_id", jobArgs.ShortID, "type", jobArgs.Type, "error", err)
+		fmt.Fprintf(dbLogWriter, "\nFailed to save archive data: %v\n", err)
 		db.Model(item).Update("status", "failed")
 		return err
 	}
@@ -151,6 +156,16 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 		"storage_key", key)
 
 	return nil
+}
+
+// uploadNonce returns a short random suffix for storage keys so retries never
+// overwrite an existing (locked) object.
+func uploadNonce() string {
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }
 
 // saveArchiveData handles writing archive data to storage and updating the database.
