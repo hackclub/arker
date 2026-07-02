@@ -41,8 +41,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     va-driver-all \
     libva2 \
     libva-drm2 \
-    # curl-cffi enables yt-dlp browser impersonation, which TikTok requires
-    && pip3 install --break-system-packages --no-cache-dir "yt-dlp[default,curl-cffi]" itch-dl \
+    # curl-cffi enables yt-dlp browser impersonation, which TikTok requires.
+    # yt-dlp installed from the nightly (--pre) channel: Instagram breaks the
+    # stable extractor faster than stable releases ship (the 2026.06.09 stable
+    # extractor started returning "empty media response" for reels mid-2026-07;
+    # the nightly already had the fix). Rebuild picks up the latest nightly.
+    && pip3 install --break-system-packages --no-cache-dir itch-dl \
+    && pip3 install --break-system-packages --no-cache-dir --pre "yt-dlp[default,curl-cffi]" \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /root/.cache
