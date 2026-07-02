@@ -268,5 +268,5 @@ func GetLogs(c *gin.Context, db *gorm.DB) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get logs"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"logs": logs, "status": item.Status})
+	c.JSON(http.StatusOK, gin.H{"logs": logs, "status": item.Status, "retry_count": item.RetryCount})
 }

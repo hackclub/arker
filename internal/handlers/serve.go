@@ -24,19 +24,26 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
 		Where("captures.short_id = ? AND archive_items.type = ?", shortID, typ).
 		First(&item).Error; err != nil {
-		c.Status(http.StatusNotFound)
+		c.JSON(http.StatusNotFound, gin.H{"error": "archive not found"})
 		return
 	}
 	if err := db.Where("short_id = ?", shortID).First(&capture).Error; err != nil {
-		c.Status(http.StatusNotFound)
+		c.JSON(http.StatusNotFound, gin.H{"error": "archive not found"})
 		return
 	}
 	if err := db.Where("id = ?", capture.ArchivedURLID).First(&archivedURL).Error; err != nil {
-		c.Status(http.StatusNotFound)
+		c.JSON(http.StatusNotFound, gin.H{"error": "archive not found"})
 		return
 	}
 	if item.Status != "completed" {
-		c.Status(http.StatusNotFound)
+		// The item exists but has no artifact yet: distinguish a failed
+		// capture (retryable) from one that is still pending/processing.
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":       fmt.Sprintf("%s archive is not available", typ),
+			"status":      item.Status,
+			"retry_count": item.RetryCount,
+			"logs_url":    fmt.Sprintf("/logs/%s/%s", shortID, typ),
+		})
 		return
 	}
 

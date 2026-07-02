@@ -70,6 +70,11 @@ type Config struct {
 	// Itch.io Configuration
 	ItchAPIKey string `envconfig:"ITCH_API_KEY"`
 	ItchDlPath string `envconfig:"ITCH_DL_PATH" default:"itch-dl"`
+
+	// yt-dlp authentication: Instagram (and some other sites) refuse media
+	// requests from logged-out clients, so captures need session cookies.
+	YtDlpCookiesFile string `envconfig:"YTDLP_COOKIES_FILE"` // Path to a Netscape-format cookies.txt
+	YtDlpCookiesB64  string `envconfig:"YTDLP_COOKIES_B64"`  // Base64-encoded cookies.txt content (used when no file path is set)
 }
 
 // CustomErrorHandler implements the River ErrorHandler interface and updates archive items.
@@ -347,6 +352,17 @@ func main() {
 	// Populate file sizes for existing archives
 	populateFileSizes(db, storageInstance)
 
+	// Configure yt-dlp cookies for sites that require authentication (e.g. Instagram)
+	cookiesPath, err := utils.InitYtDlpCookies(cfg.YtDlpCookiesFile, cfg.YtDlpCookiesB64, os.TempDir())
+	if err != nil {
+		log.Fatalf("Failed to configure yt-dlp cookies: %v", err)
+	}
+	if cookiesPath != "" {
+		slog.Info("yt-dlp cookies configured", "path", cookiesPath)
+	} else {
+		slog.Warn("No yt-dlp cookies configured; videos on sites requiring login (e.g. Instagram) will fail to archive")
+	}
+
 	// Perform health checks on startup
 	log.Println("Performing startup health checks...")
 	healthConfig := utils.DefaultHealthCheckConfig()
@@ -489,6 +505,7 @@ func main() {
 	r.POST("/admin/api-keys/:id/toggle", func(c *gin.Context) { handlers.ApiKeysToggle(c, db) })
 	r.DELETE("/admin/api-keys/:id", func(c *gin.Context) { handlers.ApiKeysDelete(c, db) })
 	r.POST("/admin/retry-failed", func(c *gin.Context) { handlers.RetryAllFailedJobs(c, db, riverClient) })
+	r.POST("/admin/backfill-videos", func(c *gin.Context) { handlers.BackfillMissingVideoItems(c, db, riverClient) })
 	r.POST("/admin/url/:id/capture", func(c *gin.Context) { handlers.RequestCapture(c, db, riverClient) })
 	r.POST("/admin/archive", func(c *gin.Context) { handlers.AdminArchive(c, db, riverClient) })
 	r.GET("/admin/item/:id/log", func(c *gin.Context) { handlers.GetItemLog(c, db) })

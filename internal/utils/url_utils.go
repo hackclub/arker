@@ -113,10 +113,17 @@ func IsInstagramURL(url string) bool {
 	return strings.Contains(lowerURL, "instagram.com") && (strings.Contains(lowerURL, "/reel/") || strings.Contains(lowerURL, "/p/") || strings.Contains(lowerURL, "/tv/"))
 }
 
-// Check if URL is a TikTok URL
+// Check if URL is a TikTok URL (full video links and vm/vt/t short links)
 func IsTikTokURL(url string) bool {
 	lowerURL := strings.ToLower(url)
-	return strings.Contains(lowerURL, "tiktok.com") && strings.Contains(lowerURL, "/video/")
+	if strings.Contains(lowerURL, "vm.tiktok.com/") || strings.Contains(lowerURL, "vt.tiktok.com/") {
+		return true
+	}
+	if !strings.Contains(lowerURL, "tiktok.com") {
+		return false
+	}
+	return strings.Contains(lowerURL, "/video/") ||
+		strings.Contains(lowerURL, "tiktok.com/t/")
 }
 
 // Check if URL is a Facebook video URL (reels, watch, and page videos)

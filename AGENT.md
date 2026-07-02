@@ -4,9 +4,9 @@ Arker is a Go-based web archiving server that captures web pages using multiple 
 
 ## Deployment
 
-**Production URL**: https://archive.selfhosted.hackclub.com  
-**Deployment**: Managed via Coolify  
-**Debug Access**: `ssh root@archive.selfhosted.hackclub.com`
+**Production URL**: https://archive.hackclub.com  
+**Deployment**: Managed via Coolify (deploys `main` on push; app container name starts with the Coolify resource UUID)  
+**Debug Access**: `ssh archive-hq-local.selfhosted.hackclub.com` (via cloudflared, see ~/.ssh/config; use `sudo docker ...` on the host)
 
 ## Quick Commands
 
@@ -166,6 +166,8 @@ git clone https://archive.selfhosted.hackclub.com/git/{shortid}
 - `GIN_MODE` - Gin framework mode (`debug` for development)
 - `ITCH_API_KEY` - itch.io API key for downloading games (required for itch.io archiving)
 - `ITCH_DL_PATH` - Path to itch-dl command (default: `itch-dl`)
+- `YTDLP_COOKIES_FILE` - Path to a Netscape-format cookies.txt passed to every yt-dlp invocation (required for Instagram video archiving; Instagram refuses media requests from logged-out clients)
+- `YTDLP_COOKIES_B64` - Base64-encoded cookies.txt content, written to a temp file at startup (used when `YTDLP_COOKIES_FILE` is unset; convenient for Coolify secrets)
 
 - `LOGIN_TEXT` - Text to display under login form
 

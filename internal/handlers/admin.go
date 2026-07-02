@@ -203,6 +203,65 @@ func RetryAllFailedJobs(c *gin.Context, db *gorm.DB, riverClient *river.Client[p
 	})
 }
 
+// BackfillMissingVideoItems creates and enqueues youtube archive items for
+// captures of video URLs that never had one (e.g. TikTok short links archived
+// before short-link detection existed). Failed youtube items are re-run via
+// RetryAllFailedJobs instead. Pass ?dry_run=true to preview without queueing.
+func BackfillMissingVideoItems(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
+	if !RequireLogin(c) {
+		return
+	}
+	dryRun := c.Query("dry_run") == "true"
+
+	var captures []models.Capture
+	if err := db.Preload("ArchivedURL").
+		Where("NOT EXISTS (SELECT 1 FROM archive_items WHERE archive_items.capture_id = captures.id AND archive_items.type = 'youtube' AND archive_items.deleted_at IS NULL)").
+		Find(&captures).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query captures"})
+		return
+	}
+
+	backfilled := []string{}
+	for _, capture := range captures {
+		if !utils.IsVideoURL(capture.ArchivedURL.Original) {
+			continue
+		}
+		if dryRun {
+			backfilled = append(backfilled, capture.ShortID)
+			continue
+		}
+
+		item := models.ArchiveItem{CaptureID: capture.ID, Type: "youtube", Status: "pending"}
+		if err := db.Create(&item).Error; err != nil {
+			continue
+		}
+
+		args := workers.ArchiveJobArgs{
+			ShortID: capture.ShortID,
+			Type:    "youtube",
+			URL:     capture.ArchivedURL.Original,
+		}
+		opts := &river.InsertOpts{
+			MaxAttempts: 3,
+			Tags:        []string{"archive", "youtube", "backfill"},
+			UniqueOpts: river.UniqueOpts{
+				ByArgs:   true,
+				ByPeriod: 1 * time.Minute,
+			},
+		}
+		if _, err := riverClient.Insert(c.Request.Context(), args, opts); err != nil {
+			continue
+		}
+		backfilled = append(backfilled, capture.ShortID)
+	}
+
+	message := fmt.Sprintf("Backfilled %d captures with video archive jobs", len(backfilled))
+	if dryRun {
+		message = fmt.Sprintf("Dry run: %d captures would be backfilled with video archive jobs", len(backfilled))
+	}
+	c.JSON(http.StatusOK, gin.H{"message": message, "short_ids": backfilled})
+}
+
 func AdminArchive(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
 	if !RequireLogin(c) {
 		return

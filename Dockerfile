@@ -41,7 +41,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     va-driver-all \
     libva2 \
     libva-drm2 \
-    && pip3 install --break-system-packages --no-cache-dir yt-dlp[default] itch-dl \
+    # curl-cffi enables yt-dlp browser impersonation, which TikTok requires
+    && pip3 install --break-system-packages --no-cache-dir "yt-dlp[default,curl-cffi]" itch-dl \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /root/.cache

@@ -137,7 +137,16 @@ func ProbeYtDlpDuration(ctx context.Context, url string) (time.Duration, error) 
 	probeCtx, cancel := context.WithTimeout(ctx, config.YtDlpProbeTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(probeCtx, "yt-dlp", "--print", "duration", "--no-playlist", "--skip-download", url)
+	cookieArgs, cleanupCookies, err := YtDlpCookieArgsForRun()
+	if err != nil {
+		return 0, fmt.Errorf("yt-dlp cookies unavailable for duration probe: %w", err)
+	}
+	defer cleanupCookies()
+
+	args := []string{"--print", "duration", "--no-playlist", "--skip-download"}
+	args = append(args, cookieArgs...)
+	args = append(args, url)
+	cmd := exec.CommandContext(probeCtx, "yt-dlp", args...)
 	output, err := cmd.CombinedOutput()
 	if probeCtx.Err() != nil {
 		return 0, fmt.Errorf("yt-dlp duration probe timed out after %s", config.YtDlpProbeTimeout)

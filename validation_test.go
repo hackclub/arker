@@ -305,6 +305,9 @@ func TestIsTikTokURL(t *testing.T) {
 		{"TikTok video", "https://www.tiktok.com/@voidfrida/video/7495821166951566599", true},
 		{"TikTok video without www", "https://tiktok.com/@user/video/123456789", true},
 		{"TikTok video with mobile", "https://m.tiktok.com/@user/video/987654321", true},
+		{"TikTok vm short link", "https://vm.tiktok.com/ZNRK8UVae/", true},
+		{"TikTok vt short link", "https://vt.tiktok.com/ZSAbCdEfG/", true},
+		{"TikTok t short link", "https://www.tiktok.com/t/ZTAbCdEfG/", true},
 
 		// Should NOT be detected as TikTok URLs
 		{"TikTok profile", "https://www.tiktok.com/@username", false},

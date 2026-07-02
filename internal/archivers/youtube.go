@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"syscall"
+
+	"arker/internal/utils"
 )
 
 type tempVideoReader struct {
@@ -38,6 +40,16 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	default:
 	}
 
+	// One private cookies copy for both yt-dlp runs in this job; yt-dlp
+	// writes the jar back on exit, so it must not share a file with
+	// concurrent jobs.
+	cookieArgs, cleanupCookies, err := utils.YtDlpCookieArgsForRun()
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to prepare yt-dlp cookies: %v\n", err)
+		return nil, "", "", nil, err
+	}
+	defer cleanupCookies()
+
 	// Prepare command arguments
 	testArgs := []string{"--print", "title,duration,uploader"}
 
@@ -45,6 +57,7 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	fmt.Fprintf(logWriter, "Testing video accessibility with yt-dlp...\n")
 	testCmd := exec.CommandContext(ctx, "yt-dlp")
 	testCmd.Args = append(testCmd.Args, testArgs...)
+	testCmd.Args = append(testCmd.Args, cookieArgs...)
 	testCmd.Args = append(testCmd.Args, url)
 	testOutput, err := testCmd.CombinedOutput()
 	if err != nil {
@@ -73,6 +86,7 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	outputTemplate := tempBase + ".%(ext)s"
 	cmd := exec.CommandContext(ctx, "yt-dlp")
 	cmd.Args = append(cmd.Args, ytDlpDownloadArgs(outputTemplate)...)
+	cmd.Args = append(cmd.Args, cookieArgs...)
 	cmd.Args = append(cmd.Args, url)
 	cmd.Stdout = logWriter
 	cmd.Stderr = logWriter
