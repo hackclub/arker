@@ -3,7 +3,7 @@ package archivers
 import (
 	"context"
 	"fmt"
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"gorm.io/gorm"
 	"io"
 	"strings"

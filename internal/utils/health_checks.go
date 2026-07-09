@@ -2,7 +2,7 @@ package utils
 
 import (
 	"fmt"
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"os/exec"
 	"time"
 )

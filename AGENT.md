@@ -47,7 +47,7 @@ When using Amp with `make dev` running in another window:
 
 ### Manual Local Development
 1. Start PostgreSQL: `docker run -d --name postgres -e POSTGRES_USER=user -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=arker -p 5432:5432 postgres:15`
-2. Install Playwright: `go install github.com/playwright-community/playwright-go/cmd/playwright@latest && playwright install chromium`
+2. Install Playwright: `go install github.com/mxschmitt/playwright-go/cmd/playwright@latest && playwright install chromium`
 3. Install yt-dlp: `pip install yt-dlp`
 4. Run: `go run .`
 
@@ -211,7 +211,7 @@ go test -run TestFSStorage    # Run specific test
 - **gin-contrib/sessions** v0.0.5 - Session management
 
 ### Archive & Browser
-- **playwright-community/playwright-go** v0.6000.0 - Browser automation
+- **mxschmitt/playwright-go** v0.6100.0 - Browser automation
 - **go-git/go-git/v5** v5.8.1 - Git operations
 - **klauspost/compress** v1.18.0 - zstd compression
 

@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/HugoSmits86/nativewebp"
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"gorm.io/gorm"
 	"image"
 	"image/jpeg"

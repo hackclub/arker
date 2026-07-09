@@ -10,7 +10,7 @@ import (
 
 	"arker/internal/monitoring"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 )
 
 // PWBundle manages Playwright resources with guaranteed idempotent cleanup
