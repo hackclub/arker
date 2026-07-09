@@ -103,9 +103,6 @@ func AdminGet(c *gin.Context, db *gorm.DB) {
 }
 
 func RequestCapture(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
-	if !RequireLogin(c) {
-		return
-	}
 	id := c.Param("id")
 	var u models.ArchivedURL
 	if db.First(&u, id).Error != nil {
@@ -127,9 +124,6 @@ func RequestCapture(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.T
 }
 
 func GetItemLog(c *gin.Context, db *gorm.DB) {
-	if !RequireLogin(c) {
-		return
-	}
 	id := c.Param("id")
 	var item models.ArchiveItem
 	if db.First(&item, id).Error != nil {
@@ -147,10 +141,6 @@ func GetItemLog(c *gin.Context, db *gorm.DB) {
 // RetryAllFailedJobs directly retries all failed archive items.
 // Pass ?type=youtube to retry only one archive type.
 func RetryAllFailedJobs(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
-	if !RequireLogin(c) {
-		return
-	}
-
 	query := db.Where("status = 'failed'")
 	if typ := c.Query("type"); typ != "" {
 		query = query.Where("type = ?", typ)
@@ -214,9 +204,6 @@ func RetryAllFailedJobs(c *gin.Context, db *gorm.DB, riverClient *river.Client[p
 // before short-link detection existed). Failed youtube items are re-run via
 // RetryAllFailedJobs instead. Pass ?dry_run=true to preview without queueing.
 func BackfillMissingVideoItems(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
-	if !RequireLogin(c) {
-		return
-	}
 	dryRun := c.Query("dry_run") == "true"
 
 	// Pre-filter video URLs in SQL: loading every youtube-less capture and
@@ -282,10 +269,6 @@ func BackfillMissingVideoItems(c *gin.Context, db *gorm.DB, riverClient *river.C
 }
 
 func AdminArchive(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
-	if !RequireLogin(c) {
-		return
-	}
-
 	var req utils.ArchiveRequest
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})

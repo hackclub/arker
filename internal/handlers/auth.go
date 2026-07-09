@@ -47,3 +47,17 @@ func RequireLogin(c *gin.Context) bool {
 	}
 	return true
 }
+
+// RequireLoginMiddleware is the route-group form of RequireLogin. Attach it to a
+// Gin group so every route under it requires an authenticated session; on failure
+// RequireLogin issues the redirect and this aborts the chain.
+func RequireLoginMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authenticated := RequireLogin(c)
+		if !authenticated {
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}

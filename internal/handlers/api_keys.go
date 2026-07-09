@@ -12,10 +12,6 @@ import (
 )
 
 func ApiKeysGet(c *gin.Context, db *gorm.DB) {
-	if !RequireLogin(c) {
-		return
-	}
-
 	var apiKeys []models.APIKey
 	// Only get non-deleted API keys (GORM automatically excludes soft-deleted records)
 	db.Order("created_at DESC").Find(&apiKeys)
@@ -23,10 +19,6 @@ func ApiKeysGet(c *gin.Context, db *gorm.DB) {
 }
 
 func ApiKeysCreate(c *gin.Context, db *gorm.DB) {
-	if !RequireLogin(c) {
-		return
-	}
-
 	var req struct {
 		Username    string `json:"username"`
 		AppName     string `json:"app_name"`
@@ -95,10 +87,6 @@ func ApiKeysCreate(c *gin.Context, db *gorm.DB) {
 }
 
 func ApiKeysToggle(c *gin.Context, db *gorm.DB) {
-	if !RequireLogin(c) {
-		return
-	}
-
 	id := c.Param("id")
 	keyID, err := strconv.ParseUint(id, 10, 32)
 	if err != nil {
@@ -126,10 +114,6 @@ func ApiKeysToggle(c *gin.Context, db *gorm.DB) {
 }
 
 func ApiKeysDelete(c *gin.Context, db *gorm.DB) {
-	if !RequireLogin(c) {
-		return
-	}
-
 	id := c.Param("id")
 	keyID, err := strconv.ParseUint(id, 10, 32)
 	if err != nil {
