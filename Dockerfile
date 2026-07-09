@@ -67,7 +67,7 @@ ENV DENO_INSTALL="/root/.deno"
 ENV PATH="${DENO_INSTALL}/bin:${PATH}"
 
 # Install Playwright CLI early for better caching
-RUN go install github.com/playwright-community/playwright-go/cmd/playwright@v0.4501.1
+RUN go install github.com/playwright-community/playwright-go/cmd/playwright@v0.5700.1
 ENV PATH="/root/go/bin:${PATH}"
 
 # Install Playwright browser in separate layer (cached unless Playwright version changes)
