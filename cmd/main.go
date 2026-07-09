@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -499,6 +500,13 @@ func main() {
 	}
 	r.LoadHTMLGlob("templates/*.html")
 	store := cookie.NewStore([]byte(sessionSecret))
+	store.Options(sessions.Options{
+		Path:     "/",
+		MaxAge:   7 * 24 * 60 * 60, // 7 days
+		HttpOnly: true,
+		Secure:   gin.Mode() == gin.ReleaseMode, // HTTPS-only in production; allows local HTTP dev
+		SameSite: http.SameSiteLaxMode,
+	})
 	r.Use(sessions.Sessions("session", store))
 
 	// Setup routes
