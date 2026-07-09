@@ -74,7 +74,7 @@ func GitHandler(c *gin.Context, storage storage.Storage, db *gorm.DB, cacheRoot 
 	h.ServeHTTP(c.Writer, c.Request)
 }
 
-func unpackGit(key string, targetDir string, storage storage.Storage) error {
+func unpackGit(key string, targetDir string, storage storage.Storage) (err error) {
 	r, err := storage.Reader(key)
 	if err != nil {
 		return err
@@ -84,6 +84,13 @@ func unpackGit(key string, targetDir string, storage storage.Storage) error {
 	if err = os.MkdirAll(targetDir, 0755); err != nil {
 		return err
 	}
+	// If unpacking fails partway, remove the partial directory so the stat-gate in
+	// GitHandler re-unpacks on the next request instead of serving a corrupt repo.
+	defer func() {
+		if err != nil {
+			os.RemoveAll(targetDir)
+		}
+	}()
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
