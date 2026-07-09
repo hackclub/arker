@@ -44,6 +44,21 @@ func getGitHTTPClient() *http.Client {
 	return gitHTTPClient
 }
 
+var installGitProtocolsOnce sync.Once
+
+// installGitProtocols registers the pooled HTTP client for git http(s)
+// operations exactly once. go-git's client.InstallProtocol writes a global,
+// unsynchronized map, so calling it per-job races concurrent git jobs into a
+// "concurrent map writes" crash. Registering once is equivalent (the client is
+// process-global) and race-free.
+func installGitProtocols() {
+	installGitProtocolsOnce.Do(func() {
+		httpClient := getGitHTTPClient()
+		client.InstallProtocol("https", githttp.NewClient(httpClient))
+		client.InstallProtocol("http", githttp.NewClient(httpClient))
+	})
+}
+
 func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *PWBundle, error) {
 	fmt.Fprintf(logWriter, "Starting git archive for: %s\n", url)
 
@@ -54,12 +69,8 @@ func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 	default:
 	}
 
-	// Configure HTTP client with pooled connections
-	httpClient := getGitHTTPClient()
-
-	// Install pooled HTTP client for git operations
-	client.InstallProtocol("https", githttp.NewClient(httpClient))
-	client.InstallProtocol("http", githttp.NewClient(httpClient))
+	// Register the pooled HTTP client for git operations exactly once.
+	installGitProtocols()
 
 	// Extract repository URL for GitHub URLs with extra paths
 	repoURL := extractGitRepoURL(url)

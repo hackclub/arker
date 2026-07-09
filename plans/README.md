@@ -13,7 +13,7 @@ Repo verification gates (every plan uses these):
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
 | 001 | Make `make test` run everything + add CI gate | P1 | S | — | DONE |
-| 002 | Register go-git protocols once (fix concurrent-map crash) | P1 | S | 001 | TODO |
+| 002 | Register go-git protocols once (fix concurrent-map crash) | P1 | S | 001 | DONE |
 | 003 | Remove git archiver clone temp dir after capture | P1 | S | — | TODO |
 | 004 | Stop marking items `failed` on retryable attempts | P1 | S | 001 | TODO |
 | 005 | Fail itch archives that can't add all files | P1 | S | — | TODO |
