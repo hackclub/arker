@@ -50,6 +50,12 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	}
 	defer cleanupCookies()
 
+	if version, versionErr := utils.YtDlpVersion(ctx); versionErr == nil {
+		fmt.Fprintf(logWriter, "yt-dlp version: %s\n", version)
+	} else {
+		fmt.Fprintf(logWriter, "Could not determine yt-dlp version: %v\n", versionErr)
+	}
+
 	// Prepare command arguments
 	testArgs := []string{"--print", "title,duration,uploader"}
 
@@ -57,6 +63,7 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	fmt.Fprintf(logWriter, "Testing video accessibility with yt-dlp...\n")
 	testCmd := exec.CommandContext(ctx, "yt-dlp")
 	testCmd.Args = append(testCmd.Args, testArgs...)
+	testCmd.Args = append(testCmd.Args, utils.YtDlpImpersonateArgsForURL(url)...)
 	testCmd.Args = append(testCmd.Args, cookieArgs...)
 	testCmd.Args = append(testCmd.Args, utils.YtDlpProxyArgs()...)
 	testCmd.Args = append(testCmd.Args, url)
@@ -87,6 +94,7 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	outputTemplate := tempBase + ".%(ext)s"
 	cmd := exec.CommandContext(ctx, "yt-dlp")
 	cmd.Args = append(cmd.Args, ytDlpDownloadArgs(outputTemplate)...)
+	cmd.Args = append(cmd.Args, utils.YtDlpImpersonateArgsForURL(url)...)
 	cmd.Args = append(cmd.Args, cookieArgs...)
 	cmd.Args = append(cmd.Args, utils.YtDlpProxyArgs()...)
 	cmd.Args = append(cmd.Args, url)

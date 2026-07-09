@@ -37,8 +37,10 @@ RUN apt-get update && apt-get install -y \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Install yt-dlp and itch-dl
-RUN pip3 install --break-system-packages yt-dlp[default] itch-dl
+# Install yt-dlp and itch-dl. Match production: nightly yt-dlp plus curl-cffi
+# for browser impersonation.
+RUN pip3 install --break-system-packages --upgrade --pre "yt-dlp[default,curl-cffi]" itch-dl
+ENV YTDLP_IMPERSONATE=chrome
 
 # Set working directory
 WORKDIR /app

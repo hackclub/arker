@@ -15,6 +15,9 @@ var (
 
 	ytDlpProxyMu  sync.RWMutex
 	ytDlpProxyURL string
+
+	ytDlpImpersonateMu     sync.RWMutex
+	ytDlpImpersonateTarget string
 )
 
 // InitYtDlpProxy configures an optional proxy passed to every yt-dlp invocation.
@@ -39,6 +42,39 @@ func YtDlpProxyArgs() []string {
 		return nil
 	}
 	return []string{"--proxy", ytDlpProxyURL}
+}
+
+// InitYtDlpImpersonate configures yt-dlp's browser impersonation target.
+// The production Docker image sets this to "chrome" because it includes
+// curl-cffi. Empty disables impersonation, which is useful for manual installs
+// of yt-dlp without the curl-cffi extra.
+func InitYtDlpImpersonate(target string) string {
+	target = strings.TrimSpace(target)
+	ytDlpImpersonateMu.Lock()
+	ytDlpImpersonateTarget = target
+	ytDlpImpersonateMu.Unlock()
+	return target
+}
+
+// YtDlpImpersonateArgs returns --impersonate arguments for yt-dlp invocations,
+// or nil when impersonation is not configured.
+func YtDlpImpersonateArgs() []string {
+	ytDlpImpersonateMu.RLock()
+	defer ytDlpImpersonateMu.RUnlock()
+	if ytDlpImpersonateTarget == "" {
+		return nil
+	}
+	return []string{"--impersonate", ytDlpImpersonateTarget}
+}
+
+// YtDlpImpersonateArgsForURL applies browser impersonation only to video sites
+// that commonly need browser-like TLS/headers. This avoids changing YouTube and
+// Vimeo behavior when the Docker image defaults YTDLP_IMPERSONATE=chrome.
+func YtDlpImpersonateArgsForURL(rawURL string) []string {
+	if !(IsInstagramURL(rawURL) || IsTikTokURL(rawURL) || IsFacebookURL(rawURL)) {
+		return nil
+	}
+	return YtDlpImpersonateArgs()
 }
 
 // InitYtDlpCookies configures the cookies file passed to every yt-dlp invocation.

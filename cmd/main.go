@@ -76,6 +76,7 @@ type Config struct {
 	YtDlpCookiesFile string `envconfig:"YTDLP_COOKIES_FILE"` // Path to a Netscape-format cookies.txt
 	YtDlpCookiesB64  string `envconfig:"YTDLP_COOKIES_B64"`  // Base64-encoded cookies.txt content (used when no file path is set)
 	YtDlpProxy       string `envconfig:"YTDLP_PROXY"`        // Optional proxy (e.g. residential) for yt-dlp; Instagram throttles datacenter IPs
+	YtDlpImpersonate string `envconfig:"YTDLP_IMPERSONATE"`  // Optional yt-dlp --impersonate target (Docker defaults to chrome)
 }
 
 // CustomErrorHandler implements the River ErrorHandler interface and updates archive items.
@@ -365,6 +366,9 @@ func main() {
 	}
 	if proxy := utils.InitYtDlpProxy(cfg.YtDlpProxy); proxy != "" {
 		slog.Info("yt-dlp proxy configured")
+	}
+	if impersonate := utils.InitYtDlpImpersonate(cfg.YtDlpImpersonate); impersonate != "" {
+		slog.Info("yt-dlp browser impersonation configured", "target", impersonate)
 	}
 
 	// Perform health checks on startup

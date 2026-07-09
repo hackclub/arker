@@ -40,6 +40,9 @@ The `.env` file is optional. If it doesn't exist, Arker will use environment var
 - `ADMIN_PASSWORD` - Admin login password (default: `admin`)
 - `LOGIN_TEXT` - Custom text to display under the login form. Useful for providing demo credentials (e.g., `LOGIN_TEXT="Demo: admin/admin"`). Supports basic HTML.
 - `GIN_MODE` - Gin framework mode (`debug` for development)
+- `YTDLP_COOKIES_FILE` / `YTDLP_COOKIES_B64` - Optional Netscape cookies.txt for yt-dlp. Useful for Instagram and other sites that require login.
+- `YTDLP_PROXY` - Optional proxy URL passed to yt-dlp. A residential/mobile proxy may be needed when Instagram rate-limits datacenter IPs.
+- `YTDLP_IMPERSONATE` - Optional yt-dlp `--impersonate` target for Instagram/TikTok/Facebook video URLs. Production/dev Docker images default this to `chrome` and install `curl-cffi`; set it empty to disable.
 
 ### Itch.io Game Archiving
 
@@ -49,6 +52,17 @@ The `.env` file is optional. If it doesn't exist, Arker will use environment var
 **Dependencies for itch.io support:**
 - Python 3.10+ with `itch-dl` package: `pip install itch-dl`
 - itch.io API key: Generate at https://itch.io/user/settings → API Keys
+
+### Video Archiving
+
+Arker shells out to `yt-dlp` for YouTube/Vimeo/Instagram/TikTok/Facebook-style videos. The production Dockerfile installs yt-dlp from the nightly (`--pre`) channel with `curl-cffi` because Instagram extractor fixes often land before stable releases. The Docker build also cache-busts on the latest yt-dlp nightly release metadata so redeploys do not keep a stale yt-dlp layer.
+
+For manual installs, prefer:
+
+```bash
+pip3 install --upgrade --pre "yt-dlp[default,curl-cffi]"
+YTDLP_IMPERSONATE=chrome  # used for Instagram/TikTok/Facebook video URLs
+```
 
 ### Storage Configuration
 

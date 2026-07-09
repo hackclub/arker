@@ -41,16 +41,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     va-driver-all \
     libva2 \
     libva-drm2 \
-    # curl-cffi enables yt-dlp browser impersonation, which TikTok requires.
-    # yt-dlp installed from the nightly (--pre) channel: Instagram breaks the
-    # stable extractor faster than stable releases ship (the 2026.06.09 stable
-    # extractor started returning "empty media response" for reels mid-2026-07;
-    # the nightly already had the fix). Rebuild picks up the latest nightly.
     && pip3 install --break-system-packages --no-cache-dir itch-dl \
-    && pip3 install --break-system-packages --no-cache-dir --pre "yt-dlp[default,curl-cffi]" \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /root/.cache
+
+# yt-dlp is intentionally installed from the nightly (--pre) channel because
+# Instagram breaks extractors faster than stable releases ship. This remote ADD
+# invalidates Docker's cache whenever the latest nightly release changes, so a
+# Coolify rebuild actually refreshes yt-dlp instead of reusing a stale layer.
+ADD https://api.github.com/repos/yt-dlp/yt-dlp-nightly-builds/releases/latest /tmp/yt-dlp-nightly-release.json
+RUN pip3 install --break-system-packages --no-cache-dir --upgrade --pre "yt-dlp[default,curl-cffi]" \
+    && yt-dlp --version > /etc/yt-dlp-version \
+    && rm -rf /root/.cache
+
+# The Docker image includes curl-cffi, so use yt-dlp's browser impersonation by
+# default for Instagram/TikTok/Facebook anti-bot responses. Arker applies this
+# only to those URL families. Override to empty to disable, or to another target
+# accepted by `yt-dlp --list-impersonate-targets`.
+ENV YTDLP_IMPERSONATE=chrome
 
 # Install Deno
 RUN curl -fsSL https://deno.land/install.sh | sh

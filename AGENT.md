@@ -169,6 +169,7 @@ git clone https://archive.selfhosted.hackclub.com/git/{shortid}
 - `YTDLP_COOKIES_FILE` - Path to a Netscape-format cookies.txt passed to every yt-dlp invocation (required for Instagram video archiving; Instagram refuses media requests from logged-out clients)
 - `YTDLP_COOKIES_B64` - Base64-encoded cookies.txt content, written to a temp file at startup (used when `YTDLP_COOKIES_FILE` is unset; convenient for Coolify secrets)
 - `YTDLP_PROXY` - Optional proxy URL (e.g. `http://user:pass@host:port`, `socks5://...`) applied to every yt-dlp call. Instagram aggressively rate-limits datacenter IP ranges; a residential/mobile proxy is the reliable way to archive Instagram from a server. yt-dlp itself must also be kept current (installed from the nightly `--pre` channel) since Instagram breaks the extractor frequently.
+- `YTDLP_IMPERSONATE` - Optional yt-dlp `--impersonate` target for Instagram/TikTok/Facebook video URLs. Docker images default to `chrome` and install `curl-cffi`; set empty to disable for manual installs without curl-cffi.
 
 - `LOGIN_TEXT` - Text to display under login form
 

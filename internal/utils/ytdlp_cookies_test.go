@@ -166,6 +166,32 @@ func TestInitYtDlpProxy(t *testing.T) {
 	}
 }
 
+func TestInitYtDlpImpersonate(t *testing.T) {
+	t.Cleanup(func() { InitYtDlpImpersonate("") })
+
+	if args := YtDlpImpersonateArgs(); args != nil {
+		t.Fatalf("YtDlpImpersonateArgs with no target = %v, want nil", args)
+	}
+
+	InitYtDlpImpersonate("  chrome  ")
+	args := YtDlpImpersonateArgs()
+	if len(args) != 2 || args[0] != "--impersonate" || args[1] != "chrome" {
+		t.Fatalf("YtDlpImpersonateArgs = %v, want [--impersonate chrome] (trimmed)", args)
+	}
+
+	if args := YtDlpImpersonateArgsForURL("https://www.instagram.com/reel/DaZWJMSzA7Q/"); len(args) != 2 || args[0] != "--impersonate" || args[1] != "chrome" {
+		t.Fatalf("YtDlpImpersonateArgsForURL(instagram) = %v, want [--impersonate chrome]", args)
+	}
+	if args := YtDlpImpersonateArgsForURL("https://www.youtube.com/watch?v=dQw4w9WgXcQ"); args != nil {
+		t.Fatalf("YtDlpImpersonateArgsForURL(youtube) = %v, want nil", args)
+	}
+
+	InitYtDlpImpersonate("")
+	if args := YtDlpImpersonateArgs(); args != nil {
+		t.Fatalf("YtDlpImpersonateArgs after clearing = %v, want nil", args)
+	}
+}
+
 func TestInitYtDlpCookiesFileTakesPrecedenceOverBase64(t *testing.T) {
 	resetYtDlpCookies(t)
 

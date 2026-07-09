@@ -144,6 +144,7 @@ func ProbeYtDlpDuration(ctx context.Context, url string) (time.Duration, error) 
 	defer cleanupCookies()
 
 	args := []string{"--print", "duration", "--no-playlist", "--skip-download"}
+	args = append(args, YtDlpImpersonateArgsForURL(url)...)
 	args = append(args, cookieArgs...)
 	args = append(args, YtDlpProxyArgs()...)
 	args = append(args, url)
