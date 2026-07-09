@@ -20,7 +20,7 @@ Repo verification gates (every plan uses these):
 | 006 | Harden session cookie (HttpOnly/Secure/SameSite) | P1 | S | — | DONE |
 | 007 | Redact yt-dlp proxy credential from archive logs | P1 | M | 001 | DONE |
 | 008 | Require auth on metrics/status endpoints | P2 | S | — | DONE |
-| 009 | Add DB indexes for hot-path columns | P2 | S | — | TODO |
+| 009 | Add DB indexes for hot-path columns | P2 | S | — | DONE |
 | 010 | Remove half-unpacked git cache dir on failure | P2 | S | 001 | TODO |
 | 011 | Guard MHTML CDP result parsing (no panic) | P2 | S | 001 | TODO |
 | 012 | Guard `/admin` routes with login middleware group | P2 | M | 001 | TODO |

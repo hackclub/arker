@@ -287,6 +287,12 @@ func main() {
 		slog.Error("AutoMigrate failed with detailed error", "error", err, "error_type", fmt.Sprintf("%T", err), "error_string", err.Error())
 		slog.Info("Continuing startup despite AutoMigrate error")
 	}
+	// Composite index for the queue-position and status-count queries that run on
+	// every archive page view / dashboard load. CreatedAt is embedded in
+	// gorm.Model, so this is expressed as raw SQL rather than a struct tag.
+	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_archive_items_status_created_at ON archive_items (status, created_at)").Error; err != nil {
+		slog.Error("Failed to create archive_items status/created_at index", "error", err)
+	}
 	if err := utils.ConfigureArchiveItemLogSchema(db); err != nil {
 		slog.Error("Archive log schema configuration failed", "error", err)
 	} else if err := utils.BackfillLegacyArchiveItemLogs(db); err != nil {

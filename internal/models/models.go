@@ -42,7 +42,7 @@ type ArchivedURL struct {
 // Capture represents a snapshot of an archived URL at a specific time
 type Capture struct {
 	gorm.Model
-	ArchivedURLID uint
+	ArchivedURLID uint        `gorm:"index"`
 	ArchivedURL   ArchivedURL `gorm:"foreignKey:ArchivedURLID"`
 	Timestamp     time.Time
 	ShortID       string        `gorm:"unique"`
@@ -54,8 +54,8 @@ type Capture struct {
 // ArchiveItem represents a specific type of archive (screenshot, mhtml, etc.)
 type ArchiveItem struct {
 	gorm.Model
-	CaptureID  uint
-	Type       string // mhtml, screenshot, git, youtube
+	CaptureID  uint   `gorm:"index:idx_archive_items_capture_type,priority:1"`
+	Type       string `gorm:"index:idx_archive_items_capture_type,priority:2"` // mhtml, screenshot, git, youtube
 	Status     string // pending, processing, completed, failed
 	StorageKey string
 	Extension  string // .webp, .mhtml, .tar.zst, .mp4, etc.
