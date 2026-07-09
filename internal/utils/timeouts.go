@@ -154,7 +154,8 @@ func ProbeYtDlpDuration(ctx context.Context, url string) (time.Duration, error) 
 		return 0, fmt.Errorf("yt-dlp duration probe timed out after %s", config.YtDlpProbeTimeout)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("yt-dlp duration probe failed: %w: %s", err, strings.TrimSpace(string(output)))
+		outputText := RedactSecrets(strings.TrimSpace(string(output)), YtDlpProxyRedactionSecrets())
+		return 0, fmt.Errorf("yt-dlp duration probe failed: %w: %s", err, outputText)
 	}
 
 	duration, err := parseYtDlpDuration(output)

@@ -56,6 +56,8 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 		fmt.Fprintf(logWriter, "Could not determine yt-dlp version: %v\n", versionErr)
 	}
 
+	redactedLog := utils.NewRedactingWriter(logWriter, utils.YtDlpProxyRedactionSecrets())
+
 	// Prepare command arguments
 	testArgs := []string{"--print", "title,duration,uploader"}
 
@@ -69,10 +71,10 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	testCmd.Args = append(testCmd.Args, url)
 	testOutput, err := testCmd.CombinedOutput()
 	if err != nil {
-		fmt.Fprintf(logWriter, "yt-dlp test failed: %v\nOutput: %s\n", err, string(testOutput))
+		fmt.Fprintf(redactedLog, "yt-dlp test failed: %v\nOutput: %s\n", err, string(testOutput))
 		return nil, "", "", nil, fmt.Errorf("yt-dlp cannot access video: %v", err)
 	}
-	fmt.Fprintf(logWriter, "Video info:\n%s\n", string(testOutput))
+	fmt.Fprintf(redactedLog, "Video info:\n%s\n", string(testOutput))
 
 	// Check context before main download
 	select {
@@ -98,8 +100,8 @@ func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Write
 	cmd.Args = append(cmd.Args, cookieArgs...)
 	cmd.Args = append(cmd.Args, utils.YtDlpProxyArgs()...)
 	cmd.Args = append(cmd.Args, url)
-	cmd.Stdout = logWriter
-	cmd.Stderr = logWriter
+	cmd.Stdout = redactedLog
+	cmd.Stderr = redactedLog
 
 	// Set process group so we can kill the entire process tree on timeout
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
