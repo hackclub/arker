@@ -24,7 +24,7 @@ Repo verification gates (every plan uses these):
 | 010 | Remove half-unpacked git cache dir on failure | P2 | S | 001 | DONE |
 | 011 | Guard MHTML CDP result parsing (no panic) | P2 | S | 001 | DONE |
 | 012 | Guard `/admin` routes with login middleware group | P2 | M | 001 | DONE |
-| 013 | Remove public itch debug endpoint | P2 | S | — | TODO |
+| 013 | Remove public itch debug endpoint | P2 | S | — | DONE |
 | 014 | Characterization tests for archive worker | P2 | M | 001, 004, 005 | TODO |
 | 015 | Design spike: archive-status API endpoint | P3 | M | — | TODO |
 

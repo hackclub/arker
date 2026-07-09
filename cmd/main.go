@@ -571,7 +571,6 @@ func main() {
 
 	// Itch routes - MUST come before /:shortid/:type catch-all
 	r.GET("/itch/health", handlers.ServeItchHealth)
-	r.GET("/itch/:shortid/debug", func(c *gin.Context) { handlers.ServeItchDebug(c, storageInstance, db) })
 	r.GET("/itch/:shortid/file/*filepath", func(c *gin.Context) { handlers.ServeItchFile(c, storageInstance, db) })
 	r.GET("/itch/:shortid/list", func(c *gin.Context) { handlers.ServeItchGameList(c, storageInstance, db) })
 
