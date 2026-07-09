@@ -511,9 +511,24 @@ func main() {
 
 	// Setup routes
 	r.GET("/health", handlers.HealthCheckHandler(db))
-	r.GET("/metrics/browser", handlers.BrowserMetricsHandler())
-	r.GET("/status/browser", handlers.BrowserStatusHandler())
-	r.GET("/status/db-storage", handlers.DBStorageStatusHandler(db))
+	r.GET("/metrics/browser", func(c *gin.Context) {
+		if !handlers.RequireLogin(c) {
+			return
+		}
+		handlers.BrowserMetricsHandler()(c)
+	})
+	r.GET("/status/browser", func(c *gin.Context) {
+		if !handlers.RequireLogin(c) {
+			return
+		}
+		handlers.BrowserStatusHandler()(c)
+	})
+	r.GET("/status/db-storage", func(c *gin.Context) {
+		if !handlers.RequireLogin(c) {
+			return
+		}
+		handlers.DBStorageStatusHandler(db)(c)
+	})
 	r.GET("/login", func(c *gin.Context) { handlers.LoginGet(c, cfg.LoginText) })
 	r.POST("/login", func(c *gin.Context) { handlers.LoginPost(c, db, cfg.LoginText) })
 	r.GET("/admin/api-keys", func(c *gin.Context) { handlers.ApiKeysGet(c, db) })
