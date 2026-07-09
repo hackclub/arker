@@ -12,7 +12,7 @@ Arker is a Go-based web archiving server that captures web pages using multiple 
 
 ### Essential Development Commands
 - **Build**: `go build -o arker ./cmd`
-- **Test**: `go test -v`
+- **Test**: `go test ./... -count=1`
 - **Run locally**: `go run ./cmd` or `go run .`
 - **Lint/Format**: `go fmt ./...` and `go vet ./...`
 - **Build check**: `go build ./...`

@@ -140,7 +140,7 @@ func CheckPlaywrightAvailability(timeout time.Duration) error {
 // CheckItchDlAvailability checks if itch-dl is available and working
 func CheckItchDlAvailability(timeout time.Duration) error {
 	done := make(chan error, 1)
-	
+
 	go func() {
 		// Check if itch-dl is available
 		cmd := exec.Command("python3", "-m", "itch_dl", "--help")
@@ -149,10 +149,10 @@ func CheckItchDlAvailability(timeout time.Duration) error {
 			done <- fmt.Errorf("itch-dl not available: %v", err)
 			return
 		}
-		
+
 		done <- nil
 	}()
-	
+
 	select {
 	case err := <-done:
 		return err

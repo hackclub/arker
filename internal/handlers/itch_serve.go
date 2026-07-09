@@ -160,7 +160,7 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 			break
 		}
 	}
-	
+
 	// If not found, try URL decoding the path
 	if targetFile == nil {
 		decodedPath, err := url.QueryUnescape(filePath)
@@ -218,7 +218,7 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 		c.Header("Content-Type", contentType)
 		c.Header("Content-Length", fmt.Sprintf("%d", targetFile.UncompressedSize64))
 		c.Status(http.StatusOK)
-		
+
 		// For HTML files, rewrite relative paths to absolute paths
 		if contentType == "text/html; charset=utf-8" || contentType == "text/html" {
 			content, err := io.ReadAll(fileReader)
@@ -226,7 +226,7 @@ func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB)
 				c.Status(http.StatusInternalServerError)
 				return
 			}
-			
+
 			// Rewrite relative paths in HTML content
 			rewrittenContent := rewriteHTMLPaths(string(content), shortID)
 			c.Header("Content-Length", fmt.Sprintf("%d", len(rewrittenContent)))
@@ -335,7 +335,7 @@ func (r *bytesReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 func rewriteHTMLPaths(content, shortID string) string {
 	// Use regex to find and replace game/ paths with properly encoded absolute paths
 	baseURL := fmt.Sprintf("/itch/%s/file/", shortID)
-	
+
 	// Pattern to match src="game/..." or src='game/...'
 	srcPattern := regexp.MustCompile(`(src=["']?)game/([^"' ]+)`)
 	content = srcPattern.ReplaceAllStringFunc(content, func(match string) string {
@@ -347,7 +347,7 @@ func rewriteHTMLPaths(content, shortID string) string {
 		}
 		return match
 	})
-	
+
 	// Pattern to match href="game/..." or href='game/...'
 	hrefPattern := regexp.MustCompile(`(href=["']?)game/([^"' ]+)`)
 	content = hrefPattern.ReplaceAllStringFunc(content, func(match string) string {
@@ -359,7 +359,7 @@ func rewriteHTMLPaths(content, shortID string) string {
 		}
 		return match
 	})
-	
+
 	return content
 }
 

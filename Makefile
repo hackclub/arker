@@ -35,7 +35,7 @@ prod-logs:
 # Testing and utilities
 test:
 	@echo "🧪 Running tests..."
-	go test -v
+	go test ./... -count=1
 
 clean:
 	@echo "🧹 Cleaning up..."
