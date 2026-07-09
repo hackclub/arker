@@ -211,7 +211,7 @@ go test -run TestFSStorage    # Run specific test
 - **gin-contrib/sessions** v0.0.5 - Session management
 
 ### Archive & Browser
-- **playwright-community/playwright-go** v0.5700.1 - Browser automation
+- **playwright-community/playwright-go** v0.6000.0 - Browser automation
 - **go-git/go-git/v5** v5.8.1 - Git operations
 - **klauspost/compress** v1.18.0 - zstd compression
 

@@ -49,7 +49,7 @@ WORKDIR /app
 RUN go install github.com/air-verse/air@v1.52.3
 
 # Install Playwright CLI that matches our library version
-RUN go install github.com/playwright-community/playwright-go/cmd/playwright@v0.5700.1
+RUN go install github.com/playwright-community/playwright-go/cmd/playwright@v0.6000.0
 ENV PATH="/root/go/bin:${PATH}"
 
 # Copy go.mod and go.sum first for better Docker layer caching
