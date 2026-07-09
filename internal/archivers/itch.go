@@ -295,12 +295,14 @@ func addDirectoryToZip(zipWriter *zip.Writer, sourceDir, zipPrefix string, logWr
 		if entry.IsDir() {
 			// Recursively add subdirectory
 			if err := addDirectoryToZip(zipWriter, sourcePath, zipPath, logWriter); err != nil {
-				fmt.Fprintf(logWriter, "Warning: failed to add directory %s: %v\n", zipPath, err)
+				fmt.Fprintf(logWriter, "Failed to add directory %s: %v\n", zipPath, err)
+				return fmt.Errorf("add directory %s: %w", zipPath, err)
 			}
 		} else {
 			// Add file as-is
 			if err := addFileFromDiskToZip(zipWriter, zipPath, sourcePath); err != nil {
-				fmt.Fprintf(logWriter, "Warning: failed to add file %s: %v\n", zipPath, err)
+				fmt.Fprintf(logWriter, "Failed to add file %s: %v\n", zipPath, err)
+				return fmt.Errorf("add file %s: %w", zipPath, err)
 			}
 		}
 	}
