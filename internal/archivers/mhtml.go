@@ -83,7 +83,26 @@ func (a *MHTMLArchiver) ArchiveWithPageContext(ctx context.Context, page playwri
 		return nil, "", "", bundle, err
 	}
 
-	dataStr := result.(map[string]interface{})["data"].(string)
+	dataStr, err := parseMHTMLSnapshot(result)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to parse MHTML snapshot result: %v\n", err)
+		return nil, "", "", bundle, err
+	}
 	fmt.Fprintf(logWriter, "MHTML archive completed successfully, size: %d bytes\n", len(dataStr))
 	return strings.NewReader(dataStr), ".mhtml", "application/x-mhtml", bundle, nil
+}
+
+// parseMHTMLSnapshot extracts the MHTML payload from a Page.captureSnapshot CDP
+// result. It returns a descriptive error instead of panicking when the result is
+// nil or not the expected {"data": string} shape.
+func parseMHTMLSnapshot(result interface{}) (string, error) {
+	m, ok := result.(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("unexpected MHTML snapshot result type %T", result)
+	}
+	data, ok := m["data"].(string)
+	if !ok {
+		return "", fmt.Errorf("MHTML snapshot result missing string \"data\" field")
+	}
+	return data, nil
 }
