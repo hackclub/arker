@@ -25,7 +25,7 @@ Repo verification gates (every plan uses these):
 | 011 | Guard MHTML CDP result parsing (no panic) | P2 | S | 001 | DONE |
 | 012 | Guard `/admin` routes with login middleware group | P2 | M | 001 | DONE |
 | 013 | Remove public itch debug endpoint | P2 | S | — | DONE |
-| 014 | Characterization tests for archive worker | P2 | M | 001, 004, 005 | TODO |
+| 014 | Characterization tests for archive worker | P2 | M | 001, 004, 005 | DONE |
 | 015 | Design spike: archive-status API endpoint | P3 | M | — | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED
