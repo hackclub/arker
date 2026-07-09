@@ -102,6 +102,7 @@ func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 	// Start context-aware tar creation in a goroutine
 	go func() {
 		defer pw.Close()
+		defer cleanup() // remove the clone temp dir once tar bytes are fully written
 
 		// Check context before starting tar creation
 		select {
