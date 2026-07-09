@@ -134,7 +134,6 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 
 	if err != nil {
 		slog.Error("Archive operation failed", "short_id", jobArgs.ShortID, "type", jobArgs.Type, "error", err)
-		db.Model(item).Update("status", "failed")
 		return err
 	}
 
@@ -146,7 +145,6 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 	if err != nil {
 		slog.Error("Failed to save archive data", "short_id", jobArgs.ShortID, "type", jobArgs.Type, "error", err)
 		fmt.Fprintf(dbLogWriter, "\nFailed to save archive data: %v\n", err)
-		db.Model(item).Update("status", "failed")
 		return err
 	}
 
