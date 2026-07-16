@@ -52,7 +52,7 @@ When using Amp with `make dev` running in another window:
 4. Run: `go run .`
 
 ### Dependencies
-- **Go 1.24+** (using Go 1.24.5 toolchain)
+- **Go 1.25.12+**
 - **PostgreSQL 15**
 - **Git** (for repository archiving)
 - **Python 3 + yt-dlp** (for YouTube archiving)
