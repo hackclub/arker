@@ -1,4 +1,4 @@
-FROM golang:1.24-bookworm
+FROM golang:1.25.12-bookworm
 
 # Install system dependencies in a single layer with aggressive cleanup
 RUN apt-get update && apt-get install -y --no-install-recommends \
