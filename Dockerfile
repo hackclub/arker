@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     aria2 \
     unzip \
+    # tini is used as PID 1 (see ENTRYPOINT) to reap orphaned browser subprocesses
+    tini \
     # Playwright browser dependencies
     libnss3 \
     libnspr4 \
@@ -90,4 +92,10 @@ RUN mkdir -p /data /cache
 
 EXPOSE 8080
 
+# Run under tini as PID 1. Playwright's chromium/headless_shell children get
+# reparented to PID 1 when their launcher exits; arker does not reap them, so they
+# accumulated as zombies and eventually exhausted the container PID limit. tini
+# reaps them automatically, and this is baked into the image so it holds regardless
+# of whether the runtime sets `docker run --init`.
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["./arker"]

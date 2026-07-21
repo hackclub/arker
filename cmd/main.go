@@ -361,14 +361,16 @@ func main() {
 	// Populate file sizes for existing archives
 	populateFileSizes(db, storageInstance)
 
-	// Configure yt-dlp cookies for sites that require authentication (e.g. Instagram)
+	// Configure yt-dlp cookies for sites that require authentication (e.g. Instagram).
+	// Cookies are optional, so a misconfigured path (e.g. a wrong mount) must degrade
+	// login-gated video archiving rather than crash the whole server on startup.
 	cookiesPath, err := utils.InitYtDlpCookies(cfg.YtDlpCookiesFile, cfg.YtDlpCookiesB64, os.TempDir())
-	if err != nil {
-		log.Fatalf("Failed to configure yt-dlp cookies: %v", err)
-	}
-	if cookiesPath != "" {
+	switch {
+	case err != nil:
+		slog.Error("Failed to configure yt-dlp cookies; continuing without them (videos on sites requiring login will fail to archive)", "error", err)
+	case cookiesPath != "":
 		slog.Info("yt-dlp cookies configured", "path", cookiesPath)
-	} else {
+	default:
 		slog.Warn("No yt-dlp cookies configured; videos on sites requiring login (e.g. Instagram) will fail to archive")
 	}
 	if proxy := utils.InitYtDlpProxy(cfg.YtDlpProxy); proxy != "" {
