@@ -3,6 +3,7 @@ FROM golang:1.25.12-bookworm
 # Install system dependencies in a single layer with aggressive cleanup
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    tini \
     python3 \
     python3-pip \
     curl \
@@ -104,4 +105,9 @@ RUN mkdir -p /data /cache
 
 EXPOSE 8080
 
+# tini reaps the zombie headless_shell/browser children that arker's own PID-1
+# process never wait()s on. Without an init, prod accumulates ~1k defunct PIDs
+# per day and eventually hits the container's pids cgroup limit, at which point
+# archiving breaks with fork failures.
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["./arker"]
