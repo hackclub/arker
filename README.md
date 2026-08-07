@@ -3,7 +3,7 @@
 A self-hostable minimalist version of <https://archive.org>.
 
 - Creates Chrome snapshots of URLs and serves them at nice short URLs like <https://archive.hackclub.com/p9OGi>
-- Also supports git clones, YouTube videos, itch.io games, and website screenshots
+- Also supports git clones, videos (yt-dlp), photo posts and carousels (gallery-dl), itch.io games, and website screenshots
 - Comprehensive API
 
 - Stores everything compressed using [zstd](https://github.com/facebook/zstd) level 6 (seekable format for random access)
@@ -40,8 +40,8 @@ The `.env` file is optional. If it doesn't exist, Arker will use environment var
 - `ADMIN_PASSWORD` - Admin login password (default: `admin`)
 - `LOGIN_TEXT` - Custom text to display under the login form. Useful for providing demo credentials (e.g., `LOGIN_TEXT="Demo: admin/admin"`). Supports basic HTML.
 - `GIN_MODE` - Gin framework mode (`debug` for development)
-- `YTDLP_COOKIES_FILE` / `YTDLP_COOKIES_B64` - Optional Netscape cookies.txt for yt-dlp. Useful for Instagram and other sites that require login.
-- `YTDLP_PROXY` - Optional proxy URL passed to yt-dlp. A residential/mobile proxy may be needed when Instagram rate-limits datacenter IPs.
+- `YTDLP_COOKIES_FILE` / `YTDLP_COOKIES_B64` - Optional Netscape cookies.txt, shared by yt-dlp and gallery-dl. Required for Instagram and other sites that require login.
+- `YTDLP_PROXY` - Optional proxy URL passed to yt-dlp and gallery-dl. A residential/mobile proxy may be needed when Instagram rate-limits datacenter IPs. `socks5://` needs PySocks (`pip install "requests[socks]"`, already in the Docker images).
 - `YTDLP_IMPERSONATE` - Optional yt-dlp `--impersonate` target for Instagram/TikTok/Facebook video URLs. Production/dev Docker images default this to `chrome` and install `curl-cffi`; set it empty to disable.
 
 ### Itch.io Game Archiving
@@ -53,9 +53,9 @@ The `.env` file is optional. If it doesn't exist, Arker will use environment var
 - Python 3.10+ with `itch-dl` package: `pip install itch-dl`
 - itch.io API key: Generate at https://itch.io/user/settings → API Keys
 
-### Video Archiving
+### Video Archiving (yt-dlp)
 
-Arker shells out to `yt-dlp` for YouTube/Vimeo/Instagram/TikTok/Facebook-style videos. The production Dockerfile installs yt-dlp from the nightly (`--pre`) channel with `curl-cffi` because Instagram extractor fixes often land before stable releases. The Docker build also cache-busts on the latest yt-dlp nightly release metadata so redeploys do not keep a stale yt-dlp layer.
+Arker shells out to `yt-dlp` for YouTube/Vimeo/Instagram-reel/TikTok/Facebook-style videos. The production Dockerfile installs yt-dlp from the nightly (`--pre`) channel with `curl-cffi` because Instagram extractor fixes often land before stable releases. The Docker build also cache-busts on the latest yt-dlp nightly release metadata so redeploys do not keep a stale yt-dlp layer.
 
 For manual installs, prefer:
 
@@ -63,6 +63,38 @@ For manual installs, prefer:
 pip3 install --upgrade --pre "yt-dlp[default,curl-cffi]"
 YTDLP_IMPERSONATE=chrome  # used for Instagram/TikTok/Facebook video URLs
 ```
+
+### Photo and Carousel Archiving (gallery-dl)
+
+yt-dlp only downloads video. A URL whose media is photos — an Instagram feed
+post, an X status, a Reddit gallery — makes it fail outright with *"There is no
+video in this post"*. Those URLs go to `gallery-dl` instead, which fetches every
+image and video in the post along with the caption, author, date, and like count.
+
+The result is a ZIP holding every downloaded file, gallery-dl's raw per-file
+metadata sidecars, and a normalized `metadata.json` written by Arker. The viewer
+renders it as the original post; `/gallery/:shortid/list` returns the same data
+as JSON.
+
+Routed hosts (post-shaped URLs only, so a profile link never pulls a whole
+account): Instagram `/p/` and `/tv/`, X/Twitter, Reddit, Tumblr, Bluesky, Flickr,
+Imgur, DeviantArt, ArtStation, Pixiv, Pinterest, Newgrounds, VSCO. Adding one is
+a single entry in `galleryDLSites` in `internal/utils/url_utils.go`.
+
+```bash
+pip3 install --upgrade gallery-dl "requests[socks]"
+```
+
+Install gallery-dl into the **same** Python environment as yt-dlp: gallery-dl's
+default Instagram video path hands DASH manifests to yt-dlp as an importable
+module, and silently falls back to lower-quality pre-merged MP4 if it cannot
+import one.
+
+Instagram archiving needs cookies (`YTDLP_COOKIES_FILE`) — logged out, every
+request redirects to the login page. Do not add a `GALLERYDL_SLEEP_REQUEST`
+override to "be safe": gallery-dl already waits a randomized 6-12 seconds between
+Instagram API calls, and that setting replaces the per-site default rather than
+acting as a floor.
 
 ### Storage Configuration
 

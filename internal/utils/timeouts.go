@@ -19,6 +19,8 @@ type TimeoutConfig struct {
 	YtDlpMaxTimeout       time.Duration // Maximum dynamic max time for yt-dlp operations
 	YtDlpProbeTimeout     time.Duration // Max time for probing video metadata
 	YtDlpDurationOverhead time.Duration // Extra time for extraction, muxing, and upload
+	GalleryDlTimeout      time.Duration // Max time for gallery-dl operations
+	ItchTimeout           time.Duration // Max time for itch-dl operations
 	PageLoadTimeout       time.Duration // Max time for page loading
 }
 
@@ -32,7 +34,14 @@ func DefaultTimeoutConfig() TimeoutConfig {
 		YtDlpMaxTimeout:       3 * time.Hour,
 		YtDlpProbeTimeout:     30 * time.Second,
 		YtDlpDurationOverhead: 10 * time.Minute,
-		PageLoadTimeout:       30 * time.Second, // Page loading should be quick
+		// A carousel is a handful of files, but gallery-dl deliberately sleeps
+		// between requests and a post can hold video slides, so it needs far
+		// more than the 2-minute browser budget.
+		GalleryDlTimeout: 20 * time.Minute,
+		// itch-dl downloads whole game builds; the 2-minute default it used to
+		// inherit was never enough for anything but the smallest game.
+		ItchTimeout:     30 * time.Minute,
+		PageLoadTimeout: 30 * time.Second, // Page loading should be quick
 	}
 }
 
@@ -78,11 +87,15 @@ func WithTimeoutAndCancel(timeout time.Duration, fn ContextAwareFunction) (error
 // TimeoutForJobType returns the appropriate timeout for a given job type
 func TimeoutForJobType(jobType string) time.Duration {
 	config := DefaultTimeoutConfig()
-	switch jobType {
-	case "git":
+	switch NormalizeArchiveType(jobType) {
+	case ArchiveTypeGit:
 		return config.GitCloneTimeout
-	case "youtube":
+	case ArchiveTypeYtDlp:
 		return config.YtDlpTimeout
+	case ArchiveTypeGalleryDl:
+		return config.GalleryDlTimeout
+	case ArchiveTypeItch:
+		return config.ItchTimeout
 	default:
 		return config.ArchiveTimeout
 	}
@@ -111,7 +124,7 @@ func TimeoutForArchiveJob(ctx context.Context, jobType, url string, logWriter io
 }
 
 func timeoutForArchiveJob(ctx context.Context, jobType, url string, logWriter io.Writer, probeDuration func(context.Context, string) (time.Duration, error)) time.Duration {
-	if jobType != "youtube" {
+	if NormalizeArchiveType(jobType) != ArchiveTypeYtDlp {
 		return TimeoutForJobType(jobType)
 	}
 

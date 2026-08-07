@@ -17,6 +17,10 @@ import (
 func QueueCapture(ctx context.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx], url string, types []string, apiKeyID *uint) (string, error) {
 	if len(types) == 0 {
 		types = utils.GetArchiveTypes(url)
+	} else {
+		// Callers may still send retired type names (e.g. "youtube"); store
+		// and queue the canonical name so there is one type per archiver.
+		types = utils.NormalizeArchiveTypes(types)
 	}
 
 	var shortID string

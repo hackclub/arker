@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"gorm.io/gorm"
 	"math/big"
+	"net/url"
 	"strings"
 )
 
@@ -113,6 +114,22 @@ func IsInstagramURL(url string) bool {
 	return strings.Contains(lowerURL, "instagram.com") && (strings.Contains(lowerURL, "/reel/") || strings.Contains(lowerURL, "/p/") || strings.Contains(lowerURL, "/tv/"))
 }
 
+// IsInstagramPhotoPostURL reports whether an Instagram URL is a feed post
+// (/p/ or /tv/) rather than a reel.
+//
+// Feed posts are usually photos or mixed photo/video carousels, which yt-dlp
+// cannot download at all — it fails with "There is no video in this post". They
+// go to gallery-dl instead, which fetches every slide plus the caption and post
+// metadata, and picks up any video slides on the way. Reels are always a single
+// video, which is exactly yt-dlp's job, so they stay on that path.
+func IsInstagramPhotoPostURL(url string) bool {
+	if !IsInstagramURL(url) {
+		return false
+	}
+	lowerURL := strings.ToLower(url)
+	return strings.Contains(lowerURL, "/p/") || strings.Contains(lowerURL, "/tv/")
+}
+
 // Check if URL is a TikTok URL (full video links and vm/vt/t short links)
 func IsTikTokURL(url string) bool {
 	lowerURL := strings.ToLower(url)
@@ -141,8 +158,101 @@ func IsFacebookURL(url string) bool {
 }
 
 // Check if URL is a video URL (YouTube, Vimeo, Instagram, TikTok, Facebook, etc.)
+//
+// Instagram feed posts are excluded: they are photo carousels far more often
+// than video, and routing them here is what produced a ~87% yt-dlp failure rate
+// on /p/ URLs. They are handled by IsGalleryDLURL instead.
 func IsVideoURL(url string) bool {
+	if IsInstagramPhotoPostURL(url) {
+		return false
+	}
 	return IsYouTubeURL(url) || IsVimeoURL(url) || IsInstagramURL(url) || IsTikTokURL(url) || IsFacebookURL(url)
+}
+
+// galleryDLSite matches a host against the URL path shape that identifies a
+// single post/album on that host. gallery-dl also supports whole profiles,
+// tags, and feeds, but Arker archives one page at a time, so only post-shaped
+// URLs are routed here — a profile URL would otherwise pull down an entire
+// account.
+type galleryDLSite struct {
+	// host is matched against the registrable hostname, exactly or as a parent
+	// domain, so "x.com" covers www.x.com but never netflix.com.
+	host string
+	// paths are path prefixes/segments; an empty list means the host alone is
+	// enough. Matched against the URL path only, never the query string.
+	paths []string
+}
+
+// galleryDLSites is the set of sites Arker sends to gallery-dl. gallery-dl
+// itself supports ~300 sites; this list is deliberately narrower so that a
+// gallery-dl item is only created when it has a real chance of succeeding.
+// Adding a site is a one-line change here.
+var galleryDLSites = []galleryDLSite{
+	// Instagram feed posts. Reels stay on yt-dlp (see IsVideoURL).
+	{host: "instagram.com", paths: []string{"/p/", "/tv/"}},
+	{host: "twitter.com", paths: []string{"/status/"}},
+	{host: "x.com", paths: []string{"/status/"}},
+	{host: "reddit.com", paths: []string{"/comments/"}},
+	{host: "redd.it"},
+	{host: "tumblr.com", paths: []string{"/post/"}},
+	{host: "bsky.app", paths: []string{"/post/"}},
+	{host: "flickr.com", paths: []string{"/photos/"}},
+	{host: "imgur.com", paths: []string{"/a/", "/gallery/", "/t/"}},
+	{host: "deviantart.com", paths: []string{"/art/"}},
+	{host: "artstation.com", paths: []string{"/artwork/"}},
+	{host: "pixiv.net", paths: []string{"/artworks/"}},
+	{host: "pinterest.com", paths: []string{"/pin/"}},
+	{host: "newgrounds.com", paths: []string{"/art/view/"}},
+	{host: "vsco.co", paths: []string{"/media/"}},
+}
+
+// IsGalleryDLURL reports whether a URL points at a post whose media gallery-dl
+// should download.
+//
+// Host and path are matched separately against the parsed URL rather than by
+// substring over the whole string. Substring matching is what would let
+// "x.com" match netflix.com, or a "/p/" anywhere in a query string route an
+// unrelated site here.
+func IsGalleryDLURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	if hostname == "" {
+		return false
+	}
+	path := strings.ToLower(parsed.Path)
+	if !strings.HasSuffix(path, "/") {
+		path += "/"
+	}
+
+	for _, site := range galleryDLSites {
+		if !hostMatches(hostname, site.host) {
+			continue
+		}
+		if len(site.paths) == 0 {
+			// Host-only entries (e.g. redd.it) still need a path to identify a
+			// specific item; a bare domain is a homepage, not a post.
+			if len(strings.Trim(path, "/")) > 0 {
+				return true
+			}
+			continue
+		}
+		for _, sitePath := range site.paths {
+			if strings.Contains(path, sitePath) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hostMatches reports whether hostname is the given domain or a subdomain of
+// it, so "www.instagram.com" matches "instagram.com" but "notinstagram.com"
+// does not.
+func hostMatches(hostname, domain string) bool {
+	return hostname == domain || strings.HasSuffix(hostname, "."+domain)
 }
 
 // Check if URL is an itch.io URL
@@ -153,21 +263,26 @@ func IsItchURL(url string) bool {
 
 // Get archive types based on URL patterns
 func GetArchiveTypes(url string) []string {
-	types := []string{"mhtml", "screenshot"}
+	types := []string{ArchiveTypeMHTML, ArchiveTypeScreenshot}
 
 	// Add itch archiver for itch.io URLs
 	if IsItchURL(url) {
-		types = append(types, "itch")
+		types = append(types, ArchiveTypeItch)
 	}
 
-	// Add YouTube archiver for video URLs (YouTube, Vimeo, etc.)
+	// Add gallery-dl for photo posts and mixed photo/video carousels
+	if IsGalleryDLURL(url) {
+		types = append(types, ArchiveTypeGalleryDl)
+	}
+
+	// Add yt-dlp for video URLs (YouTube, Vimeo, Instagram reels, TikTok, etc.)
 	if IsVideoURL(url) {
-		types = append(types, "youtube")
+		types = append(types, ArchiveTypeYtDlp)
 	}
 
 	// Add Git archiver for Git repository URLs
 	if IsGitURL(url) {
-		types = append(types, "git")
+		types = append(types, ArchiveTypeGit)
 	}
 
 	return types

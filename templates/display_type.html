@@ -170,12 +170,50 @@
             font-size: 12px; 
             white-space: pre-wrap;
         }
-        .processing-header { 
-            background: #e3f2fd; 
-            padding: 10px; 
-            border-radius: 4px; 
-            margin-bottom: 10px; 
-            border-left: 4px solid #2196f3; 
+        .processing-header {
+            background: #e3f2fd;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            border-left: 4px solid #2196f3;
+        }
+        .gallery-post { max-width: 900px; }
+        .gallery-meta {
+            background: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 12px 15px;
+            margin-bottom: 15px;
+        }
+        .gallery-meta .gallery-author { font-weight: 600; }
+        .gallery-meta .gallery-sub { color: #666; font-size: 13px; margin-top: 2px; }
+        .gallery-meta .gallery-caption {
+            margin-top: 10px;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+        .gallery-items {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 12px;
+        }
+        .gallery-item { position: relative; }
+        .gallery-item img, .gallery-item video {
+            width: 100%;
+            height: auto;
+            display: block;
+            border-radius: 4px;
+            background: #000;
+        }
+        .gallery-index {
+            position: absolute;
+            top: 6px;
+            left: 6px;
+            background: rgba(0,0,0,0.65);
+            color: #fff;
+            border-radius: 3px;
+            padding: 1px 6px;
+            font-size: 12px;
         }
     </style>
 </head>
@@ -196,106 +234,16 @@
         </div>
     </div>
 
+    {{/* Tab order and labels are computed server-side (handlers.buildTabs) so
+         the most useful archive for this kind of URL comes first. */}}
     <ul class="tabs">
-        {{if .is_itch}}
-            {{/* Show itch tab first for itch.io URLs */}}
-            {{range .archives}}
-            {{if eq .Type "itch"}}
-            <li><a href="/{{$.short_id}}/{{.Type}}" class="{{if eq .Type $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
-                Itch
-                {{if eq .Status "processing"}} ⟳{{end}}
-                {{if eq .Status "pending"}} ⏳{{end}}
-                {{if eq .Status "failed"}} ✗{{end}}
-            </a></li>
-            {{end}}
-            {{end}}
-            {{/* Then show other tabs */}}
-            {{range .archives}}
-            {{if ne .Type "itch"}}
-            {{$urlType := .Type}}{{if eq .Type "mhtml"}}{{$urlType = "web"}}{{end}}
-            {{$displayName := .Type}}{{if eq .Type "mhtml"}}{{$displayName = "Web"}}{{end}}{{if eq .Type "youtube"}}{{$displayName = "Video"}}{{end}}
-            <li><a href="/{{$.short_id}}/{{$urlType}}" class="{{if eq $urlType $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
-                {{$displayName}}
-                {{if eq .Status "processing"}} ⟳{{end}}
-                {{if eq .Status "pending"}} ⏳{{end}}
-                {{if eq .Status "failed"}} ✗{{end}}
-            </a></li>
-            {{end}}
-            {{end}}
-        {{else if .is_git}}
-            {{/* Show git tab first for git repositories */}}
-            {{range .archives}}
-            {{if eq .Type "git"}}
-            <li><a href="/{{$.short_id}}/{{.Type}}" class="{{if eq .Type $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
-                {{.Type}}
-                {{if eq .Status "processing"}} ⟳{{end}}
-                {{if eq .Status "pending"}} ⏳{{end}}
-                {{if eq .Status "failed"}} ✗{{end}}
-            </a></li>
-            {{end}}
-            {{end}}
-            {{/* Then show other tabs */}}
-            {{range .archives}}
-            {{if ne .Type "git"}}
-            {{$urlType := .Type}}{{if eq .Type "mhtml"}}{{$urlType = "web"}}{{end}}
-            {{$displayName := .Type}}{{if eq .Type "mhtml"}}{{$displayName = "Web"}}{{end}}{{if eq .Type "youtube"}}{{$displayName = "Video"}}{{end}}
-            <li><a href="/{{$.short_id}}/{{$urlType}}" class="{{if eq $urlType $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
-                {{$displayName}}
-                {{if eq .Status "processing"}} ⟳{{end}}
-                {{if eq .Status "pending"}} ⏳{{end}}
-                {{if eq .Status "failed"}} ✗{{end}}
-            </a></li>
-            {{end}}
-            {{end}}
-        {{else if .is_video}}
-            {{/* Show video tab first for video URLs */}}
-            {{range .archives}}
-            {{if eq .Type "youtube"}}
-            <li><a href="/{{$.short_id}}/{{.Type}}" class="{{if eq .Type $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
-                Video
-                {{if eq .Status "processing"}} ⟳{{end}}
-                {{if eq .Status "pending"}} ⏳{{end}}
-                {{if eq .Status "failed"}} ✗{{end}}
-            </a></li>
-            {{end}}
-            {{end}}
-            {{/* Then show other tabs */}}
-            {{range .archives}}
-            {{if ne .Type "youtube"}}
-            {{$urlType := .Type}}{{if eq .Type "mhtml"}}{{$urlType = "web"}}{{end}}
-            {{$displayName := .Type}}{{if eq .Type "mhtml"}}{{$displayName = "Web"}}{{end}}{{if eq .Type "youtube"}}{{$displayName = "Video"}}{{end}}
-            <li><a href="/{{$.short_id}}/{{$urlType}}" class="{{if eq $urlType $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
-                {{$displayName}}
-                {{if eq .Status "processing"}} ⟳{{end}}
-                {{if eq .Status "pending"}} ⏳{{end}}
-                {{if eq .Status "failed"}} ✗{{end}}
-            </a></li>
-            {{end}}
-            {{end}}
-        {{else}}
-            {{/* For websites, show Web first, then others */}}
-            {{range .archives}}
-            {{if eq .Type "mhtml"}}
-            <li><a href="/{{$.short_id}}/web" class="{{if eq "web" $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
-                Web
-                {{if eq .Status "processing"}} ⟳{{end}}
-                {{if eq .Status "pending"}} ⏳{{end}}
-                {{if eq .Status "failed"}} ✗{{end}}
-            </a></li>
-            {{end}}
-            {{end}}
-            {{/* Then show other tabs */}}
-            {{range .archives}}
-            {{if ne .Type "mhtml"}}
-            {{$displayName := .Type}}{{if eq .Type "youtube"}}{{$displayName = "Video"}}{{end}}
-            <li><a href="/{{$.short_id}}/{{.Type}}" class="{{if eq .Type $.current_type}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
-                {{$displayName}}
-                {{if eq .Status "processing"}} ⟳{{end}}
-                {{if eq .Status "pending"}} ⏳{{end}}
-                {{if eq .Status "failed"}} ✗{{end}}
-            </a></li>
-            {{end}}
-            {{end}}
+        {{range .tabs}}
+        <li><a href="/{{$.short_id}}/{{.URLType}}" class="{{if .IsActive}}active{{end}} {{if or (eq .Status "pending") (eq .Status "processing")}}status-processing{{end}}">
+            {{.DisplayName}}
+            {{if eq .Status "processing"}} ⟳{{end}}
+            {{if eq .Status "pending"}} ⏳{{end}}
+            {{if eq .Status "failed"}} ✗{{end}}
+        </a></li>
         {{end}}
     </ul>
 
@@ -307,13 +255,19 @@
             {{else if eq .current_type "screenshot"}}
                 <img src="/archive/{{.short_id}}/{{.current_type}}" alt="Full page screenshot" class="screenshot-img">
                 <a href="/archive/{{.short_id}}/{{.current_type}}" class="download-link screenshot-download-link" id="screenshot-download-btn">Download Screenshot</a>
-            {{else if eq .current_type "youtube"}}
+            {{else if eq .current_type "yt-dlp"}}
                 <h3>Video</h3>
                 <video src="/archive/{{.short_id}}/{{.current_type}}" controls class="video-player">
                     Your browser does not support the video tag.
                 </video>
                 <br><br>
                 <a href="/archive/{{.short_id}}/{{.current_type}}" class="download-link">Download Video</a>
+            {{else if eq .current_type "gallery-dl"}}
+                <div class="gallery-post">
+                    <div class="gallery-meta" id="gallery-meta"></div>
+                    <div class="gallery-items" id="gallery-items">Loading media…</div>
+                </div>
+                <a href="/archive/{{.short_id}}/gallery-dl" class="download-link">Download All Media (ZIP)</a>
             {{else if eq .current_type "git"}}
                 <h3>Git Repository</h3>
                 <div class="git-clone" id="git-clone-command">
@@ -354,6 +308,99 @@
         const shortId = '{{.short_id}}';
         const currentType = '{{.current_type}}';
         let logPollingInterval = null;
+
+        // Renders the gallery-dl tab: post metadata plus every downloaded slide.
+        // The file list comes from the archive itself, so the page can only ever
+        // show media that is actually stored.
+        async function loadGallery() {
+            const itemsEl = document.getElementById('gallery-items');
+            const metaEl = document.getElementById('gallery-meta');
+            if (!itemsEl) return;
+
+            try {
+                const response = await fetch(`/gallery/${shortId}/list`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+
+                const meta = data.metadata || {};
+                metaEl.innerHTML = '';
+
+                if (meta.author || meta.author_name) {
+                    const name = meta.author_name && meta.author
+                        ? `${meta.author_name} (@${meta.author})`
+                        : (meta.author ? `@${meta.author}` : meta.author_name);
+                    const authorEl = document.createElement('div');
+                    authorEl.className = 'gallery-author';
+                    authorEl.textContent = name;
+                    metaEl.appendChild(authorEl);
+                }
+
+                const sub = [];
+                if (meta.extractor) sub.push(meta.extractor);
+                if (meta.date) sub.push(meta.date);
+                if (typeof meta.likes === 'number') sub.push(`${meta.likes.toLocaleString()} likes`);
+                if (meta.file_count) sub.push(`${meta.file_count} file${meta.file_count === 1 ? '' : 's'}`);
+                if (sub.length) {
+                    const subEl = document.createElement('div');
+                    subEl.className = 'gallery-sub';
+                    subEl.textContent = sub.join(' · ');
+                    metaEl.appendChild(subEl);
+                }
+
+                const caption = meta.description || meta.title;
+                if (caption) {
+                    const capEl = document.createElement('div');
+                    capEl.className = 'gallery-caption';
+                    capEl.textContent = caption;
+                    metaEl.appendChild(capEl);
+                }
+                if (!metaEl.childNodes.length) metaEl.style.display = 'none';
+
+                const files = data.files || [];
+                if (!files.length) {
+                    itemsEl.textContent = 'No media files in this archive.';
+                    return;
+                }
+
+                itemsEl.innerHTML = '';
+                files.forEach((file, index) => {
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'gallery-item';
+
+                    const type = file.content_type || '';
+                    let media;
+                    if (type.startsWith('video/')) {
+                        media = document.createElement('video');
+                        media.controls = true;
+                        media.preload = 'metadata';
+                    } else if (type.startsWith('image/')) {
+                        media = document.createElement('img');
+                        media.loading = 'lazy';
+                        media.alt = `Slide ${index + 1}`;
+                    } else {
+                        media = document.createElement('a');
+                        media.textContent = `Download ${file.name}`;
+                    }
+                    if (media.tagName === 'A') {
+                        media.href = file.url;
+                    } else {
+                        media.src = file.url;
+                    }
+                    wrapper.appendChild(media);
+
+                    if (files.length > 1) {
+                        const badge = document.createElement('span');
+                        badge.className = 'gallery-index';
+                        badge.textContent = `${index + 1}/${files.length}`;
+                        wrapper.appendChild(badge);
+                    }
+                    itemsEl.appendChild(wrapper);
+                });
+            } catch (error) {
+                console.error('Error loading gallery:', error);
+                itemsEl.textContent = 'Could not load media from this archive.';
+            }
+        }
 
         async function refreshLogs() {
             try {
@@ -611,9 +658,12 @@
             
             // Load past archives
             loadPastArchives();
-            
+
             // Start log polling if needed
             startLogPolling();
+
+            // Render the gallery-dl tab (no-op on every other tab)
+            loadGallery();
         });
     </script>
 </body>

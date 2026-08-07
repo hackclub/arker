@@ -243,20 +243,11 @@ func (r *ArchiveRequest) Validate() error {
 		return fmt.Errorf("URL validation failed: %v", err)
 	}
 
-	// Validate archive types if provided
-	if len(r.Types) > 0 {
-		validTypes := map[string]bool{
-			"mhtml":      true,
-			"screenshot": true,
-			"git":        true,
-			"youtube":    true,
-			"itch":       true,
-		}
-
-		for _, archiveType := range r.Types {
-			if !validTypes[archiveType] {
-				return fmt.Errorf("invalid archive type: %s", archiveType)
-			}
+	// Validate archive types if provided. Legacy names (e.g. "youtube" for
+	// "yt-dlp") stay accepted so existing API clients keep working.
+	for _, archiveType := range r.Types {
+		if !IsValidArchiveType(archiveType) {
+			return fmt.Errorf("invalid archive type: %s", archiveType)
 		}
 	}
 

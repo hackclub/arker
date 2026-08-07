@@ -55,6 +55,20 @@ RUN pip3 install --break-system-packages --no-cache-dir --upgrade --pre "yt-dlp[
     && yt-dlp --version > /etc/yt-dlp-version \
     && rm -rf /root/.cache
 
+# gallery-dl handles photo posts and mixed photo/video carousels, which yt-dlp
+# rejects outright. Its extractors break on the same cadence as yt-dlp's, so the
+# remote ADD cache-busts on the latest release for the same reason.
+#
+# It is installed into the SAME environment as yt-dlp on purpose: gallery-dl's
+# default Instagram video path hands DASH manifests to yt-dlp as an importable
+# Python module, and silently falls back to lower-quality pre-merged MP4 when it
+# cannot import one. requests[socks] is what makes a socks5:// value in
+# YTDLP_PROXY work rather than warn and bypass the proxy.
+ADD https://api.github.com/repos/mikf/gallery-dl/releases/latest /tmp/gallery-dl-release.json
+RUN pip3 install --break-system-packages --no-cache-dir --upgrade gallery-dl "requests[socks]" \
+    && gallery-dl --version > /etc/gallery-dl-version \
+    && rm -rf /root/.cache
+
 # The Docker image includes curl-cffi, so use yt-dlp's browser impersonation by
 # default for Instagram/TikTok/Facebook anti-bot responses. Arker applies this
 # only to those URL families. Override to empty to disable, or to another target

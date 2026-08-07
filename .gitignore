@@ -33,3 +33,7 @@ cookies.txt
 
 # Secrets
 .env
+
+# Local test-drive credentials (never commit)
+/secrets/
+docker-compose.testdrive.yml

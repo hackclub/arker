@@ -48,14 +48,15 @@ When using Amp with `make dev` running in another window:
 ### Manual Local Development
 1. Start PostgreSQL: `docker run -d --name postgres -e POSTGRES_USER=user -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=arker -p 5432:5432 postgres:15`
 2. Install Playwright: `go install github.com/mxschmitt/playwright-go/cmd/playwright@latest && playwright install chromium`
-3. Install yt-dlp: `pip install yt-dlp`
+3. Install yt-dlp and gallery-dl: `pip install yt-dlp gallery-dl`
 4. Run: `go run .`
 
 ### Dependencies
 - **Go 1.25.12+**
 - **PostgreSQL 15**
 - **Git** (for repository archiving)
-- **Python 3 + yt-dlp** (for YouTube archiving)
+- **Python 3 + yt-dlp** (for video archiving)
+- **Python 3 + gallery-dl** (for photo posts and mixed photo/video carousels)
 - **Python 3 + itch-dl** (for itch.io game archiving)
 - **Playwright + Chromium** (for MHTML and screenshots)
 
@@ -70,7 +71,8 @@ When using Amp with `make dev` running in another window:
 │   │   ├── mhtml.go        # MHTML webpage archiving
 │   │   ├── screenshot.go   # Full-page screenshot capture
 │   │   ├── git.go          # Git repository cloning
-│   │   ├── youtube.go      # YouTube video downloading
+│   │   ├── ytdlp.go        # Video downloading via yt-dlp
+│   │   ├── gallery_dl.go   # Photo/carousel downloading via gallery-dl
 │   │   ├── itch.go         # itch.io game archiving
 │   │   └── browser_utils.go # Shared browser utilities
 │   ├── handlers/           # HTTP handlers
@@ -80,6 +82,7 @@ When using Amp with `make dev` running in another window:
 │   │   ├── display.go      # Archive display pages
 │   │   ├── git.go          # Git HTTP backend
 │   │   ├── itch_serve.go   # itch.io individual file serving
+│   │   ├── gallery_dl_serve.go # gallery-dl manifest + per-file serving
 │   │   └── serve.go        # File serving with streaming
 │   ├── models/             # Database models & types
 │   │   └── models.go       # User, ArchivedURL, Capture, ArchiveItem
@@ -135,6 +138,8 @@ When using Amp with `make dev` running in another window:
 - `GET /git/:shortid` - Git HTTP backend for cloning repositories
 - `GET /itch/:shortid/file/*filepath` - Stream individual files from itch.io game archives
 - `GET /itch/:shortid/list` - JSON list of files in itch.io game archive
+- `GET /gallery/:shortid/list` - JSON post metadata + media file list for a gallery-dl archive
+- `GET /gallery/:shortid/file/*filepath` - Stream one media file out of a gallery-dl archive
 
 ### Admin Interface (Session Authentication)
 - `GET /login` - Admin login page
@@ -170,6 +175,8 @@ git clone https://archive.selfhosted.hackclub.com/git/{shortid}
 - `YTDLP_COOKIES_B64` - Base64-encoded cookies.txt content, written to a temp file at startup (used when `YTDLP_COOKIES_FILE` is unset; convenient for Coolify secrets)
 - `YTDLP_PROXY` - Optional proxy URL (e.g. `http://user:pass@host:port`, `socks5://...`) applied to every yt-dlp call. Instagram aggressively rate-limits datacenter IP ranges; a residential/mobile proxy is the reliable way to archive Instagram from a server. yt-dlp itself must also be kept current (installed from the nightly `--pre` channel) since Instagram breaks the extractor frequently.
 - `YTDLP_IMPERSONATE` - Optional yt-dlp `--impersonate` target for Instagram/TikTok/Facebook video URLs. Docker images default to `chrome` and install `curl-cffi`; set empty to disable for manual installs without curl-cffi.
+- `GALLERYDL_USER_AGENT` - Optional `--user-agent` override for gallery-dl. Leave unset: gallery-dl sets a per-site User-Agent already (Instagram gets a current Chrome UA because it serves lower-quality video to anything else), and this replaces those defaults everywhere.
+- `GALLERYDL_SLEEP_REQUEST` - Optional `--sleep-request` override (`"1"`, `"0.5-1.5"`). Leave unset. gallery-dl ships per-site request intervals (Instagram waits a randomized 6-12s between API calls); because `--sleep-request` is a root config key it *replaces* those rather than acting as a floor, so any value below a site's own default makes throttling more likely, not less. Set it only to slow gallery-dl down further.
 
 - `LOGIN_TEXT` - Text to display under login form
 
@@ -231,9 +238,18 @@ go test -run TestFSStorage    # Run specific test
 
 ### Adding New Archive Types
 1. Implement `Archiver` interface in `internal/archivers/`
-2. Add to `archiversMap` in `cmd/main.go`
-3. Update content type detection in handlers
-4. Add tests in `archiver_test.go`
+2. Add the type constant to `internal/utils/archive_types.go` (`canonicalArchiveTypes`)
+3. Add to `archiversMap` in `cmd/main.go`
+4. Route URLs to it in `utils.GetArchiveTypes`
+5. Give it a timeout case in `utils.TimeoutForJobType` (the default is only 2 minutes)
+6. Update `contentTypeForArchive` in `internal/handlers/serve.go`
+7. Add it to `defaultTypePreference`/`getDisplayName` in `internal/handlers/display.go` and to the content pane in `templates/display_type.html`
+8. Add tests
+
+Type names are stable identifiers: they appear in stored rows, in permalinks
+(`/{shortid}/{type}`), and in API requests. Renaming one means adding a
+`legacyArchiveTypeAliases` entry so old names keep resolving, plus a rename in
+`migrateLegacyArchiveTypes`. Never just change the string.
 
 ### Database Changes
 1. Update models in `internal/models/models.go`
@@ -245,6 +261,7 @@ go test -run TestFSStorage    # Run specific test
 ### Common Issues
 - **Playwright fails**: Ensure Chromium is installed (`playwright install chromium`)
 - **yt-dlp not found**: Install with `pip install yt-dlp`
+- **gallery-dl not found**: Install with `pip install gallery-dl`. Install it into the *same* Python environment as yt-dlp: gallery-dl's default Instagram video path hands DASH manifests to yt-dlp as an importable module, and silently falls back to lower-quality pre-merged MP4 otherwise.
 - **Database connection**: Check PostgreSQL is running and credentials match
 - **Permission errors**: Ensure storage/cache directories are writable
 - **Browser leaks**: Check `/status/browser` endpoint for monitoring data
@@ -256,7 +273,7 @@ go test -run TestFSStorage    # Run specific test
 - **Database**: Connect via environment variables in deployment
 
 ### Health Monitoring
-- Startup health checks verify yt-dlp and Playwright availability
+- Startup health checks verify yt-dlp, gallery-dl, and Playwright availability
 - Browser process monitoring with leak detection
 
 - Automatic log cleanup (30 days for completed items)

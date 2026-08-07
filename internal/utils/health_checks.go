@@ -10,6 +10,7 @@ import (
 // HealthCheckConfig holds configuration for health checks
 type HealthCheckConfig struct {
 	CheckYtDlp      bool
+	CheckGalleryDl  bool
 	CheckPlaywright bool
 	CheckAria2c     bool
 	CheckItchDl     bool
@@ -20,6 +21,7 @@ type HealthCheckConfig struct {
 func DefaultHealthCheckConfig() HealthCheckConfig {
 	return HealthCheckConfig{
 		CheckYtDlp:      true,
+		CheckGalleryDl:  true,
 		CheckPlaywright: true,
 		CheckAria2c:     true,
 		CheckItchDl:     true,
@@ -32,6 +34,12 @@ func RunHealthChecks(config HealthCheckConfig) error {
 	if config.CheckYtDlp {
 		if err := CheckYtDlpAvailability(config.Timeout); err != nil {
 			return fmt.Errorf("yt-dlp health check failed: %v", err)
+		}
+	}
+
+	if config.CheckGalleryDl {
+		if err := CheckGalleryDlAvailability(config.Timeout); err != nil {
+			return fmt.Errorf("gallery-dl health check failed: %v", err)
 		}
 	}
 
@@ -73,6 +81,26 @@ func CheckYtDlpAvailability(timeout time.Duration) error {
 		return nil
 	case <-time.After(timeout):
 		return fmt.Errorf("yt-dlp health check timed out after %v", timeout)
+	}
+}
+
+// CheckGalleryDlAvailability checks if gallery-dl is available and working
+func CheckGalleryDlAvailability(timeout time.Duration) error {
+	done := make(chan error, 1)
+
+	go func() {
+		cmd := exec.Command("gallery-dl", "--version")
+		done <- cmd.Run()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("gallery-dl not available or not working: %v", err)
+		}
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("gallery-dl health check timed out after %v", timeout)
 	}
 }
 
