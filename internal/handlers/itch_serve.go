@@ -31,6 +31,9 @@ func ServeItchHealth(c *gin.Context) {
 func ServeItchFile(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
 	shortID := c.Param("shortid")
 	filePath := c.Param("filepath")
+	if redirectIfAlias(c, db, shortID) {
+		return
+	}
 
 	// Add timeout to prevent hanging
 	c.Header("X-Debug-Route", "itch-file-serving")
@@ -366,6 +369,9 @@ func rewriteHTMLPaths(content, shortID string) string {
 // ServeItchGameList serves a JSON list of game files for API access
 func ServeItchGameList(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
 	shortID := c.Param("shortid")
+	if redirectIfAlias(c, db, shortID) {
+		return
+	}
 
 	// Find the itch archive item
 	var item models.ArchiveItem

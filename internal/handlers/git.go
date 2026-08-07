@@ -31,6 +31,11 @@ func GitHandler(c *gin.Context, storage storage.Storage, db *gorm.DB, cacheRoot 
 		return
 	}
 	shortID := parts[0]
+	// Alias captures redirect to the canonical clone URL; git clients follow
+	// the redirect on the initial info/refs request and rebase from there.
+	if redirectIfAlias(c, db, shortID) {
+		return
+	}
 	var capture models.Capture
 	if db.Where("short_id = ?", shortID).First(&capture).Error != nil {
 		c.Status(http.StatusNotFound)

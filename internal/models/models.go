@@ -49,6 +49,13 @@ type Capture struct {
 	APIKeyID      *uint         `gorm:"nullable"`
 	APIKey        *APIKey       `gorm:"foreignKey:APIKeyID"`
 	ArchiveItems  []ArchiveItem `gorm:"foreignKey:CaptureID"`
+	// AliasOfID points at the canonical capture this capture is an alias of.
+	// An alias capture has its own short ID, timestamp, and API key
+	// (provenance), but owns no archive items and enqueued no jobs; serving
+	// resolves it to the canonical capture with a visible redirect. Aliases
+	// always point directly at a canonical capture, never at another alias.
+	AliasOfID *uint    `gorm:"index"`
+	AliasOf   *Capture `gorm:"foreignKey:AliasOfID"`
 }
 
 // ArchiveItem represents a specific type of archive (screenshot, mhtml, etc.)

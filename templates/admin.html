@@ -247,6 +247,7 @@
                 <div class="url-original">{{.Original}}</div>
                 {{if .Captures}}
                     {{$latestCapture := index .Captures 0}}
+                    {{if $latestCapture.AliasOf}}{{$latestCapture = $latestCapture.AliasOf}}{{end}}
                     {{$hasFailure := false}}
                     {{$hasProcessing := false}}
                     {{$hasSuccess := false}}
@@ -275,6 +276,7 @@
             <div class="actions">
                 {{if .Captures}}
                     {{$latestCapture := index .Captures 0}}
+                    {{if $latestCapture.AliasOf}}{{$latestCapture = $latestCapture.AliasOf}}{{end}}
                     {{$hasFailure := false}}
                     {{range $latestCapture.ArchiveItems}}
                         {{if eq .Status "failed"}}{{$hasFailure = true}}{{end}}
@@ -300,6 +302,11 @@
                     </span>
                     {{else}}
                     <span style="color: #6c757d; font-size: 12px; margin-left: 10px;">(Admin)</span>
+                    {{end}}
+                    {{if .AliasOf}}
+                    <span style="color: #6c757d; font-size: 12px; margin-left: 10px;">
+                        alias of <a href="/{{.AliasOf.ShortID}}" class="capture-link">{{.AliasOf.ShortID}}</a>
+                    </span>
                     {{end}}
                     <div class="archive-items">
                         {{range .ArchiveItems}}

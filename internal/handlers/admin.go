@@ -50,9 +50,11 @@ func AdminGet(c *gin.Context, db *gorm.DB) {
 	baseQuery.Count(&total)
 
 	// Build query for fetching URLs with same search filter
-	urlQuery := db.Preload("Captures.ArchiveItems").Preload("Captures.APIKey").Preload("Captures", func(db *gorm.DB) *gorm.DB {
-		return db.Order("created_at DESC")
-	}).Joins("LEFT JOIN captures ON archived_urls.id = captures.archived_url_id").
+	urlQuery := db.Preload("Captures.ArchiveItems").Preload("Captures.APIKey").
+		Preload("Captures.AliasOf").Preload("Captures.AliasOf.ArchiveItems").
+		Preload("Captures", func(db *gorm.DB) *gorm.DB {
+			return db.Order("created_at DESC")
+		}).Joins("LEFT JOIN captures ON archived_urls.id = captures.archived_url_id").
 		Joins("LEFT JOIN archive_items ON captures.id = archive_items.capture_id").
 		Group("archived_urls.id").
 		Order("MAX(archive_items.created_at) DESC").
@@ -111,7 +113,8 @@ func RequestCapture(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.T
 	}
 
 	types := utils.GetArchiveTypes(u.Original)
-	shortID, err := workers.QueueCapture(c.Request.Context(), db, riverClient, u.Original, types, nil)
+	// Admin re-archive always forces a real capture, never an alias.
+	shortID, err := workers.QueueCapture(c.Request.Context(), db, riverClient, u.Original, types, nil, true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue capture"})
 		return
@@ -274,6 +277,9 @@ func BackfillMissingMediaItems(c *gin.Context, db *gorm.DB, riverClient *river.C
 			Select("captures.id, captures.short_id, archived_urls.original").
 			Joins("JOIN archived_urls ON archived_urls.id = captures.archived_url_id").
 			Where("captures.deleted_at IS NULL AND archived_urls.deleted_at IS NULL").
+			// Alias captures own no items by design; the canonical capture is
+			// the one that gets backfilled.
+			Where("captures.alias_of_id IS NULL").
 			Where("NOT EXISTS (SELECT 1 FROM archive_items WHERE archive_items.capture_id = captures.id AND archive_items.type = ? AND archive_items.deleted_at IS NULL)", archiveType).
 			Where(filter.sqlLike).
 			// Deterministic order so a bounded dry run previews the same rows
@@ -345,7 +351,8 @@ func AdminArchive(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]
 		return
 	}
 
-	shortID, err := workers.QueueCapture(c.Request.Context(), db, riverClient, req.URL, req.Types, nil)
+	// Admin archive always forces a real capture, never an alias.
+	shortID, err := workers.QueueCapture(c.Request.Context(), db, riverClient, req.URL, req.Types, nil, true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue capture"})
 		return

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestFSStorage(t *testing.T) {
@@ -117,6 +118,82 @@ func TestAddDirToTar(t *testing.T) {
 	for _, expected := range expectedFiles {
 		if !files[expected] {
 			t.Errorf("expected file %s not found in tar", expected)
+		}
+	}
+}
+
+// TestAddDirToTarDeterministic verifies that two directory trees with
+// identical contents produce byte-identical tars regardless of file creation
+// order, mtimes, ownership, or permission noise. This is what makes a git
+// tar's MD5 usable as a content identity for dedup.
+func TestAddDirToTarDeterministic(t *testing.T) {
+	buildTree := func(order []string) string {
+		dir, err := os.MkdirTemp("", "tar-det-test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.RemoveAll(dir) })
+
+		if err := os.Mkdir(filepath.Join(dir, "sub"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		contents := map[string]string{
+			"b.txt":     "bravo",
+			"a.txt":     "alpha",
+			"sub/c.txt": "charlie",
+		}
+		for _, name := range order {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(contents[name]), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+
+	tarTree := func(dir string) []byte {
+		buf := new(bytes.Buffer)
+		tw := tar.NewWriter(buf)
+		if err := archivers.AddDirToTar(tw, dir, ""); err != nil {
+			t.Fatal(err)
+		}
+		tw.Close()
+		return buf.Bytes()
+	}
+
+	dir1 := buildTree([]string{"b.txt", "a.txt", "sub/c.txt"})
+	dir2 := buildTree([]string{"sub/c.txt", "a.txt", "b.txt"})
+
+	// Perturb metadata that must not leak into the tar.
+	past := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := os.Chtimes(filepath.Join(dir2, "a.txt"), past, past); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(dir2, "b.txt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	tar1 := tarTree(dir1)
+	tar2 := tarTree(dir2)
+	if !bytes.Equal(tar1, tar2) {
+		t.Error("tars of identical content are not byte-identical")
+	}
+
+	// Spot-check header normalization.
+	tr := tar.NewReader(bytes.NewReader(tar1))
+	epoch := time.Unix(0, 0)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !hdr.ModTime.Equal(epoch) {
+			t.Errorf("entry %s has non-epoch mtime %v", hdr.Name, hdr.ModTime)
+		}
+		if hdr.Uid != 0 || hdr.Gid != 0 || hdr.Uname != "" || hdr.Gname != "" {
+			t.Errorf("entry %s has non-zero ownership", hdr.Name)
 		}
 	}
 }

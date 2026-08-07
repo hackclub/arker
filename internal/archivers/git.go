@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"sync"
 	"time"
 )
@@ -167,7 +168,13 @@ func extractGitRepoURL(url string) string {
 	return url
 }
 
-// Helper to tar dir streaming
+// Helper to tar dir streaming.
+//
+// The output is deterministic: entries are sorted by name, timestamps are
+// fixed at the epoch, ownership is zeroed, and modes are normalized. Two
+// clones containing identical bytes therefore produce byte-identical tars,
+// which makes the tar's MD5 a content identity for dedup. (Readdir order and
+// clone-time mtimes previously made every tar of the same repo unique.)
 func AddDirToTar(tw *tar.Writer, dir string, prefix string) error {
 	f, err := os.Open(dir)
 	if err != nil {
@@ -179,6 +186,7 @@ func AddDirToTar(tw *tar.Writer, dir string, prefix string) error {
 	if err != nil {
 		return err
 	}
+	sort.Slice(fis, func(i, j int) bool { return fis[i].Name() < fis[j].Name() })
 
 	for _, fi := range fis {
 		curPath := filepath.Join(dir, fi.Name())
@@ -186,8 +194,8 @@ func AddDirToTar(tw *tar.Writer, dir string, prefix string) error {
 			if err = tw.WriteHeader(&tar.Header{
 				Name:     prefix + fi.Name() + "/",
 				Size:     0,
-				Mode:     int64(fi.Mode()),
-				ModTime:  fi.ModTime(),
+				Mode:     0755,
+				ModTime:  time.Unix(0, 0),
 				Typeflag: tar.TypeDir,
 			}); err != nil {
 				return err
@@ -196,11 +204,15 @@ func AddDirToTar(tw *tar.Writer, dir string, prefix string) error {
 				return err
 			}
 		} else {
+			mode := int64(0644)
+			if fi.Mode()&0111 != 0 {
+				mode = 0755
+			}
 			if err = tw.WriteHeader(&tar.Header{
 				Name:     prefix + fi.Name(),
 				Size:     fi.Size(),
-				Mode:     int64(fi.Mode()),
-				ModTime:  fi.ModTime(),
+				Mode:     mode,
+				ModTime:  time.Unix(0, 0),
 				Typeflag: tar.TypeReg,
 			}); err != nil {
 				return err

@@ -230,6 +230,9 @@ func checkMaliciousPatterns(rawURL string) error {
 type ArchiveRequest struct {
 	URL   string   `json:"url" validate:"required"`
 	Types []string `json:"types,omitempty"`
+	// Force skips capture aliasing: even when a fresh capture of the same URL
+	// exists, a full re-archive is performed. Admin paths always force.
+	Force bool `json:"force,omitempty"`
 }
 
 func (r *ArchiveRequest) Validate() error {

@@ -88,7 +88,7 @@ func ApiArchive(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) 
 	apiKey, _ := c.Get("api_key")
 	apiKeyID := apiKey.(*models.APIKey).ID
 
-	shortID, err := workers.QueueCapture(c.Request.Context(), db, riverClient, req.URL, req.Types, &apiKeyID)
+	shortID, err := workers.QueueCapture(c.Request.Context(), db, riverClient, req.URL, req.Types, &apiKeyID, req.Force)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue capture"})
 		return

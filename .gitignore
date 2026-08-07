@@ -37,3 +37,4 @@ cookies.txt
 # Local test-drive credentials (never commit)
 /secrets/
 docker-compose.testdrive.yml
+dupmap

@@ -161,6 +161,9 @@ func selectDefaultType(items []models.ArchiveItem, preference []string) string {
 // DisplayDefault serves the default archive type view directly (no redirect)
 func DisplayDefault(c *gin.Context, db *gorm.DB) {
 	shortID := c.Param("shortid")
+	if redirectIfAlias(c, db, shortID) {
+		return
+	}
 	var capture models.Capture
 	if err := db.Where("short_id = ?", shortID).Preload("ArchiveItems").First(&capture).Error; err != nil {
 		c.Status(http.StatusNotFound)
@@ -231,6 +234,9 @@ func DisplayDefault(c *gin.Context, db *gorm.DB) {
 func DisplayType(c *gin.Context, db *gorm.DB) {
 	shortID := c.Param("shortid")
 	urlType := c.Param("type")
+	if redirectIfAlias(c, db, shortID) {
+		return
+	}
 
 	// Convert URL type to internal type for database lookup
 	internalType := urlTypeToInternalType(urlType)
@@ -295,6 +301,9 @@ func DisplayType(c *gin.Context, db *gorm.DB) {
 func GetLogs(c *gin.Context, db *gorm.DB) {
 	shortID := c.Param("shortid")
 	urlType := c.Param("type")
+	if redirectIfAlias(c, db, shortID) {
+		return
+	}
 
 	// Convert URL type to internal type for database lookup
 	internalType := urlTypeToInternalType(urlType)

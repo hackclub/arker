@@ -164,20 +164,7 @@ func generateRandomSecret() string {
 
 // getOrCreateConfigValue retrieves a config value from database or creates it with a default
 func getOrCreateConfigValue(db *gorm.DB, key string, defaultValue string) (string, error) {
-	var config models.Config
-	if err := db.Where("key = ?", key).First(&config).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			// Create new config entry
-			config = models.Config{Key: key, Value: defaultValue}
-			if err := db.Create(&config).Error; err != nil {
-				return "", err
-			}
-			log.Printf("Created new config entry: %s", key)
-			return defaultValue, nil
-		}
-		return "", err
-	}
-	return config.Value, nil
+	return utils.GetOrCreateConfigValue(db, key, defaultValue)
 }
 
 // migrateLegacyArchiveTypes rewrites rows still carrying a retired type name

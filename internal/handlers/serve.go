@@ -21,6 +21,9 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 	// embed /archive/{id}/youtube in every <video>, <img>, and download link,
 	// and rows written before the migration still carry the old type.
 	typ := utils.NormalizeArchiveType(c.Param("type"))
+	if redirectIfAlias(c, db, shortID) {
+		return
+	}
 	var item models.ArchiveItem
 	var capture models.Capture
 	var archivedURL models.ArchivedURL
@@ -158,6 +161,9 @@ func contentTypeForArchive(typ, extension string) (string, bool) {
 
 func ServeMHTMLAsHTML(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
 	shortID := c.Param("shortid")
+	if redirectIfAlias(c, db, shortID) {
+		return
+	}
 	var item models.ArchiveItem
 	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
 		Where("captures.short_id = ? AND archive_items.type = ?", shortID, "mhtml").
