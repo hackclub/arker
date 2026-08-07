@@ -26,6 +26,7 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	"arker/internal/archivers"
+	"arker/internal/brightdata"
 	"arker/internal/handlers"
 	"arker/internal/models"
 	"arker/internal/monitoring"
@@ -84,6 +85,20 @@ type Config struct {
 	// gallery-dl Configuration (photo posts and mixed photo/video carousels)
 	GalleryDlUserAgent    string `envconfig:"GALLERYDL_USER_AGENT"`    // Optional UA override; empty keeps gallery-dl's per-site defaults
 	GalleryDlSleepRequest string `envconfig:"GALLERYDL_SLEEP_REQUEST"` // Optional inter-request delay ("1", "0.5-1.5"); empty keeps per-site defaults
+
+	// Bright Data fallback for Instagram/YouTube media. Empty API key disables
+	// the fallback entirely; with just the key set, customer ID and browser
+	// zone password are resolved from the Bright Data API at startup.
+	BrightDataAPIKey               string  `envconfig:"BRIGHTDATA_API_KEY"`
+	BrightDataCustomerID           string  `envconfig:"BRIGHTDATA_CUSTOMER_ID"`
+	BrightDataBrowserZone          string  `envconfig:"BRIGHTDATA_BROWSER_ZONE" default:"mcp_browser_no_ratelimit"`
+	BrightDataBrowserZonePassword  string  `envconfig:"BRIGHTDATA_BROWSER_ZONE_PASSWORD"`
+	BrightDataScraperCostPerRecord float64 `envconfig:"BRIGHTDATA_SCRAPER_COST_PER_RECORD" default:"0.0015"` // USD per Web Scraper API record
+	BrightDataBrowserCostPerGB     float64 `envconfig:"BRIGHTDATA_BROWSER_COST_PER_GB" default:"8.40"`       // USD per GB of Browser API traffic
+	// Innertube client the YouTube fallback impersonates; bump the version via
+	// env when YouTube retires it (no code change needed).
+	BrightDataYouTubeClientName    string `envconfig:"BRIGHTDATA_YT_CLIENT_NAME" default:"ANDROID"`
+	BrightDataYouTubeClientVersion string `envconfig:"BRIGHTDATA_YT_CLIENT_VERSION" default:"20.10.38"`
 }
 
 // CustomErrorHandler implements the River ErrorHandler interface and updates archive items.
@@ -321,7 +336,7 @@ func main() {
 	}
 
 	// Auto-migrate database models
-	if err := db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.ArchiveItemLog{}, &models.Config{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.ArchiveItemLog{}, &models.Config{}, &models.BrightDataUsage{}); err != nil {
 		slog.Error("AutoMigrate failed with detailed error", "error", err, "error_type", fmt.Sprintf("%T", err), "error_string", err.Error())
 		slog.Info("Continuing startup despite AutoMigrate error")
 	}
@@ -461,6 +476,31 @@ func main() {
 		utils.ArchiveTypeYtDlp:      &archivers.YtDlpArchiver{},
 		utils.ArchiveTypeGalleryDl:  &archivers.GalleryDLArchiver{},
 		utils.ArchiveTypeItch:       &archivers.ItchArchiver{ItchDlPath: cfg.ItchDlPath, APIKey: cfg.ItchAPIKey},
+	}
+
+	// Bright Data fallback: wraps the media archivers so a failed native run
+	// on an Instagram/YouTube URL gets one paid second chance. Native flows
+	// stay preferred; the fallback only runs after they fail.
+	var bdClient *brightdata.Client
+	if cfg.BrightDataAPIKey != "" {
+		bdClient = brightdata.New(context.Background(), brightdata.Config{
+			APIKey:               cfg.BrightDataAPIKey,
+			CustomerID:           cfg.BrightDataCustomerID,
+			BrowserZone:          cfg.BrightDataBrowserZone,
+			BrowserZonePassword:  cfg.BrightDataBrowserZonePassword,
+			ScraperCostPerRecord: cfg.BrightDataScraperCostPerRecord,
+			BrowserCostPerGB:     cfg.BrightDataBrowserCostPerGB,
+			YouTubeClientName:    cfg.BrightDataYouTubeClientName,
+			YouTubeClientVersion: cfg.BrightDataYouTubeClientVersion,
+		})
+		archiversMap[utils.ArchiveTypeYtDlp] = brightdata.WithFallback(archiversMap[utils.ArchiveTypeYtDlp], utils.ArchiveTypeYtDlp, bdClient)
+		archiversMap[utils.ArchiveTypeGalleryDl] = brightdata.WithFallback(archiversMap[utils.ArchiveTypeGalleryDl], utils.ArchiveTypeGalleryDl, bdClient)
+		utils.SetBrightDataMediaFallback(bdClient.Enabled())
+		slog.Info("Bright Data media fallback configured",
+			"instagram", bdClient.Enabled(),
+			"youtube_browser", bdClient.BrowserReady())
+	} else {
+		slog.Info("Bright Data media fallback not configured (BRIGHTDATA_API_KEY unset)")
 	}
 
 	os.MkdirAll(cfg.CachePath, 0755)
@@ -608,6 +648,7 @@ func main() {
 	admin.POST("/api-keys/:id/toggle", func(c *gin.Context) { handlers.ApiKeysToggle(c, db) })
 	admin.DELETE("/api-keys/:id", func(c *gin.Context) { handlers.ApiKeysDelete(c, db) })
 	admin.POST("/retry-failed", func(c *gin.Context) { handlers.RetryAllFailedJobs(c, db, riverClient) })
+	admin.GET("/brightdata-usage", func(c *gin.Context) { handlers.BrightDataUsage(c, db) })
 	admin.POST("/backfill-media", func(c *gin.Context) { handlers.BackfillMissingMediaItems(c, db, riverClient) })
 	// Retained: the previous name for the endpoint above, kept working for
 	// existing operator scripts and runbooks.

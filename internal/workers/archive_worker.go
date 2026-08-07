@@ -146,7 +146,7 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 	// fresh object; the item's storage_key records the key that succeeded.
 	nonce := uploadNonce()
 	key := fmt.Sprintf("%s/%s-%s%s", jobArgs.ShortID, jobArgs.Type, nonce, result.Extension)
-	err = saveArchiveData(result.Data, key, result.Extension, storage, db, item)
+	err = saveArchiveData(result.Data, key, result.Extension, result.Source, storage, db, item)
 	if err != nil {
 		slog.Error("Failed to save archive data", "short_id", jobArgs.ShortID, "type", jobArgs.Type, "error", err)
 		fmt.Fprintf(dbLogWriter, "\nFailed to save archive data: %v\n", err)
@@ -215,7 +215,7 @@ func uploadNonce() string {
 }
 
 // saveArchiveData handles writing archive data to storage and updating the database.
-func saveArchiveData(data io.Reader, key, ext string, storage storage.Storage, db *gorm.DB, item *models.ArchiveItem) error {
+func saveArchiveData(data io.Reader, key, ext, source string, storage storage.Storage, db *gorm.DB, item *models.ArchiveItem) error {
 	// Archivers hand back readers backed by a live process or a goroutine
 	// writing into an io.Pipe, and closing is what releases them. Every return
 	// path below must close, including the early one when Writer fails: an
@@ -261,10 +261,16 @@ func saveArchiveData(data io.Reader, key, ext string, storage storage.Storage, d
 	}
 
 	// Mark as completed and store final metadata.
-	return db.Model(item).Updates(map[string]interface{}{
+	updates := map[string]interface{}{
 		"status":      "completed",
 		"storage_key": key,
 		"extension":   ext,
 		"file_size":   fileSize,
-	}).Error
+	}
+	// Source is only written when the archiver declared one (the Bright Data
+	// fallback does); native archivers leave the column at its default.
+	if source != "" {
+		updates["source"] = source
+	}
+	return db.Model(item).Updates(updates).Error
 }

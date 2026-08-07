@@ -95,7 +95,7 @@ func TestSaveArchiveDataMarksCompleted(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	payload := []byte("hello-archive")
 	key := "sv001/mhtml-deadbeef.mhtml"
-	if err := saveArchiveData(bytes.NewReader(payload), key, ".mhtml", store, db, &item); err != nil {
+	if err := saveArchiveData(bytes.NewReader(payload), key, ".mhtml", "", store, db, &item); err != nil {
 		t.Fatalf("saveArchiveData: %v", err)
 	}
 
@@ -160,7 +160,7 @@ func (s failingWriterStorage) Writer(key string) (io.WriteCloser, error) {
 func TestSaveArchiveDataClosesReaderWhenStorageWriterFails(t *testing.T) {
 	data := &closeTrackingReader{Reader: strings.NewReader("payload")}
 
-	err := saveArchiveData(data, "key", ".zip", failingWriterStorage{}, nil, &models.ArchiveItem{})
+	err := saveArchiveData(data, "key", ".zip", "", failingWriterStorage{}, nil, &models.ArchiveItem{})
 	if err == nil {
 		t.Fatal("expected an error when the storage writer fails")
 	}

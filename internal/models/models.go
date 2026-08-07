@@ -69,6 +69,12 @@ type ArchiveItem struct {
 	FileSize   int64  // file size in bytes
 	Logs       string `gorm:"type:text"`
 	RetryCount int
+	// Source records which flow produced the stored artifact: "" or "native"
+	// for the regular archivers, "brightdata" when the Bright Data fallback
+	// rescued a failed native run. Provenance matters here: fallback artifacts
+	// can differ in fidelity (e.g. YouTube capped at the progressive stream),
+	// so reviews and audits need to find them without parsing logs.
+	Source string `gorm:"index"`
 
 	// Thumbnail is a derived preview image for this item, stored as its own
 	// object. It is deliberately not an ArchiveItem of its own: archive types
@@ -84,12 +90,48 @@ type ArchiveItem struct {
 	ThumbnailStatus string `gorm:"index"` // "" | pending | ready | unavailable
 }
 
+// Archive item source values for ArchiveItem.Source.
+const (
+	ArchiveSourceNative     = "native"
+	ArchiveSourceBrightData = "brightdata"
+)
+
 // Thumbnail status values for ArchiveItem.ThumbnailStatus.
 const (
 	ThumbnailStatusPending     = "pending"
 	ThumbnailStatusReady       = "ready"
 	ThumbnailStatusUnavailable = "unavailable"
 )
+
+// BrightDataUsage records one billable Bright Data operation performed by the
+// fallback archiver, so operators can see exactly what the fallback is costing
+// without leaving Arker. One archive item can accumulate several rows: a
+// dataset trigger per attempt, or a scrape plus a browser session.
+//
+// CostUSD is an estimate computed from configured rates (the API key in use
+// cannot read Bright Data's billing endpoints); the true invoice lives in the
+// Bright Data dashboard. Rows are written for failures too, with Success=false,
+// because a failed attempt can still be billable and silent spend is the thing
+// this table exists to prevent.
+type BrightDataUsage struct {
+	gorm.Model
+	ArchiveItemID uint   `gorm:"index"`
+	ShortID       string `gorm:"index"`
+	URL           string
+	// Product is the Bright Data product used: "web_scraper" (dataset trigger)
+	// or "browser_api" (remote browser session).
+	Product    string `gorm:"index"`
+	DatasetID  string
+	SnapshotID string
+	// Records is the number of dataset records returned (web_scraper only).
+	Records int
+	// BytesTransferred is the measured media payload plus a fixed page-load
+	// overhead estimate (browser_api only).
+	BytesTransferred int64
+	CostUSD          float64
+	Success          bool
+	Detail           string
+}
 
 // ArchiveItemLog stores immutable log chunks for an archive item.
 type ArchiveItemLog struct {

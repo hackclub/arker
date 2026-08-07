@@ -1,6 +1,9 @@
 package utils
 
-import "strings"
+import (
+	"strings"
+	"sync/atomic"
+)
 
 // Shared configuration for the external media download tools Arker shells out
 // to. yt-dlp and gallery-dl are the video and image halves of the same job and
@@ -32,6 +35,24 @@ func MediaCookiesConfigured() bool {
 	ytDlpCookiesMu.RLock()
 	defer ytDlpCookiesMu.RUnlock()
 	return ytDlpCookiesFilePath != ""
+}
+
+// brightDataMediaFallback records whether a Bright Data fallback client is
+// configured. It lives here rather than in the brightdata package because URL
+// routing (which archive items to create) is a utils concern and must not
+// import the archiver stack.
+var brightDataMediaFallback atomic.Bool
+
+// SetBrightDataMediaFallback is called once at startup after the Bright Data
+// client is (or is not) constructed.
+func SetBrightDataMediaFallback(enabled bool) {
+	brightDataMediaFallback.Store(enabled)
+}
+
+// BrightDataMediaFallbackEnabled reports whether failed Instagram/YouTube
+// media archives have a paid second chance.
+func BrightDataMediaFallbackEnabled() bool {
+	return brightDataMediaFallback.Load()
 }
 
 // MediaProxyRedactionSecrets returns substrings that must never reach persisted

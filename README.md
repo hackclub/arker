@@ -96,6 +96,51 @@ override to "be safe": gallery-dl already waits a randomized 6-12 seconds betwee
 Instagram API calls, and that setting replaces the per-site default rather than
 acting as a floor.
 
+### Bright Data Fallback (Instagram & YouTube)
+
+The native yt-dlp/gallery-dl flows fail in ways Arker cannot fix from its own
+network position: Instagram login walls and account throttles, YouTube
+geo-blocks and bot checks. With a Bright Data API key configured, a failed
+native run on an Instagram or YouTube URL gets one paid second chance. The
+native flows always run first and their successes are always preferred — the
+fallback spends money only after a native failure.
+
+- **Instagram** uses Bright Data's Web Scraper API (the maintained
+  Instagram-specific scrapers): one dataset trigger returns post metadata plus
+  direct CDN media URLs, and the media itself downloads over Arker's own
+  connection for free. Reels become the usual `.mp4` artifact; feed posts
+  become the usual gallery ZIP with `metadata.json` (plus the raw Bright Data
+  record as `brightdata.json`), so viewers and the API see no difference.
+- **YouTube** cannot be served by the scraper alone: its `video_url` is signed
+  for Bright Data's own exit IP (deliberately scrambled `ip=` parameter), and
+  their proxy products refuse YouTube. Instead the fallback opens a Bright
+  Data **Browser API** session and resolves the video via YouTube's Innertube
+  player API from inside that session — no scraping of the rendered page —
+  then pulls the progressive MP4 through the same session. Progressive streams
+  top out at 360p/720p; provenance is recorded on the archive item
+  (`source = "brightdata"`) so fidelity can be audited later.
+
+Every Bright Data operation writes a row to the `bright_data_usages` table with
+an estimated cost; `GET /admin/brightdata-usage` (admin session) reports totals,
+per-product and per-day spend, and recent events. Costs are computed from the
+configured rates below — the Bright Data dashboard remains the invoice of
+record.
+
+```bash
+BRIGHTDATA_API_KEY=...                      # required to enable the fallback
+BRIGHTDATA_CUSTOMER_ID=...                  # optional; resolved via the API at startup
+BRIGHTDATA_BROWSER_ZONE=mcp_browser_no_ratelimit  # Browser API zone for YouTube
+BRIGHTDATA_BROWSER_ZONE_PASSWORD=...        # optional; resolved via the API at startup
+BRIGHTDATA_SCRAPER_COST_PER_RECORD=0.0015   # USD per Web Scraper API record
+BRIGHTDATA_BROWSER_COST_PER_GB=8.40         # USD per GB of Browser API traffic
+BRIGHTDATA_YT_CLIENT_NAME=ANDROID           # Innertube client for YouTube resolution
+BRIGHTDATA_YT_CLIENT_VERSION=20.10.38       # bump via env if YouTube retires it
+```
+
+With the fallback enabled, Instagram gallery items are created even when no
+cookie jar is configured: the native run still fails fast, but the item now has
+a real path to success instead of being skipped outright.
+
 ### Storage Configuration
 
 Arker supports both filesystem and S3-compatible storage backends.

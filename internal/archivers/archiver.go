@@ -40,6 +40,10 @@ type Result struct {
 	// types cannot produce one cheaply, and no caller may treat its absence as
 	// a failure.
 	Thumbnail *Thumbnail
+	// Source identifies which flow produced the artifact when it matters for
+	// provenance (see models.ArchiveItem.Source). Empty means the item's
+	// regular native archiver.
+	Source string
 }
 
 // Archiver captures a URL into a single stored artifact.

@@ -288,6 +288,14 @@ func ShouldCreateGalleryDLItem(rawURL string) bool {
 		return false
 	}
 	if GalleryDLURLRequiresCookies(rawURL) && !MediaCookiesConfigured() {
+		// Without cookies the native run is guaranteed to fail, but for
+		// Instagram a configured Bright Data fallback gives the item a real
+		// path to success, so it is worth creating (and paying for) after the
+		// native attempt fails. Other login-only sites have no fallback and
+		// stay excluded.
+		if BrightDataMediaFallbackEnabled() && IsInstagramURL(rawURL) {
+			return true
+		}
 		return false
 	}
 	return true

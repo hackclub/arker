@@ -169,3 +169,29 @@ func TestIsGalleryDLURLRejectsBareHosts(t *testing.T) {
 		t.Error("a redd.it short link must match")
 	}
 }
+
+// A login-only Instagram URL without cookies is only worth an archive item
+// when the Bright Data fallback gives the guaranteed-to-fail native run a real
+// path to success. Other login-only sites have no fallback and stay excluded.
+func TestShouldCreateGalleryDLItemWithBrightDataFallback(t *testing.T) {
+	if MediaCookiesConfigured() {
+		t.Skip("test requires no cookie jar configured")
+	}
+
+	const igPost = "https://www.instagram.com/p/ABC123/"
+	const xPost = "https://x.com/user/status/123"
+
+	SetBrightDataMediaFallback(false)
+	t.Cleanup(func() { SetBrightDataMediaFallback(false) })
+	if ShouldCreateGalleryDLItem(igPost) {
+		t.Error("cookie-less Instagram item created with no fallback configured")
+	}
+
+	SetBrightDataMediaFallback(true)
+	if !ShouldCreateGalleryDLItem(igPost) {
+		t.Error("cookie-less Instagram item not created despite Bright Data fallback")
+	}
+	if ShouldCreateGalleryDLItem(xPost) {
+		t.Error("cookie-less X item created; Bright Data fallback does not cover X")
+	}
+}
