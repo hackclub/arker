@@ -38,3 +38,4 @@ cookies.txt
 /secrets/
 docker-compose.testdrive.yml
 dupmap
+dupmap-reports/
