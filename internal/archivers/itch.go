@@ -47,25 +47,25 @@ type GameFile struct {
 	Size     int64  `json:"size"`
 }
 
-func (a *ItchArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *PWBundle, error) {
+func (a *ItchArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (Result, error) {
 	fmt.Fprintf(logWriter, "Starting itch archive for: %s\n", url)
 
 	// Check context before starting
 	select {
 	case <-ctx.Done():
-		return nil, "", "", nil, ctx.Err()
+		return Result{}, ctx.Err()
 	default:
 	}
 
 	// Check if API key is available
 	if a.APIKey == "" {
-		return nil, "", "", nil, fmt.Errorf("itch.io API key not configured")
+		return Result{}, fmt.Errorf("itch.io API key not configured")
 	}
 
 	// Create temporary directory for itch-dl output
 	tmpDir, err := os.MkdirTemp("", "itch-archive-*")
 	if err != nil {
-		return nil, "", "", nil, fmt.Errorf("failed to create temp directory: %w", err)
+		return Result{}, fmt.Errorf("failed to create temp directory: %w", err)
 	}
 	// Note: Don't defer cleanup here - it will happen before ZIP creation completes
 
@@ -81,7 +81,7 @@ func (a *ItchArchiver) Archive(ctx context.Context, url string, logWriter io.Wri
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(logWriter, "itch-dl error: %v\nOutput: %s\n", err, string(output))
-		return nil, "", "", nil, fmt.Errorf("itch-dl failed: %w", err)
+		return Result{}, fmt.Errorf("itch-dl failed: %w", err)
 	}
 
 	fmt.Fprintf(logWriter, "itch-dl completed successfully\n")
@@ -90,7 +90,7 @@ func (a *ItchArchiver) Archive(ctx context.Context, url string, logWriter io.Wri
 	// Find the downloaded game directory
 	gameDir, err := findGameDirectory(tmpDir)
 	if err != nil {
-		return nil, "", "", nil, fmt.Errorf("failed to find game directory: %w", err)
+		return Result{}, fmt.Errorf("failed to find game directory: %w", err)
 	}
 
 	fmt.Fprintf(logWriter, "Found game directory: %s\n", gameDir)
@@ -98,7 +98,7 @@ func (a *ItchArchiver) Archive(ctx context.Context, url string, logWriter io.Wri
 	// Parse metadata
 	metadata, err := parseItchMetadata(gameDir, logWriter)
 	if err != nil {
-		return nil, "", "", nil, fmt.Errorf("failed to parse metadata: %w", err)
+		return Result{}, fmt.Errorf("failed to parse metadata: %w", err)
 	}
 
 	fmt.Fprintf(logWriter, "Parsed metadata: %s\n", metadata.Title)
@@ -123,7 +123,7 @@ func (a *ItchArchiver) Archive(ctx context.Context, url string, logWriter io.Wri
 		fmt.Fprintf(logWriter, "Successfully created ZIP archive\n")
 	}()
 
-	return pipeReader, ".zip", "application/zip", nil, nil
+	return Result{Data: pipeReader, Extension: ".zip", ContentType: "application/zip"}, nil
 }
 
 // findGameDirectory locates the downloaded game directory

@@ -69,12 +69,12 @@ type GalleryFile struct {
 // name can never collide with a downloaded media file.
 const galleryMetadataFilename = "metadata.json"
 
-func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *PWBundle, error) {
+func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (Result, error) {
 	fmt.Fprintf(logWriter, "Starting gallery archive for: %s\n", url)
 
 	select {
 	case <-ctx.Done():
-		return nil, "", "", nil, ctx.Err()
+		return Result{}, ctx.Err()
 	default:
 	}
 
@@ -84,7 +84,7 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 	cookieArgs, cleanupCookies, err := utils.MediaCookieArgsForRun()
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to prepare gallery-dl cookies: %v\n", err)
-		return nil, "", "", nil, err
+		return Result{}, err
 	}
 	defer cleanupCookies()
 	if len(cookieArgs) == 0 {
@@ -100,7 +100,7 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 
 	tmpDir, err := os.MkdirTemp("", "arker-gallery-*")
 	if err != nil {
-		return nil, "", "", nil, fmt.Errorf("failed to create temp directory: %w", err)
+		return Result{}, fmt.Errorf("failed to create temp directory: %w", err)
 	}
 	// Cleanup is handed to the ZIP goroutine on the success path; every early
 	// return below removes the directory itself.
@@ -131,7 +131,7 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 	fmt.Fprintf(logWriter, "Starting gallery-dl download process...\n")
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintf(logWriter, "Failed to start gallery-dl: %v\n", err)
-		return nil, "", "", nil, err
+		return Result{}, err
 	}
 
 	done := make(chan struct{})
@@ -152,7 +152,7 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 	media, sidecars, err := collectGalleryFiles(tmpDir)
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to inspect gallery-dl output: %v\n", err)
-		return nil, "", "", nil, err
+		return Result{}, err
 	}
 
 	// gallery-dl exits non-zero for partial failures too, so a run that still
@@ -160,10 +160,10 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 	if len(media) == 0 {
 		if runErr != nil {
 			fmt.Fprintf(logWriter, "gallery-dl failed: %v (%s)\n", runErr, describeGalleryDlExit(runErr))
-			return nil, "", "", nil, fmt.Errorf("gallery-dl failed: %w (%s)", runErr, describeGalleryDlExit(runErr))
+			return Result{}, fmt.Errorf("gallery-dl failed: %w (%s)", runErr, describeGalleryDlExit(runErr))
 		}
 		fmt.Fprintf(logWriter, "gallery-dl downloaded no files for %s\n", url)
-		return nil, "", "", nil, fmt.Errorf("gallery-dl downloaded no files for %s", url)
+		return Result{}, fmt.Errorf("gallery-dl downloaded no files for %s", url)
 	}
 	if runErr != nil {
 		fmt.Fprintf(logWriter, "gallery-dl exited with %v (%s) but produced %d file(s); keeping partial archive\n",
@@ -174,7 +174,7 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 	metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to encode gallery metadata: %v\n", err)
-		return nil, "", "", nil, fmt.Errorf("failed to encode gallery metadata: %w", err)
+		return Result{}, fmt.Errorf("failed to encode gallery metadata: %w", err)
 	}
 
 	fmt.Fprintf(logWriter, "Downloaded %d file(s) from %s\n", len(media), metadata.Extractor)
@@ -207,7 +207,7 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 		fmt.Fprintf(logWriter, "Successfully created gallery ZIP archive\n")
 	}()
 
-	return pipeReader, ".zip", "application/zip", nil, nil
+	return Result{Data: pipeReader, Extension: ".zip", ContentType: "application/zip"}, nil
 }
 
 // galleryDlDownloadArgs builds the invariant part of the gallery-dl command

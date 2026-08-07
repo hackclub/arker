@@ -59,13 +59,13 @@ func installGitProtocols() {
 	})
 }
 
-func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *PWBundle, error) {
+func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (Result, error) {
 	fmt.Fprintf(logWriter, "Starting git archive for: %s\n", url)
 
 	// Check context before starting
 	select {
 	case <-ctx.Done():
-		return nil, "", "", nil, ctx.Err()
+		return Result{}, ctx.Err()
 	default:
 	}
 
@@ -81,7 +81,7 @@ func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 	tempDir, err := os.MkdirTemp("", "git-archive-")
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to create temp directory: %v\n", err)
-		return nil, "", "", nil, err
+		return Result{}, err
 	}
 	cleanup := func() { os.RemoveAll(tempDir) }
 
@@ -93,7 +93,7 @@ func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to clone repository: %v\n", err)
 		cleanup()
-		return nil, "", "", nil, err
+		return Result{}, err
 	}
 	fmt.Fprintf(logWriter, "Repository cloned successfully\n")
 
@@ -139,7 +139,7 @@ func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 		}
 	}()
 
-	return pr, ".tar", "application/x-tar", nil, nil
+	return Result{Data: pr, Extension: ".tar", ContentType: "application/x-tar"}, nil
 }
 
 // extractGitRepoURL extracts the repository URL from GitHub URLs with extra paths and fragments

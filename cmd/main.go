@@ -507,6 +507,9 @@ func main() {
 	riverWorkers := river.NewWorkers()
 	archiveWorker := workers.NewArchiveWorker(storageInstance, db, archiversMap)
 	river.AddWorker(riverWorkers, archiveWorker)
+	// Backfills thumbnails for archives captured before the feature existed.
+	// New captures produce theirs inline and never enqueue this.
+	river.AddWorker(riverWorkers, workers.NewThumbnailWorker(storageInstance, db))
 
 	// Create River client with configuration
 	errorHandler := &CustomErrorHandler{db: db}
@@ -646,6 +649,15 @@ func main() {
 	r.GET("/archive/:shortid/:type", func(c *gin.Context) { handlers.ServeArchive(c, storageInstance, db) })
 	r.HEAD("/archive/:shortid/:type", func(c *gin.Context) { handlers.ServeArchive(c, storageInstance, db) })
 	r.GET("/archive/:shortid/mhtml/html", func(c *gin.Context) { handlers.ServeMHTMLAsHTML(c, storageInstance, db) })
+
+	// Thumbnail routes - MUST come before /:shortid/:type catch-all.
+	// HEAD is registered alongside GET, matching /archive/:shortid/:type:
+	// caches and link-preview crawlers probe with HEAD before fetching.
+	thumbHandler := func(c *gin.Context) { handlers.ServeThumbnail(c, storageInstance, db, riverClient) }
+	r.GET("/thumb/:shortid", thumbHandler)
+	r.HEAD("/thumb/:shortid", thumbHandler)
+	r.GET("/thumb/:shortid/*type", thumbHandler)
+	r.HEAD("/thumb/:shortid/*type", thumbHandler)
 
 	// Itch routes - MUST come before /:shortid/:type catch-all
 	r.GET("/itch/health", handlers.ServeItchHealth)

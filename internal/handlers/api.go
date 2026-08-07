@@ -18,6 +18,10 @@ import (
 type PastArchiveResponse struct {
 	ShortID   string    `json:"short_id"`
 	Timestamp time.Time `json:"timestamp"`
+	// ThumbnailURL always points at a servable image. The endpoint falls back
+	// to a placeholder, so consumers can render a card unconditionally instead
+	// of branching on whether a preview happens to exist yet.
+	ThumbnailURL string `json:"thumbnail_url"`
 }
 
 // getPastArchives is the shared logic for retrieving past archives.
@@ -49,8 +53,9 @@ func getPastArchives(c *gin.Context, db *gorm.DB) {
 	response := make([]PastArchiveResponse, len(captures))
 	for i, capture := range captures {
 		response[i] = PastArchiveResponse{
-			ShortID:   capture.ShortID,
-			Timestamp: capture.Timestamp,
+			ShortID:      capture.ShortID,
+			Timestamp:    capture.Timestamp,
+			ThumbnailURL: ThumbnailURL(c, capture.ShortID),
 		}
 	}
 

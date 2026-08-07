@@ -62,7 +62,27 @@ type ArchiveItem struct {
 	FileSize   int64  // file size in bytes
 	Logs       string `gorm:"type:text"`
 	RetryCount int
+
+	// Thumbnail is a derived preview image for this item, stored as its own
+	// object. It is deliberately not an ArchiveItem of its own: archive types
+	// are permanent, user-facing identifiers that render as viewer tabs, and a
+	// thumbnail is neither.
+	//
+	// ThumbnailStatus distinguishes "not attempted yet" from "generated" and
+	// from "this source can never produce one". Without that last state the
+	// lazy generator would re-enqueue an impossible job on every page view.
+	ThumbnailKey    string // storage key; empty until generated
+	ThumbnailWidth  int
+	ThumbnailHeight int
+	ThumbnailStatus string `gorm:"index"` // "" | pending | ready | unavailable
 }
+
+// Thumbnail status values for ArchiveItem.ThumbnailStatus.
+const (
+	ThumbnailStatusPending     = "pending"
+	ThumbnailStatusReady       = "ready"
+	ThumbnailStatusUnavailable = "unavailable"
+)
 
 // ArchiveItemLog stores immutable log chunks for an archive item.
 type ArchiveItemLog struct {

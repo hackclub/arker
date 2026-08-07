@@ -11,13 +11,15 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
+
+	"arker/internal/thumbnail"
 )
 
 // ScreenshotArchiver
 type ScreenshotArchiver struct {
 }
 
-func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *PWBundle, error) {
+func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (Result, error) {
 	fmt.Fprintf(logWriter, "Starting screenshot archive for: %s\n", url)
 
 	pageOpts := playwright.BrowserNewPageOptions{
@@ -30,22 +32,22 @@ func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter 
 
 	bundle, page, err := setupBrowserForArchiving(logWriter, pageOpts)
 	if err != nil {
-		return nil, "", "", bundle, err
+		return Result{Bundle: bundle}, err
 	}
 	// Note: PWBundle cleanup is deferred in the main worker loop.
 
 	if err = PerformCompletePageLoadWithContext(ctx, page, url, logWriter, true); err != nil {
-		return nil, "", "", bundle, err
+		return Result{Bundle: bundle}, err
 	}
 
 	return a.ArchiveWithPageContext(ctx, page, url, logWriter, bundle)
 }
 
-func (a *ScreenshotArchiver) ArchiveWithPageContext(ctx context.Context, page playwright.Page, url string, logWriter io.Writer, bundle *PWBundle) (io.Reader, string, string, *PWBundle, error) {
+func (a *ScreenshotArchiver) ArchiveWithPageContext(ctx context.Context, page playwright.Page, url string, logWriter io.Writer, bundle *PWBundle) (Result, error) {
 	// Check context before screenshot operations
 	select {
 	case <-ctx.Done():
-		return nil, "", "", bundle, ctx.Err()
+		return Result{Bundle: bundle}, ctx.Err()
 	default:
 	}
 
@@ -67,7 +69,7 @@ func (a *ScreenshotArchiver) ArchiveWithPageContext(ctx context.Context, page pl
 	// Check context before taking screenshot
 	select {
 	case <-ctx.Done():
-		return nil, "", "", bundle, ctx.Err()
+		return Result{Bundle: bundle}, ctx.Err()
 	default:
 	}
 
@@ -78,7 +80,7 @@ func (a *ScreenshotArchiver) ArchiveWithPageContext(ctx context.Context, page pl
 	})
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to take screenshot: %v\n", err)
-		return nil, "", "", bundle, err
+		return Result{Bundle: bundle}, err
 	}
 
 	// Decode PNG and select optimal format
@@ -87,10 +89,22 @@ func (a *ScreenshotArchiver) ArchiveWithPageContext(ctx context.Context, page pl
 	img, err := png.Decode(bytes.NewReader(data))
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to decode PNG: %v\n", err)
-		return nil, "", "", bundle, err
+		return Result{Bundle: bundle}, err
 	}
 
 	fmt.Fprintf(logWriter, "Image decoded, bounds: %v\n", img.Bounds())
+
+	// Derive the thumbnail here, from the image we have already decoded.
+	//
+	// This is why the screenshot archiver is the thumbnail source: the decode
+	// above is work we do regardless, so the thumbnail costs one downscale and
+	// no second browser round-trip. Deriving it later from the stored artifact
+	// would mean re-decoding a full-page screenshot that can reach 60
+	// megapixels.
+	//
+	// A thumbnail failure is never an archive failure: the screenshot itself is
+	// fine, and a missing preview is a cosmetic loss.
+	thumb := deriveThumbnail(img, logWriter)
 
 	// Select format based on image dimensions
 	extension, mimeType, format := selectImageFormat(img, logWriter)
@@ -138,7 +152,25 @@ func (a *ScreenshotArchiver) ArchiveWithPageContext(ctx context.Context, page pl
 		}
 	}()
 
-	return pipeReader, extension, mimeType, bundle, nil
+	return Result{
+		Data:        pipeReader,
+		Extension:   extension,
+		ContentType: mimeType,
+		Bundle:      bundle,
+		Thumbnail:   thumb,
+	}, nil
+}
+
+// deriveThumbnail builds the preview image for a screenshot, returning nil (and
+// logging) rather than an error on any failure.
+func deriveThumbnail(img image.Image, logWriter io.Writer) *Thumbnail {
+	t, err := thumbnail.FromImage(img)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Thumbnail generation skipped: %v\n", err)
+		return nil
+	}
+	fmt.Fprintf(logWriter, "Thumbnail generated: %dx%d, %d bytes\n", t.Width, t.Height, len(t.Data))
+	return &Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height}
 }
 
 // selectImageFormat determines the best format based on image dimensions

@@ -16,6 +16,7 @@ import (
 	"arker/internal/archivers"
 	"arker/internal/models"
 	"arker/internal/storage"
+	"arker/internal/thumbnail"
 	"arker/internal/utils"
 )
 
@@ -128,11 +129,11 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 	defer cancel()
 
 	// Archive the content. PWBundle is returned for browser-based archivers.
-	data, ext, _, bundle, err := arch.Archive(ctx, jobArgs.URL, dbLogWriter, db, item.ID)
+	result, err := arch.Archive(ctx, jobArgs.URL, dbLogWriter, db, item.ID)
 
 	// CRITICAL: Always defer bundle cleanup to ensure the browser is closed.
-	if bundle != nil {
-		defer bundle.Cleanup()
+	if result.Bundle != nil {
+		defer result.Bundle.Cleanup()
 	}
 
 	if err != nil {
@@ -143,8 +144,9 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 	// Save the resulting data to storage. The archive bucket forbids
 	// overwrites and deletes (bucket lock), so every upload attempt writes a
 	// fresh object; the item's storage_key records the key that succeeded.
-	key := fmt.Sprintf("%s/%s-%s%s", jobArgs.ShortID, jobArgs.Type, uploadNonce(), ext)
-	err = saveArchiveData(data, key, ext, storage, db, item)
+	nonce := uploadNonce()
+	key := fmt.Sprintf("%s/%s-%s%s", jobArgs.ShortID, jobArgs.Type, nonce, result.Extension)
+	err = saveArchiveData(result.Data, key, result.Extension, storage, db, item)
 	if err != nil {
 		slog.Error("Failed to save archive data", "short_id", jobArgs.ShortID, "type", jobArgs.Type, "error", err)
 		fmt.Fprintf(dbLogWriter, "\nFailed to save archive data: %v\n", err)
@@ -156,7 +158,50 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 		"type", jobArgs.Type,
 		"storage_key", key)
 
+	// Persist the thumbnail after the archive is already marked completed, and
+	// never propagate its error. The archive is the product; the preview is
+	// not, and failing an otherwise-good capture over a cosmetic artifact would
+	// burn a River attempt and re-run the whole download.
+	if result.Thumbnail != nil {
+		thumbKey := fmt.Sprintf("%s/%s-%s-thumb%s", jobArgs.ShortID, jobArgs.Type, nonce, thumbnail.Extension)
+		if err := StoreThumbnail(result.Thumbnail, thumbKey, storage, db, item); err != nil {
+			slog.Warn("Failed to save thumbnail", "short_id", jobArgs.ShortID, "type", jobArgs.Type, "error", err)
+			fmt.Fprintf(dbLogWriter, "\nWarning: failed to save thumbnail: %v\n", err)
+		}
+	}
+
 	return nil
+}
+
+// StoreThumbnail writes an encoded thumbnail to storage and points the archive
+// item at it.
+//
+// Like archive artifacts, thumbnail keys carry an upload nonce: the bucket
+// forbids overwrites and deletes, so regenerating a thumbnail means writing a
+// new object and repointing the row, never replacing bytes in place.
+func StoreThumbnail(thumb *archivers.Thumbnail, key string, store storage.Storage, db *gorm.DB, item *models.ArchiveItem) error {
+	if thumb == nil || len(thumb.Data) == 0 {
+		return fmt.Errorf("thumbnail is empty")
+	}
+
+	w, err := store.Writer(key)
+	if err != nil {
+		return fmt.Errorf("failed to get thumbnail writer: %w", err)
+	}
+	_, copyErr := w.Write(thumb.Data)
+	if closeErr := w.Close(); closeErr != nil && copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr != nil {
+		return fmt.Errorf("failed writing thumbnail: %w", copyErr)
+	}
+
+	return db.Model(item).Updates(map[string]interface{}{
+		"thumbnail_key":    key,
+		"thumbnail_width":  thumb.Width,
+		"thumbnail_height": thumb.Height,
+		"thumbnail_status": models.ThumbnailStatusReady,
+	}).Error
 }
 
 // uploadNonce returns a short random suffix for storage keys so retries never
