@@ -37,9 +37,11 @@ RUN apt-get update && apt-get install -y \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Install yt-dlp and itch-dl. Match production: nightly yt-dlp plus curl-cffi
-# for browser impersonation.
-RUN pip3 install --break-system-packages --upgrade --pre "yt-dlp[default,curl-cffi]" itch-dl
+# Install yt-dlp, gallery-dl, and itch-dl. Match production: nightly yt-dlp plus
+# curl-cffi for browser impersonation, gallery-dl in the same environment so its
+# Instagram video path can import yt-dlp, and requests[socks] for socks5 proxies.
+RUN pip3 install --break-system-packages --upgrade --pre "yt-dlp[default,curl-cffi]" \
+    && pip3 install --break-system-packages --upgrade gallery-dl "requests[socks]" itch-dl
 ENV YTDLP_IMPERSONATE=chrome
 
 # Set working directory

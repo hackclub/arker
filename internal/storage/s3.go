@@ -404,6 +404,17 @@ func (r *s3SeekableReader) Read(p []byte) (n int, err error) {
 }
 
 func (r *s3SeekableReader) Seek(offset int64, whence int) (int64, error) {
+	// Seeking to where the stream already is must not throw away the open
+	// body. Random-access readers (archive/zip over a stored gallery) seek
+	// before every read, and without this each one costs a fresh ranged
+	// GetObject — hundreds of round trips to serve a single image.
+	if whence == io.SeekStart && r.reader != nil && offset == r.pos {
+		return r.pos, nil
+	}
+	if whence == io.SeekCurrent && offset == 0 && r.reader != nil {
+		return r.pos, nil
+	}
+
 	// Close current reader
 	if r.reader != nil {
 		r.reader.Close()

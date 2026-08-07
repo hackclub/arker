@@ -139,11 +139,13 @@ func GetItemLog(c *gin.Context, db *gorm.DB) {
 }
 
 // RetryAllFailedJobs directly retries all failed archive items.
-// Pass ?type=youtube to retry only one archive type.
+// Pass ?type=yt-dlp (or any archive type) to retry only one archive type.
 func RetryAllFailedJobs(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
 	query := db.Where("status = 'failed'")
 	if typ := c.Query("type"); typ != "" {
-		query = query.Where("type = ?", typ)
+		// Normalize so a runbook that still says ?type=youtube keeps matching
+		// rows rather than silently retrying nothing.
+		query = query.Where("type = ?", utils.NormalizeArchiveType(typ))
 	}
 
 	// Get all failed items
@@ -199,73 +201,135 @@ func RetryAllFailedJobs(c *gin.Context, db *gorm.DB, riverClient *river.Client[p
 	})
 }
 
-// BackfillMissingVideoItems creates and enqueues youtube archive items for
-// captures of video URLs that never had one (e.g. TikTok short links archived
-// before short-link detection existed). Failed youtube items are re-run via
-// RetryAllFailedJobs instead. Pass ?dry_run=true to preview without queueing.
-func BackfillMissingVideoItems(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
+// mediaBackfillURLPattern pre-filters candidate URLs in SQL for each media
+// archive type. Loading every capture and filtering in Go blows Postgres's
+// 65535-parameter limit at production scale (~100k captures); the Go predicate
+// named alongside each pattern stays the exact filter.
+var mediaBackfillURLPattern = map[string]struct {
+	sqlLike string
+	matches func(string) bool
+}{
+	utils.ArchiveTypeYtDlp: {
+		sqlLike: "(LOWER(archived_urls.original) LIKE '%youtube.com%' OR LOWER(archived_urls.original) LIKE '%youtu.be%' OR LOWER(archived_urls.original) LIKE '%vimeo.com%' OR LOWER(archived_urls.original) LIKE '%instagram.com%' OR LOWER(archived_urls.original) LIKE '%tiktok.com%' OR LOWER(archived_urls.original) LIKE '%facebook.com%' OR LOWER(archived_urls.original) LIKE '%fb.watch%')",
+		matches: utils.IsVideoURL,
+	},
+	utils.ArchiveTypeGalleryDl: {
+		sqlLike: "(LOWER(archived_urls.original) LIKE '%instagram.com%' OR LOWER(archived_urls.original) LIKE '%twitter.com%' OR LOWER(archived_urls.original) LIKE '%x.com%' OR LOWER(archived_urls.original) LIKE '%reddit.com%' OR LOWER(archived_urls.original) LIKE '%redd.it%' OR LOWER(archived_urls.original) LIKE '%tumblr.com%' OR LOWER(archived_urls.original) LIKE '%bsky.app%' OR LOWER(archived_urls.original) LIKE '%flickr.com%' OR LOWER(archived_urls.original) LIKE '%imgur.com%' OR LOWER(archived_urls.original) LIKE '%deviantart.com%' OR LOWER(archived_urls.original) LIKE '%artstation.com%' OR LOWER(archived_urls.original) LIKE '%pixiv.net%' OR LOWER(archived_urls.original) LIKE '%pinterest.com%' OR LOWER(archived_urls.original) LIKE '%newgrounds.com%' OR LOWER(archived_urls.original) LIKE '%vsco.co%')",
+		matches: utils.IsGalleryDLURL,
+	},
+}
+
+// BackfillMissingMediaItems creates and enqueues missing media archive items
+// for captures whose URL should have one.
+//
+// Two things produce these gaps: a URL family that gained support after the
+// capture was taken (TikTok short links, or every Instagram photo post taken
+// before gallery-dl existed), and detection rules that changed underneath
+// existing rows. Failed items are re-run via RetryAllFailedJobs instead — this
+// only creates items that are absent entirely.
+//
+// Pass ?type=gallery-dl or ?type=yt-dlp to backfill one type (default: both),
+// ?dry_run=true to preview without queueing, and ?limit=N to bound a run.
+// Bounding matters for Instagram, which has soft-blocked this account for hours
+// in response to bulk traffic.
+func BackfillMissingMediaItems(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
 	dryRun := c.Query("dry_run") == "true"
 
-	// Pre-filter video URLs in SQL: loading every youtube-less capture and
-	// filtering in Go blows Postgres's 65535-parameter limit at production
-	// scale (~100k captures). IsVideoURL below stays the exact filter.
-	videoURLPattern := "(LOWER(archived_urls.original) LIKE '%youtube.com%' OR LOWER(archived_urls.original) LIKE '%youtu.be%' OR LOWER(archived_urls.original) LIKE '%vimeo.com%' OR LOWER(archived_urls.original) LIKE '%instagram.com%' OR LOWER(archived_urls.original) LIKE '%tiktok.com%' OR LOWER(archived_urls.original) LIKE '%facebook.com%' OR LOWER(archived_urls.original) LIKE '%fb.watch%')"
-
-	var candidates []struct {
-		ID       uint
-		ShortID  string
-		Original string
-	}
-	if err := db.Table("captures").
-		Select("captures.id, captures.short_id, archived_urls.original").
-		Joins("JOIN archived_urls ON archived_urls.id = captures.archived_url_id").
-		Where("captures.deleted_at IS NULL AND archived_urls.deleted_at IS NULL").
-		Where("NOT EXISTS (SELECT 1 FROM archive_items WHERE archive_items.capture_id = captures.id AND archive_items.type = 'youtube' AND archive_items.deleted_at IS NULL)").
-		Where(videoURLPattern).
-		Scan(&candidates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query captures"})
-		return
+	requestedTypes := []string{utils.ArchiveTypeGalleryDl, utils.ArchiveTypeYtDlp}
+	if requested := c.Query("type"); requested != "" {
+		canonical := utils.NormalizeArchiveType(requested)
+		if _, ok := mediaBackfillURLPattern[canonical]; !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unsupported backfill type: %s", requested)})
+			return
+		}
+		requestedTypes = []string{canonical}
 	}
 
-	backfilled := []string{}
-	for _, capture := range candidates {
-		if !utils.IsVideoURL(capture.Original) {
-			continue
+	limit := 0
+	if rawLimit := c.Query("limit"); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be a non-negative integer"})
+			return
 		}
-		if dryRun {
-			backfilled = append(backfilled, capture.ShortID)
-			continue
-		}
-
-		item := models.ArchiveItem{CaptureID: capture.ID, Type: "youtube", Status: "pending"}
-		if err := db.Create(&item).Error; err != nil {
-			continue
-		}
-
-		args := workers.ArchiveJobArgs{
-			ShortID: capture.ShortID,
-			Type:    "youtube",
-			URL:     capture.Original,
-		}
-		opts := &river.InsertOpts{
-			MaxAttempts: 3,
-			Tags:        []string{"archive", "youtube", "backfill"},
-			UniqueOpts: river.UniqueOpts{
-				ByArgs:   true,
-				ByPeriod: 1 * time.Minute,
-			},
-		}
-		if _, err := riverClient.Insert(c.Request.Context(), args, opts); err != nil {
-			continue
-		}
-		backfilled = append(backfilled, capture.ShortID)
+		limit = parsed
 	}
 
-	message := fmt.Sprintf("Backfilled %d captures with video archive jobs", len(backfilled))
+	backfilled := map[string][]string{}
+	total := 0
+
+	for _, archiveType := range requestedTypes {
+		filter := mediaBackfillURLPattern[archiveType]
+		// The limit is per type, not a shared budget: with both types selected
+		// a shared budget would be spent entirely on whichever runs first and
+		// silently do none of the other.
+		typeCount := 0
+
+		var candidates []struct {
+			ID       uint
+			ShortID  string
+			Original string
+		}
+		if err := db.Table("captures").
+			Select("captures.id, captures.short_id, archived_urls.original").
+			Joins("JOIN archived_urls ON archived_urls.id = captures.archived_url_id").
+			Where("captures.deleted_at IS NULL AND archived_urls.deleted_at IS NULL").
+			Where("NOT EXISTS (SELECT 1 FROM archive_items WHERE archive_items.capture_id = captures.id AND archive_items.type = ? AND archive_items.deleted_at IS NULL)", archiveType).
+			Where(filter.sqlLike).
+			// Deterministic order so a bounded dry run previews the same rows
+			// the real run will take.
+			Order("captures.id").
+			Scan(&candidates).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query captures"})
+			return
+		}
+
+		for _, capture := range candidates {
+			if limit > 0 && typeCount >= limit {
+				break
+			}
+			if !filter.matches(capture.Original) {
+				continue
+			}
+			if dryRun {
+				backfilled[archiveType] = append(backfilled[archiveType], capture.ShortID)
+				typeCount++
+				total++
+				continue
+			}
+
+			item := models.ArchiveItem{CaptureID: capture.ID, Type: archiveType, Status: "pending"}
+			if err := db.Create(&item).Error; err != nil {
+				continue
+			}
+
+			args := workers.ArchiveJobArgs{
+				ShortID: capture.ShortID,
+				Type:    archiveType,
+				URL:     capture.Original,
+			}
+			opts := &river.InsertOpts{
+				MaxAttempts: 3,
+				Tags:        []string{"archive", archiveType, "backfill"},
+				UniqueOpts: river.UniqueOpts{
+					ByArgs:   true,
+					ByPeriod: 1 * time.Minute,
+				},
+			}
+			if _, err := riverClient.Insert(c.Request.Context(), args, opts); err != nil {
+				continue
+			}
+			backfilled[archiveType] = append(backfilled[archiveType], capture.ShortID)
+			typeCount++
+			total++
+		}
+	}
+
+	message := fmt.Sprintf("Backfilled %d captures with media archive jobs", total)
 	if dryRun {
-		message = fmt.Sprintf("Dry run: %d captures would be backfilled with video archive jobs", len(backfilled))
+		message = fmt.Sprintf("Dry run: %d captures would be backfilled with media archive jobs", total)
 	}
-	c.JSON(http.StatusOK, gin.H{"message": message, "short_ids": backfilled})
+	c.JSON(http.StatusOK, gin.H{"message": message, "count": total, "short_ids": backfilled})
 }
 
 func AdminArchive(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {

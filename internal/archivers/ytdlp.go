@@ -27,10 +27,13 @@ func (r *tempVideoReader) Close() error {
 	return err2
 }
 
-// YTArchiver downloads videos from YouTube, Vimeo, and other platforms (streams directly from yt-dlp stdout)
-type YTArchiver struct{}
+// YtDlpArchiver downloads videos from YouTube, Vimeo, Instagram reels, TikTok
+// and other platforms via yt-dlp. It handles video only; a URL whose media is
+// photos (or a mixed photo/video carousel) belongs to GalleryDLArchiver, which
+// yt-dlp rejects with "There is no video in this post".
+type YtDlpArchiver struct{}
 
-func (a *YTArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *PWBundle, error) {
+func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *PWBundle, error) {
 	fmt.Fprintf(logWriter, "Starting video archive for: %s\n", url)
 
 	// Check context before starting

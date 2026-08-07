@@ -17,12 +17,15 @@ import (
 
 func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
 	shortID := c.Param("shortid")
-	typ := c.Param("type")
+	// Match on both the canonical name and any retired alias: pre-rename pages
+	// embed /archive/{id}/youtube in every <video>, <img>, and download link,
+	// and rows written before the migration still carry the old type.
+	typ := utils.NormalizeArchiveType(c.Param("type"))
 	var item models.ArchiveItem
 	var capture models.Capture
 	var archivedURL models.ArchivedURL
 	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
-		Where("captures.short_id = ? AND archive_items.type = ?", shortID, typ).
+		Where("captures.short_id = ? AND archive_items.type IN ?", shortID, utils.ArchiveTypeMatchValues(typ)).
 		First(&item).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "archive not found"})
 		return
@@ -127,21 +130,26 @@ func serveArchiveContent(c *gin.Context, storageInstance storage.Storage, item m
 }
 
 func contentTypeForArchive(typ, extension string) (string, bool) {
-	switch typ {
-	case "mhtml":
+	switch utils.NormalizeArchiveType(typ) {
+	case utils.ArchiveTypeMHTML:
 		return "multipart/related", true // Original MHTML content type for downloads
-	case "screenshot":
+	case utils.ArchiveTypeScreenshot:
+		// Screenshots are WebP unless the page was too tall for the format's
+		// 16383px limit, in which case the archiver falls back to JPEG.
+		if strings.EqualFold(extension, ".jpg") || strings.EqualFold(extension, ".jpeg") {
+			return "image/jpeg", false
+		}
 		return "image/webp", false
-	case "youtube":
+	case utils.ArchiveTypeYtDlp:
 		switch strings.ToLower(extension) {
 		case ".webm":
 			return "video/webm", false
 		default:
 			return "video/mp4", false
 		}
-	case "git":
+	case utils.ArchiveTypeGit:
 		return "application/x-tar", true
-	case "itch":
+	case utils.ArchiveTypeItch, utils.ArchiveTypeGalleryDl:
 		return "application/zip", true
 	default:
 		return "application/octet-stream", true

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,5 +133,38 @@ func TestProcessArchiveJobSuccessCompletes(t *testing.T) {
 	}
 	if got.StorageKey == "" {
 		t.Fatal("storage key not set on completion")
+	}
+}
+
+// closeTrackingReader reports whether the worker closed it.
+type closeTrackingReader struct {
+	io.Reader
+	closed bool
+}
+
+func (r *closeTrackingReader) Close() error {
+	r.closed = true
+	return nil
+}
+
+type failingWriterStorage struct{ storage.Storage }
+
+func (s failingWriterStorage) Writer(key string) (io.WriteCloser, error) {
+	return nil, errors.New("storage unavailable")
+}
+
+// Archiver readers are backed by a live process or a goroutine writing into an
+// io.Pipe; closing is what releases them. If saveArchiveData returns without
+// closing, that goroutine blocks on Write forever and holds its temp directory
+// — for gallery-dl, an entire downloaded post — for the life of the process.
+func TestSaveArchiveDataClosesReaderWhenStorageWriterFails(t *testing.T) {
+	data := &closeTrackingReader{Reader: strings.NewReader("payload")}
+
+	err := saveArchiveData(data, "key", ".zip", failingWriterStorage{}, nil, &models.ArchiveItem{})
+	if err == nil {
+		t.Fatal("expected an error when the storage writer fails")
+	}
+	if !data.closed {
+		t.Error("reader was not closed on the storage-writer failure path (leaks the archiver goroutine and its temp dir)")
 	}
 }

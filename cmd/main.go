@@ -72,12 +72,18 @@ type Config struct {
 	ItchAPIKey string `envconfig:"ITCH_API_KEY"`
 	ItchDlPath string `envconfig:"ITCH_DL_PATH" default:"itch-dl"`
 
-	// yt-dlp authentication: Instagram (and some other sites) refuse media
-	// requests from logged-out clients, so captures need session cookies.
+	// Media tool authentication: Instagram (and some other sites) refuse media
+	// requests from logged-out clients, so captures need session cookies. The
+	// same jar and proxy serve both yt-dlp and gallery-dl; the env vars keep
+	// their YTDLP_ names for compatibility with existing deployments.
 	YtDlpCookiesFile string `envconfig:"YTDLP_COOKIES_FILE"` // Path to a Netscape-format cookies.txt
 	YtDlpCookiesB64  string `envconfig:"YTDLP_COOKIES_B64"`  // Base64-encoded cookies.txt content (used when no file path is set)
-	YtDlpProxy       string `envconfig:"YTDLP_PROXY"`        // Optional proxy (e.g. residential) for yt-dlp; Instagram throttles datacenter IPs
+	YtDlpProxy       string `envconfig:"YTDLP_PROXY"`        // Optional proxy (e.g. residential); Instagram throttles datacenter IPs
 	YtDlpImpersonate string `envconfig:"YTDLP_IMPERSONATE"`  // Optional yt-dlp --impersonate target (Docker defaults to chrome)
+
+	// gallery-dl Configuration (photo posts and mixed photo/video carousels)
+	GalleryDlUserAgent    string `envconfig:"GALLERYDL_USER_AGENT"`    // Optional UA override; empty keeps gallery-dl's per-site defaults
+	GalleryDlSleepRequest string `envconfig:"GALLERYDL_SLEEP_REQUEST"` // Optional inter-request delay ("1", "0.5-1.5"); empty keeps per-site defaults
 }
 
 // CustomErrorHandler implements the River ErrorHandler interface and updates archive items.
@@ -172,6 +178,51 @@ func getOrCreateConfigValue(db *gorm.DB, key string, defaultValue string) (strin
 		return "", err
 	}
 	return config.Value, nil
+}
+
+// migrateLegacyArchiveTypes rewrites rows still carrying a retired type name
+// ("youtube" -> "yt-dlp"). Requests and jobs using the old name are normalized
+// on the way in, so this only has to run once; it is idempotent and a no-op on
+// every boot after the first.
+//
+// archive_items and queued river_job arguments must move together, in one
+// transaction. The cleanup worker pairs an item with its job by comparing
+// archive_items.type to river_job.args->>'type'; if only the items were
+// renamed, every in-flight item would look orphaned and get force-failed while
+// its job was still queued and about to succeed.
+func migrateLegacyArchiveTypes(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		for legacy, canonical := range utils.LegacyArchiveTypeAliases() {
+			// UpdateColumn, not Update: rewriting updated_at on every historical
+			// row would corrupt "last updated" ordering and shift the cleanup
+			// worker's staleness window. Unscoped so soft-deleted rows are
+			// renamed too and cannot resurface under an unreachable type.
+			result := tx.Unscoped().Model(&models.ArchiveItem{}).
+				Where("type = ?", legacy).
+				UpdateColumn("type", canonical)
+			if result.Error != nil {
+				return fmt.Errorf("rename archive type %q to %q: %w", legacy, canonical, result.Error)
+			}
+			itemsRenamed := result.RowsAffected
+
+			jobResult := tx.Exec(`
+				UPDATE river_job
+				SET args = jsonb_set(args::jsonb, '{type}', to_jsonb(?::text))
+				WHERE args->>'type' = ?
+				  AND state IN ('available', 'running', 'retryable', 'scheduled', 'pending')
+			`, canonical, legacy)
+			if jobResult.Error != nil {
+				return fmt.Errorf("rename queued job type %q to %q: %w", legacy, canonical, jobResult.Error)
+			}
+
+			if itemsRenamed > 0 || jobResult.RowsAffected > 0 {
+				slog.Info("Renamed legacy archive type",
+					"from", legacy, "to", canonical,
+					"items", itemsRenamed, "queued_jobs", jobResult.RowsAffected)
+			}
+		}
+		return nil
+	})
 }
 
 func populateFileSizes(db *gorm.DB, storage storage.Storage) {
@@ -361,21 +412,36 @@ func main() {
 	// Populate file sizes for existing archives
 	populateFileSizes(db, storageInstance)
 
-	// Configure yt-dlp cookies for sites that require authentication (e.g. Instagram)
+	// Configure cookies for sites that require authentication (e.g. Instagram).
+	// Shared by yt-dlp and gallery-dl.
+	//
+	// A bad cookie path must not be fatal: a mis-typed mount once took
+	// production down for minutes because an unreadable file crash-looped the
+	// app and the orchestrator gave up on it. Losing logged-in archiving is bad;
+	// losing the whole server, including every archive type that needs no
+	// cookies at all, is much worse.
 	cookiesPath, err := utils.InitYtDlpCookies(cfg.YtDlpCookiesFile, cfg.YtDlpCookiesB64, os.TempDir())
-	if err != nil {
-		log.Fatalf("Failed to configure yt-dlp cookies: %v", err)
-	}
-	if cookiesPath != "" {
-		slog.Info("yt-dlp cookies configured", "path", cookiesPath)
-	} else {
-		slog.Warn("No yt-dlp cookies configured; videos on sites requiring login (e.g. Instagram) will fail to archive")
+	switch {
+	case err != nil:
+		slog.Error("Failed to configure media cookies; continuing without them. "+
+			"Logged-in-only sites (e.g. Instagram) will fail to archive until this is fixed.",
+			"error", err)
+	case cookiesPath != "":
+		slog.Info("Media cookies configured", "path", cookiesPath)
+	default:
+		slog.Warn("No media cookies configured; posts on sites requiring login (e.g. Instagram) will fail to archive")
 	}
 	if proxy := utils.InitYtDlpProxy(cfg.YtDlpProxy); proxy != "" {
-		slog.Info("yt-dlp proxy configured")
+		slog.Info("Media proxy configured")
 	}
 	if impersonate := utils.InitYtDlpImpersonate(cfg.YtDlpImpersonate); impersonate != "" {
 		slog.Info("yt-dlp browser impersonation configured", "target", impersonate)
+	}
+	if userAgent := utils.InitGalleryDlUserAgent(cfg.GalleryDlUserAgent); userAgent != "" {
+		slog.Info("gallery-dl user agent override configured", "user_agent", userAgent)
+	}
+	if sleepRequest := utils.InitGalleryDlSleepRequest(cfg.GalleryDlSleepRequest); sleepRequest != "" {
+		slog.Info("gallery-dl request interval override configured", "sleep_request", sleepRequest)
 	}
 
 	// Perform health checks on startup
@@ -402,11 +468,12 @@ func main() {
 
 	// No shared browser manager - each job creates its own browser instance
 	archiversMap := map[string]archivers.Archiver{
-		"mhtml":      &archivers.MHTMLArchiver{},
-		"screenshot": &archivers.ScreenshotArchiver{},
-		"git":        &archivers.GitArchiver{},
-		"youtube":    &archivers.YTArchiver{},
-		"itch":       &archivers.ItchArchiver{ItchDlPath: cfg.ItchDlPath, APIKey: cfg.ItchAPIKey},
+		utils.ArchiveTypeMHTML:      &archivers.MHTMLArchiver{},
+		utils.ArchiveTypeScreenshot: &archivers.ScreenshotArchiver{},
+		utils.ArchiveTypeGit:        &archivers.GitArchiver{},
+		utils.ArchiveTypeYtDlp:      &archivers.YtDlpArchiver{},
+		utils.ArchiveTypeGalleryDl:  &archivers.GalleryDLArchiver{},
+		utils.ArchiveTypeItch:       &archivers.ItchArchiver{ItchDlPath: cfg.ItchDlPath, APIKey: cfg.ItchAPIKey},
 	}
 
 	os.MkdirAll(cfg.CachePath, 0755)
@@ -427,6 +494,14 @@ func main() {
 		log.Fatalf("Failed to run River migrations: %v", err)
 	}
 	slog.Info("River migrations completed successfully")
+
+	// Runs here, not next to AutoMigrate, because it has to rewrite queued
+	// River job arguments too and river_job does not exist until the migration
+	// above has run. It still completes before riverClient.Start below, so no
+	// worker can observe a half-renamed queue.
+	if err := migrateLegacyArchiveTypes(db); err != nil {
+		slog.Error("Archive type rename migration failed", "error", err)
+	}
 
 	// Create worker registry
 	riverWorkers := river.NewWorkers()
@@ -543,7 +618,10 @@ func main() {
 	admin.POST("/api-keys/:id/toggle", func(c *gin.Context) { handlers.ApiKeysToggle(c, db) })
 	admin.DELETE("/api-keys/:id", func(c *gin.Context) { handlers.ApiKeysDelete(c, db) })
 	admin.POST("/retry-failed", func(c *gin.Context) { handlers.RetryAllFailedJobs(c, db, riverClient) })
-	admin.POST("/backfill-videos", func(c *gin.Context) { handlers.BackfillMissingVideoItems(c, db, riverClient) })
+	admin.POST("/backfill-media", func(c *gin.Context) { handlers.BackfillMissingMediaItems(c, db, riverClient) })
+	// Retained: the previous name for the endpoint above, kept working for
+	// existing operator scripts and runbooks.
+	admin.POST("/backfill-videos", func(c *gin.Context) { handlers.BackfillMissingMediaItems(c, db, riverClient) })
 	admin.POST("/url/:id/capture", func(c *gin.Context) { handlers.RequestCapture(c, db, riverClient) })
 	admin.POST("/archive", func(c *gin.Context) { handlers.AdminArchive(c, db, riverClient) })
 	admin.GET("/item/:id/log", func(c *gin.Context) { handlers.GetItemLog(c, db) })
@@ -573,6 +651,10 @@ func main() {
 	r.GET("/itch/health", handlers.ServeItchHealth)
 	r.GET("/itch/:shortid/file/*filepath", func(c *gin.Context) { handlers.ServeItchFile(c, storageInstance, db) })
 	r.GET("/itch/:shortid/list", func(c *gin.Context) { handlers.ServeItchGameList(c, storageInstance, db) })
+
+	// Gallery routes - MUST come before /:shortid/:type catch-all
+	r.GET("/gallery/:shortid/list", func(c *gin.Context) { handlers.ServeGalleryManifest(c, storageInstance, db) })
+	r.GET("/gallery/:shortid/file/*filepath", func(c *gin.Context) { handlers.ServeGalleryFile(c, storageInstance, db) })
 
 	r.Any("/git/*path", func(c *gin.Context) { handlers.GitHandler(c, storageInstance, db, cfg.CachePath) })
 
