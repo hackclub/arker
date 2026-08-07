@@ -50,6 +50,9 @@ func NewArchiveWorker(storage storage.Storage, db *gorm.DB, archiversMap map[str
 // Work processes a single archive job from the queue.
 func (w *ArchiveWorker) Work(ctx context.Context, job *river.Job[ArchiveJobArgs]) error {
 	args := job.Args
+	// Jobs enqueued before the yt-dlp rename carry the old type in their args
+	// and must still find their archive item and archiver.
+	args.Type = utils.NormalizeArchiveType(args.Type)
 	logger := slog.With(
 		"worker", "river",
 		"job_id", job.ID,
@@ -168,6 +171,24 @@ func uploadNonce() string {
 
 // saveArchiveData handles writing archive data to storage and updating the database.
 func saveArchiveData(data io.Reader, key, ext string, storage storage.Storage, db *gorm.DB, item *models.ArchiveItem) error {
+	// Archivers hand back readers backed by a live process or a goroutine
+	// writing into an io.Pipe, and closing is what releases them. Every return
+	// path below must close, including the early one when Writer fails: an
+	// unclosed pipe leaves that goroutine blocked on Write forever, holding its
+	// temp directory (a whole gallery-dl download) for the life of the process.
+	closed := false
+	closeData := func() error {
+		if closed {
+			return nil
+		}
+		closed = true
+		if c, ok := data.(io.Closer); ok {
+			return c.Close()
+		}
+		return nil
+	}
+	defer closeData()
+
 	w, err := storage.Writer(key)
 	if err != nil {
 		return fmt.Errorf("failed to get storage writer: %w", err)
@@ -176,10 +197,8 @@ func saveArchiveData(data io.Reader, key, ext string, storage storage.Storage, d
 	_, copyErr := io.Copy(w, data)
 
 	// For archivers that return a process (like yt-dlp), we must close the reader to wait for the process to exit.
-	if c, ok := data.(io.Closer); ok {
-		if closeErr := c.Close(); closeErr != nil && copyErr == nil {
-			copyErr = closeErr // Prioritize the close error if copy was successful.
-		}
+	if closeErr := closeData(); closeErr != nil && copyErr == nil {
+		copyErr = closeErr // Prioritize the close error if copy was successful.
 	}
 
 	if closeErr := w.Close(); closeErr != nil && copyErr == nil {

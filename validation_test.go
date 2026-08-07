@@ -220,27 +220,57 @@ func TestGetArchiveTypes(t *testing.T) {
 		{
 			name:     "YouTube video",
 			url:      "https://youtube.com/watch?v=123",
-			expected: []string{"mhtml", "screenshot", "youtube"},
+			expected: []string{"mhtml", "screenshot", "yt-dlp"},
 		},
 		{
 			name:     "Instagram reel",
 			url:      "https://www.instagram.com/reel/DPAid-WDi67/",
-			expected: []string{"mhtml", "screenshot", "youtube"},
+			expected: []string{"mhtml", "screenshot", "yt-dlp"},
 		},
 		{
+			// A feed post is usually a photo or a carousel, which yt-dlp
+			// cannot download at all. It goes to gallery-dl instead, and
+			// must NOT also get a yt-dlp item that is guaranteed to fail.
 			name:     "Instagram post",
 			url:      "https://www.instagram.com/p/ABC123/",
-			expected: []string{"mhtml", "screenshot", "youtube"},
+			expected: []string{"mhtml", "screenshot", "gallery-dl"},
+		},
+		{
+			name:     "Instagram TV post",
+			url:      "https://www.instagram.com/tv/ABC123/",
+			expected: []string{"mhtml", "screenshot", "gallery-dl"},
 		},
 		{
 			name:     "TikTok video",
 			url:      "https://www.tiktok.com/@voidfrida/video/7495821166951566599",
-			expected: []string{"mhtml", "screenshot", "youtube"},
+			expected: []string{"mhtml", "screenshot", "yt-dlp"},
 		},
 		{
 			name:     "Facebook reel",
 			url:      "https://www.facebook.com/reel/1714939389160829/",
-			expected: []string{"mhtml", "screenshot", "youtube"},
+			expected: []string{"mhtml", "screenshot", "yt-dlp"},
+		},
+		{
+			name:     "X status",
+			url:      "https://x.com/someone/status/1234567890",
+			expected: []string{"mhtml", "screenshot", "gallery-dl"},
+		},
+		{
+			name:     "Reddit submission",
+			url:      "https://www.reddit.com/r/pics/comments/abc123/a_title/",
+			expected: []string{"mhtml", "screenshot", "gallery-dl"},
+		},
+		{
+			name:     "Bluesky post",
+			url:      "https://bsky.app/profile/someone.bsky.social/post/abc123",
+			expected: []string{"mhtml", "screenshot", "gallery-dl"},
+		},
+		{
+			// A profile page is not a single post; archiving it via
+			// gallery-dl would pull down the whole account.
+			name:     "Instagram profile",
+			url:      "https://www.instagram.com/someone/",
+			expected: []string{"mhtml", "screenshot"},
 		},
 		{
 			name:     "Regular website",
