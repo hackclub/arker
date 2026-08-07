@@ -361,9 +361,15 @@ func buildGalleryMetadata(dir, sourceURL, version string, media []string, sideca
 		meta.Date = galleryString(raw, "post_date", "date", "created_at", "taken_at")
 		// Every site counts approval differently: likes, hearts, upvotes,
 		// favorites. Treat them as one number rather than modelling each.
+		//
+		// Order is by closeness to "likes", not convenience: a site can expose
+		// several of these at once and the first match wins. Imgur carries both
+		// upvote_count (366) and favorite_count (0) on the same album, so
+		// checking favourites first would report zero likes on a popular post.
 		meta.Likes = galleryInt(raw,
-			"likes", "like_count", "likeCount", "favorite_count", "favorites",
-			"upvote_count", "point_count", "score")
+			"likes", "like_count", "likeCount",
+			"upvote_count", "point_count",
+			"favorite_count", "favorites", "score")
 		meta.Tags = galleryStrings(raw, "tags", "hashtags")
 	}
 

@@ -427,6 +427,9 @@ const imgurAlbumSidecar = `{
     "title": "The Baroness",
     "url": "https://imgur.com/a/zJjxIyO",
     "upvote_count": 366,
+    "point_count": 342,
+    "favorite_count": 0,
+    "score": 0,
     "image_count": 5,
     "account": {"id": 27958845, "username": "somebody"}
   }
@@ -472,8 +475,11 @@ func TestBuildGalleryMetadataFromImgurAlbum(t *testing.T) {
 	if meta.Author != "somebody" {
 		t.Errorf("Author = %q, want somebody (from album.account.username)", meta.Author)
 	}
+	// The album carries upvote_count 366 and favorite_count 0 side by side;
+	// a key order that checked favourites first reported 0 likes on a post
+	// with hundreds.
 	if meta.Likes == nil || *meta.Likes != 366 {
-		t.Errorf("Likes = %v, want 366 (album.upvote_count)", meta.Likes)
+		t.Errorf("Likes = %v, want 366 (album.upvote_count, not favorite_count 0)", meta.Likes)
 	}
 	// The album identifies the post; the top-level id/url describe one image.
 	if meta.PostID != "zJjxIyO" {
