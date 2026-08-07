@@ -174,7 +174,7 @@ When using Amp with `make dev` running in another window:
 
 ### Git Repository Access
 ```bash
-git clone https://archive.selfhosted.hackclub.com/git/{shortid}
+git clone https://archive.hackclub.com/git/{shortid}
 ```
 
 ## Configuration
@@ -324,10 +324,14 @@ served from `/thumb/{shortid}[/{type}]`.
 - **Browser leaks**: Check `/status/browser` endpoint for monitoring data
 
 ### Production Debugging
-- **SSH Access**: `ssh root@archive.selfhosted.hackclub.com`
+- **SSH Access**: `ssh archive-hq-local.selfhosted.hackclub.com` (via cloudflared, see `~/.ssh/config`; use `sudo docker ...` on the host)
 - **Health Checks**: Monitor `/health` and `/status/browser` endpoints
 - **Logs**: Check Coolify dashboard or container logs
 - **Database**: Connect via environment variables in deployment
+- **Container names rotate per deploy** — resolve the app container with
+  `sudo docker ps | grep ^hcmolbh8` rather than assuming a fixed name
+- **Don't run one-off tools inside the app container**: a Coolify deploy will
+  kill it mid-run. Run them on the host instead.
 
 ### Health Monitoring
 - Startup health checks verify yt-dlp, gallery-dl, and Playwright availability
