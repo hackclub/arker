@@ -164,12 +164,18 @@ func TestBuildGalleryMetadataToleratesMissingAndMalformedSidecars(t *testing.T) 
 }
 
 // Some extractors nest the author in an object rather than a flat username.
-func TestGalleryStringUnwrapsNestedAuthorObjects(t *testing.T) {
+// Unwrapping that is resolveGalleryAuthor's job, not galleryString's:
+// galleryString stays a plain top-level string lookup so callers can control
+// whether the top level or a container object wins.
+func TestNestedAuthorObjectsAreResolvedByAuthorResolver(t *testing.T) {
 	raw := map[string]interface{}{
 		"user": map[string]interface{}{"name": "someone"},
 	}
-	if got := galleryString(raw, "username", "author", "owner", "artist", "user"); got != "someone" {
-		t.Errorf("galleryString = %q, want someone", got)
+	if got := galleryString(raw, "user"); got != "" {
+		t.Errorf("galleryString on an object = %q, want empty", got)
+	}
+	if handle, _ := resolveGalleryAuthor(raw); handle != "someone" {
+		t.Errorf("resolveGalleryAuthor = %q, want someone", handle)
 	}
 }
 
@@ -383,5 +389,141 @@ func TestBuildGalleryMetadataPreservesLargeNumericIDs(t *testing.T) {
 	}
 	if meta.Files[0].Width != 1200 || meta.Files[0].Height != 675 {
 		t.Errorf("dimensions = %dx%d, want 1200x675", meta.Files[0].Width, meta.Files[0].Height)
+	}
+}
+
+// Bluesky nests the poster in author{handle,displayName}, counts approval as
+// likeCount, and — critically — uses "text" for the post body while
+// "description" holds the image's alt text. Reading description as the caption
+// put alt text on the page where the post should be.
+const blueskySidecar = `{
+  "category": "bluesky",
+  "subcategory": "post",
+  "post_id": "3mqafridzgk2e",
+  "author": {"did": "did:plc:z72", "handle": "bsky.app", "displayName": "Bluesky"},
+  "likeCount": 3485,
+  "repostCount": 582,
+  "text": "v1.127 is live! We're rolling out improvements to search",
+  "description": "A rendering of the new Filters button",
+  "date": "2026-07-09 19:50:16",
+  "width": 2140,
+  "height": 2000
+}`
+
+// Imgur describes the individual image at the top level and keeps the album's
+// title, URL, uploader and vote counts in a nested object.
+const imgurAlbumSidecar = `{
+  "category": "imgur",
+  "subcategory": "album",
+  "id": "kKu3U5P",
+  "url": "https://i.imgur.com/kKu3U5P.jpg",
+  "title": "",
+  "description": "",
+  "width": 1537,
+  "height": 2048,
+  "date": "2026-08-07 14:32:03",
+  "album": {
+    "id": "zJjxIyO",
+    "title": "The Baroness",
+    "url": "https://imgur.com/a/zJjxIyO",
+    "upvote_count": 366,
+    "image_count": 5,
+    "account": {"id": 27958845, "username": "somebody"}
+  }
+}`
+
+func metaFrom(t *testing.T, sidecar string) *GalleryMetadata {
+	t.Helper()
+	dir := writeGalleryFixture(t, map[string]string{
+		"001.jpg":      "x",
+		"001.jpg.json": sidecar,
+	})
+	media, sidecars, err := collectGalleryFiles(dir)
+	if err != nil {
+		t.Fatalf("collectGalleryFiles: %v", err)
+	}
+	return buildGalleryMetadata(dir, "https://example.com/post", "1.32.9", media, sidecars, io.Discard)
+}
+
+func TestBuildGalleryMetadataFromBlueskyPost(t *testing.T) {
+	meta := metaFrom(t, blueskySidecar)
+
+	if meta.Author != "bsky.app" {
+		t.Errorf("Author = %q, want bsky.app (from the nested author object)", meta.Author)
+	}
+	if meta.AuthorName != "Bluesky" {
+		t.Errorf("AuthorName = %q, want Bluesky", meta.AuthorName)
+	}
+	if meta.Likes == nil || *meta.Likes != 3485 {
+		t.Errorf("Likes = %v, want 3485 (likeCount)", meta.Likes)
+	}
+	// The regression that motivated this: alt text must not become the caption.
+	if meta.Description != "v1.127 is live! We're rolling out improvements to search" {
+		t.Errorf("Description = %q, want the post text, not the image alt text", meta.Description)
+	}
+}
+
+func TestBuildGalleryMetadataFromImgurAlbum(t *testing.T) {
+	meta := metaFrom(t, imgurAlbumSidecar)
+
+	if meta.Title != "The Baroness" {
+		t.Errorf("Title = %q, want The Baroness (from album.title)", meta.Title)
+	}
+	if meta.Author != "somebody" {
+		t.Errorf("Author = %q, want somebody (from album.account.username)", meta.Author)
+	}
+	if meta.Likes == nil || *meta.Likes != 366 {
+		t.Errorf("Likes = %v, want 366 (album.upvote_count)", meta.Likes)
+	}
+	// The album identifies the post; the top-level id/url describe one image.
+	if meta.PostID != "zJjxIyO" {
+		t.Errorf("PostID = %q, want the album id zJjxIyO, not the image id", meta.PostID)
+	}
+	if meta.PostURL != "https://imgur.com/a/zJjxIyO" {
+		t.Errorf("PostURL = %q, want the album URL, not the image CDN URL", meta.PostURL)
+	}
+}
+
+// Instagram must keep working: it has no "text" key, flat username/fullname,
+// and its caption genuinely lives in "description".
+func TestBuildGalleryMetadataInstagramStillResolves(t *testing.T) {
+	meta := metaFrom(t, instagramCarouselSidecar)
+
+	if meta.Author != "agentverseinsta" || meta.AuthorName != "Agent Verse" {
+		t.Errorf("author = %q / %q, want agentverseinsta / Agent Verse", meta.Author, meta.AuthorName)
+	}
+	if meta.Description != "the news community is buzzing" {
+		t.Errorf("Description = %q, want the caption from description", meta.Description)
+	}
+	if meta.Likes == nil || *meta.Likes != 42 {
+		t.Errorf("Likes = %v, want 42", meta.Likes)
+	}
+	if meta.PostID != "3955281333542808561" {
+		t.Errorf("PostID = %q, want the post_id", meta.PostID)
+	}
+}
+
+func TestResolveGalleryAuthorEdgeCases(t *testing.T) {
+	// A bare string author.
+	h, d := resolveGalleryAuthor(map[string]interface{}{"author": "someone"})
+	if h != "someone" || d != "" {
+		t.Errorf("bare string author = %q/%q, want someone/''", h, d)
+	}
+	// Only a display name available: it becomes the handle rather than
+	// rendering an empty handle with a parenthesised name.
+	h, d = resolveGalleryAuthor(map[string]interface{}{"fullname": "Some One"})
+	if h != "Some One" || d != "" {
+		t.Errorf("display-only = %q/%q, want Some One/''", h, d)
+	}
+	// Identical handle and display name must not render as "x (x)".
+	h, d = resolveGalleryAuthor(map[string]interface{}{
+		"author": map[string]interface{}{"handle": "x", "displayName": "x"},
+	})
+	if h != "x" || d != "" {
+		t.Errorf("duplicate name = %q/%q, want x/''", h, d)
+	}
+	// Nothing at all.
+	if h, d = resolveGalleryAuthor(map[string]interface{}{}); h != "" || d != "" {
+		t.Errorf("empty = %q/%q, want empty", h, d)
 	}
 }

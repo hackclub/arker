@@ -329,14 +329,41 @@ func buildGalleryMetadata(dir, sourceURL, version string, media []string, sideca
 	if raw != nil {
 		meta.Extractor = galleryString(raw, "category")
 		meta.Subcategory = galleryString(raw, "subcategory")
-		meta.PostID = galleryString(raw, "post_id", "tweet_id", "id", "post_shortcode")
-		meta.PostURL = galleryString(raw, "post_url", "webpage_url")
-		meta.Author = galleryString(raw, "username", "author", "owner", "artist", "user")
-		meta.AuthorName = galleryString(raw, "fullname", "author_name", "full_name")
-		meta.Title = galleryString(raw, "title")
-		meta.Description = galleryString(raw, "description", "content", "caption", "text")
+
+		// "id" and "url" are ambiguous: at the top level they name the
+		// individual file (Imgur's image id and its CDN link), while the
+		// enclosing album/post object holds the ones a viewer wants. Prefer an
+		// explicit post-level key, then the container, and only then fall back.
+		meta.PostID = firstNonEmpty(
+			galleryString(raw, "post_id", "tweet_id", "post_shortcode", "shortcode"),
+			galleryNested(raw, "id"),
+			galleryString(raw, "id"),
+		)
+		meta.PostURL = firstNonEmpty(
+			galleryString(raw, "post_url", "webpage_url"),
+			galleryNested(raw, "url"),
+		)
+
+		meta.Author, meta.AuthorName = resolveGalleryAuthor(raw)
+
+		meta.Title = firstNonEmpty(galleryString(raw, "title"), galleryNested(raw, "title"))
+
+		// Caption key order matters. Bluesky uses "text" for the post body and
+		// "description" for an image's alt text, so checking description first
+		// would surface alt text as the caption. Instagram has no "text" key,
+		// so it still resolves to "description".
+		meta.Description = firstNonEmpty(
+			galleryString(raw, "text", "content", "caption"),
+			galleryString(raw, "description"),
+			galleryNested(raw, "description"),
+		)
+
 		meta.Date = galleryString(raw, "post_date", "date", "created_at", "taken_at")
-		meta.Likes = galleryInt(raw, "likes", "like_count", "favorite_count", "favorites")
+		// Every site counts approval differently: likes, hearts, upvotes,
+		// favorites. Treat them as one number rather than modelling each.
+		meta.Likes = galleryInt(raw,
+			"likes", "like_count", "likeCount", "favorite_count", "favorites",
+			"upvote_count", "point_count", "score")
 		meta.Tags = galleryStrings(raw, "tags", "hashtags")
 	}
 
@@ -387,9 +414,18 @@ func readGalleryJSON(path string, logWriter io.Writer) map[string]interface{} {
 	return parsed
 }
 
-// galleryString returns the first key that holds a non-empty string. Some
-// extractors nest the author under an object (e.g. {"user": {"name": ...}}),
-// so object values fall back to their own name-ish fields.
+// galleryContainers are objects extractors nest post-level metadata under.
+// gallery-dl merges the post record into every file's dict, but some sites keep
+// it in a sub-object instead: Imgur puts the album's title, URL and vote counts
+// under "album" while the top level describes just the one image.
+var galleryContainers = []string{"album", "post", "gallery", "tweet", "submission", "record"}
+
+// galleryPersonKeys are the objects that hold author details when an extractor
+// models the poster as a nested record rather than flat fields.
+var galleryPersonKeys = []string{"author", "user", "account", "owner", "uploader", "artist"}
+
+// galleryString returns the first key holding a non-empty string, searching the
+// top level only.
 func galleryString(raw map[string]interface{}, keys ...string) string {
 	for _, key := range keys {
 		switch value := raw[key].(type) {
@@ -400,16 +436,101 @@ func galleryString(raw map[string]interface{}, keys ...string) string {
 		case json.Number:
 			// Numeric IDs keep their exact source digits.
 			return value.String()
-		case map[string]interface{}:
-			if nested := galleryString(value, "username", "name", "nick", "full_name"); nested != "" {
-				return nested
-			}
 		}
 	}
 	return ""
 }
 
+// galleryNested runs the same lookup against the known container objects only,
+// so a caller can decide whether the container or the top level should win.
+func galleryNested(raw map[string]interface{}, keys ...string) string {
+	for _, container := range galleryContainers {
+		nested, ok := raw[container].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if found := galleryString(nested, keys...); found != "" {
+			return found
+		}
+	}
+	return ""
+}
+
+// galleryObject returns a nested object by key, looking at the top level first
+// and then inside the container objects.
+func galleryObject(raw map[string]interface{}, key string) map[string]interface{} {
+	if object, ok := raw[key].(map[string]interface{}); ok {
+		return object
+	}
+	for _, container := range galleryContainers {
+		nested, ok := raw[container].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if object, ok := nested[key].(map[string]interface{}); ok {
+			return object
+		}
+	}
+	return nil
+}
+
+// resolveGalleryAuthor pulls a handle and a display name out of whichever shape
+// the extractor uses: flat fields (Instagram's username/fullname) or a nested
+// person object (Bluesky's author{handle,displayName}, Imgur's album.account).
+func resolveGalleryAuthor(raw map[string]interface{}) (handle, display string) {
+	handle = galleryString(raw, "username", "uploader", "artist", "owner")
+	display = galleryString(raw, "fullname", "full_name", "author_name", "displayName", "display_name")
+
+	for _, key := range galleryPersonKeys {
+		if handle != "" && display != "" {
+			break
+		}
+		person := galleryObject(raw, key)
+		if person == nil {
+			// Some extractors store the author as a bare string.
+			if handle == "" {
+				handle = galleryString(raw, key)
+			}
+			continue
+		}
+		if handle == "" {
+			handle = galleryString(person, "username", "handle", "name", "login", "nick")
+		}
+		if display == "" {
+			display = galleryString(person, "displayName", "display_name", "fullname", "full_name", "name")
+		}
+	}
+
+	// A single name is a handle, not a display name.
+	if handle == "" && display != "" {
+		handle, display = display, ""
+	}
+	// Don't render "someone (someone)".
+	if handle == display {
+		display = ""
+	}
+	return handle, display
+}
+
+// galleryInt returns the first key holding an integer, searching the top level
+// then the container objects.
 func galleryInt(raw map[string]interface{}, keys ...string) *int64 {
+	if found := galleryIntIn(raw, keys...); found != nil {
+		return found
+	}
+	for _, container := range galleryContainers {
+		nested, ok := raw[container].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if found := galleryIntIn(nested, keys...); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func galleryIntIn(raw map[string]interface{}, keys ...string) *int64 {
 	for _, key := range keys {
 		number, ok := raw[key].(json.Number)
 		if !ok {
@@ -422,6 +543,16 @@ func galleryInt(raw map[string]interface{}, keys ...string) *int64 {
 		return &result
 	}
 	return nil
+}
+
+// firstNonEmpty returns the first non-empty candidate.
+func firstNonEmpty(candidates ...string) string {
+	for _, candidate := range candidates {
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func galleryStrings(raw map[string]interface{}, keys ...string) []string {
