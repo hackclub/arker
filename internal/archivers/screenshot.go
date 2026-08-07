@@ -164,7 +164,10 @@ func (a *ScreenshotArchiver) ArchiveWithPageContext(ctx context.Context, page pl
 // deriveThumbnail builds the preview image for a screenshot, returning nil (and
 // logging) rather than an error on any failure.
 func deriveThumbnail(img image.Image, logWriter io.Writer) *Thumbnail {
-	t, err := thumbnail.FromImage(img)
+	// CropTop: the archiver scrolls to (0,0) before capturing, so the top of
+	// this image is the top of the page -- the header and headline that make it
+	// recognisable.
+	t, err := thumbnail.FromImage(img, thumbnail.CropTop)
 	if err != nil {
 		fmt.Fprintf(logWriter, "Thumbnail generation skipped: %v\n", err)
 		return nil

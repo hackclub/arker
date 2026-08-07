@@ -198,7 +198,7 @@ func TestProcessArchiveJobPersistsInlineThumbnail(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	item := seedItem(t, db, "abc12", "screenshot", "processing", "")
 
-	thumb, err := thumbnail.FromImage(bandedImage(1200, 2400, color.RGBA{10, 200, 10, 255}, color.RGBA{10, 10, 200, 255}))
+	thumb, err := thumbnail.FromImage(bandedImage(1200, 2400, color.RGBA{10, 200, 10, 255}, color.RGBA{10, 10, 200, 255}), thumbnail.CropTop)
 	if err != nil {
 		t.Fatalf("build thumbnail: %v", err)
 	}

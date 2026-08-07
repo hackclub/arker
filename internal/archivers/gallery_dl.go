@@ -17,6 +17,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"arker/internal/thumbnail"
 	"arker/internal/utils"
 )
 
@@ -185,6 +186,11 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 		fmt.Fprintf(logWriter, "Caption: %s\n", utils.TruncateForLog(metadata.Description, 300))
 	}
 
+	// Build the thumbnail before the ZIP goroutine starts. That goroutine owns
+	// cleanupTmp, so once it is running the downloaded files can vanish at any
+	// moment; reading them here is the only safe window.
+	thumb := galleryThumbnail(tmpDir, metadata, logWriter)
+
 	// Stream the ZIP so a large carousel never has to sit in memory.
 	pipeReader, pipeWriter := io.Pipe()
 	success = true
@@ -207,7 +213,55 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 		fmt.Fprintf(logWriter, "Successfully created gallery ZIP archive\n")
 	}()
 
-	return Result{Data: pipeReader, Extension: ".zip", ContentType: "application/zip"}, nil
+	return Result{
+		Data:        pipeReader,
+		Extension:   ".zip",
+		ContentType: "application/zip",
+		Thumbnail:   thumb,
+	}, nil
+}
+
+// galleryThumbnail previews a post using its first still image.
+//
+// Slide 1 is what the post leads with, so it is the natural cover. Videos are
+// skipped because gallery-dl stores the media itself, not a poster frame, and
+// decoding a video here is out of scope; a carousel that opens with a video
+// falls back to its first photo, and an all-video post gets no thumbnail.
+//
+// Returns nil on any failure. A post with no usable cover is not an error.
+func galleryThumbnail(dir string, metadata *GalleryMetadata, logWriter io.Writer) *Thumbnail {
+	if metadata == nil {
+		return nil
+	}
+	for _, file := range metadata.Files {
+		if file.IsVideo || file.Name == "" {
+			continue
+		}
+		if !strings.HasPrefix(file.ContentType, "image/") {
+			continue
+		}
+
+		f, err := os.Open(filepath.Join(dir, file.Name))
+		if err != nil {
+			fmt.Fprintf(logWriter, "Could not open %s for thumbnail: %v\n", file.Name, err)
+			continue
+		}
+		// CropCenter: social photos frame their subject in the middle, and a
+		// portrait post cropped from the top loses it entirely.
+		t, err := thumbnail.FromReader(f, thumbnail.CropCenter)
+		f.Close()
+		if err != nil {
+			fmt.Fprintf(logWriter, "Thumbnail from %s skipped: %v\n", file.Name, err)
+			continue
+		}
+
+		fmt.Fprintf(logWriter, "Thumbnail generated from %s: %dx%d, %d bytes\n",
+			file.Name, t.Width, t.Height, len(t.Data))
+		return &Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height}
+	}
+
+	fmt.Fprintf(logWriter, "No still image available for a thumbnail\n")
+	return nil
 }
 
 // galleryDlDownloadArgs builds the invariant part of the gallery-dl command

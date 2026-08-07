@@ -66,6 +66,26 @@ const (
 // thumbnail as unavailable rather than retry.
 var ErrSourceTooLarge = errors.New("thumbnail: source image exceeds maximum decodable size")
 
+// Crop selects which part of a source taller than 16:9 survives.
+//
+// The right answer depends entirely on what the image is, so callers must say.
+// A page screenshot puts its identity at the top -- the header, the headline --
+// and the archiver scrolls to (0,0) before capturing, so CropTop is correct and
+// centring would slice out a random band of body text. A video or photo
+// thumbnail is the opposite: a 9:16 reel cover frames its subject in the middle,
+// and CropTop would return the ceiling above their head.
+//
+// Sources wider than 16:9 are always centred horizontally; there is no
+// equivalent reason to prefer one side.
+type Crop int
+
+const (
+	// CropTop keeps the top band. For page screenshots.
+	CropTop Crop = iota
+	// CropCenter keeps the middle band. For video and photo thumbnails.
+	CropCenter
+)
+
 // Thumb is an encoded thumbnail ready to be written to storage.
 type Thumb struct {
 	Data   []byte
@@ -87,7 +107,7 @@ func CanDeriveFromArchive(archiveType string) bool {
 //
 // The reader is only partially consumed when the source is rejected for size,
 // so callers must not assume it has been drained.
-func FromReader(r io.Reader) (thumb *Thumb, err error) {
+func FromReader(r io.Reader, crop Crop) (thumb *Thumb, err error) {
 	// Decoding attacker-influenced image data. A malformed file that trips a
 	// bounds check inside a decoder must not take down the worker process.
 	defer func() {
@@ -123,7 +143,7 @@ func FromReader(r io.Reader) (thumb *Thumb, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("thumbnail: decoding %s source image: %w", format, err)
 	}
-	return FromImage(src)
+	return FromImage(src, crop)
 }
 
 // FromImage crops an already-decoded image to the thumbnail aspect ratio and
@@ -132,7 +152,7 @@ func FromReader(r io.Reader) (thumb *Thumb, err error) {
 // Callers that already hold a decoded image should use this: the screenshot
 // archiver decodes its own PNG anyway, so deriving the thumbnail there costs no
 // extra decode and no extra browser round-trip.
-func FromImage(src image.Image) (thumb *Thumb, err error) {
+func FromImage(src image.Image, crop Crop) (thumb *Thumb, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			thumb = nil
@@ -148,15 +168,15 @@ func FromImage(src image.Image) (thumb *Thumb, err error) {
 		return nil, fmt.Errorf("thumbnail: source image has empty bounds %v", bounds)
 	}
 
-	crop := cropRect(bounds)
-	w, h := targetSize(crop)
+	region := cropRect(bounds, crop)
+	w, h := targetSize(region)
 
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
 	// Flatten onto white first. Screenshots of pages that never paint a body
 	// background decode with a transparent backdrop, and JPEG has no alpha
 	// channel -- without this they encode as solid black.
 	draw.Draw(dst, dst.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
-	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, crop, xdraw.Over, nil)
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, region, xdraw.Over, nil)
 
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: Quality}); err != nil {
@@ -165,18 +185,13 @@ func FromImage(src image.Image) (thumb *Thumb, err error) {
 	return &Thumb{Data: buf.Bytes(), Width: w, Height: h}, nil
 }
 
-// cropRect picks the region of the source that becomes the thumbnail.
-//
-// Vertically it anchors to the top, because that is the part of a page a
-// person recognises -- and the screenshot archiver already scrolls to (0,0)
-// before capturing, so the top of the image is the top of the page. Wide, short
-// sources are centred horizontally instead, where there is no equivalent reason
-// to prefer one edge.
-func cropRect(b image.Rectangle) image.Rectangle {
+// cropRect picks the region of the source that becomes the thumbnail. See Crop
+// for why the vertical anchor is the caller's decision.
+func cropRect(b image.Rectangle, crop Crop) image.Rectangle {
 	w, h := b.Dx(), b.Dy()
 
 	if w*Height > h*Width {
-		// Source is wider than the target aspect: trim the sides.
+		// Source is wider than the target aspect: trim the sides, centred.
 		cropW := h * Width / Height
 		if cropW < 1 {
 			cropW = 1
@@ -185,12 +200,16 @@ func cropRect(b image.Rectangle) image.Rectangle {
 		return image.Rect(b.Min.X+off, b.Min.Y, b.Min.X+off+cropW, b.Max.Y)
 	}
 
-	// Source is taller than the target aspect: keep the top band.
+	// Source is taller than the target aspect: trim vertically.
 	cropH := w * Height / Width
 	if cropH < 1 {
 		cropH = 1
 	}
-	return image.Rect(b.Min.X, b.Min.Y, b.Max.X, b.Min.Y+cropH)
+	offY := 0
+	if crop == CropCenter {
+		offY = (h - cropH) / 2
+	}
+	return image.Rect(b.Min.X, b.Min.Y+offY, b.Max.X, b.Min.Y+offY+cropH)
 }
 
 // targetSize returns the output dimensions for a crop, never upscaling. A

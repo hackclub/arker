@@ -8,8 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 
+	"arker/internal/thumbnail"
 	"arker/internal/utils"
 )
 
@@ -147,21 +149,94 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 	}
 	keepTempFile = outputPath
 
+	// Read the poster image before returning: the deferred cleanup sweeps every
+	// sibling temp file except the video, so it is gone the moment we return.
+	thumb := videoThumbnail(tempBase, outputPath, logWriter)
+
 	fmt.Fprintf(logWriter, "Video download completed successfully\n")
 
-	return Result{Data: &tempVideoReader{File: file, path: outputPath}, Extension: ".mp4", ContentType: "video/mp4"}, nil
+	return Result{
+		Data:        &tempVideoReader{File: file, path: outputPath},
+		Extension:   ".mp4",
+		ContentType: "video/mp4",
+		Thumbnail:   thumb,
+	}, nil
 }
 
 func ytDlpDownloadArgs(outputTemplate string) []string {
 	return []string{
 		"-f", "bestvideo+bestaudio/best",
 		"--no-playlist",
-		"--no-write-thumbnail",
+		// Write the platform's own poster image next to the video. This is a
+		// far better preview than a frame grab: it is the image the uploader or
+		// the platform chose to represent the video, already framed on the
+		// subject. It costs one CDN GET and yt-dlp treats a thumbnail failure
+		// as a warning, so it cannot fail the download.
+		"--write-thumbnail",
 		"--merge-output-format", "mp4",
 		"--remux-video", "mp4",
 		"--verbose",
 		"-o", outputTemplate,
 	}
+}
+
+// thumbnailImageExtensions are the formats yt-dlp may write a poster image in.
+// No --convert-thumbnail: that would shell out to ffmpeg for no gain, since the
+// thumbnail package decodes all of these already.
+var thumbnailImageExtensions = []string{".jpg", ".jpeg", ".webp", ".png"}
+
+// videoThumbnail loads the poster image yt-dlp wrote beside the video.
+//
+// Returns nil for every failure. A missing or broken poster is not an archive
+// problem: the video downloaded fine and the preview is cosmetic.
+func videoThumbnail(tempBase, videoPath string, logWriter io.Writer) *Thumbnail {
+	path := findDownloadedThumbnail(tempBase, videoPath)
+	if path == "" {
+		fmt.Fprintf(logWriter, "No thumbnail written by yt-dlp; skipping preview\n")
+		return nil
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Could not open thumbnail %s: %v\n", filepath.Base(path), err)
+		return nil
+	}
+	defer f.Close()
+
+	// CropCenter, not CropTop: a vertical reel cover frames its subject in the
+	// middle, so taking the top band would return the empty space above them.
+	t, err := thumbnail.FromReader(f, thumbnail.CropCenter)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Thumbnail generation skipped: %v\n", err)
+		return nil
+	}
+
+	fmt.Fprintf(logWriter, "Thumbnail generated from %s: %dx%d, %d bytes\n",
+		filepath.Base(path), t.Width, t.Height, len(t.Data))
+	return &Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height}
+}
+
+// findDownloadedThumbnail locates the poster image among the temp files.
+//
+// It must not return the video itself, and remuxing can leave intermediate
+// files sharing the same base, so this matches on image extension only.
+func findDownloadedThumbnail(tempBase, videoPath string) string {
+	matches, err := filepath.Glob(tempBase + "*")
+	if err != nil {
+		return ""
+	}
+	for _, match := range matches {
+		if match == videoPath {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(match))
+		for _, candidate := range thumbnailImageExtensions {
+			if ext == candidate {
+				return match
+			}
+		}
+	}
+	return ""
 }
 
 func createTempVideoBase() (string, error) {

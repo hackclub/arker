@@ -5,6 +5,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"io"
 	"os"
 	"os/exec"
@@ -531,5 +534,127 @@ func TestResolveGalleryAuthorEdgeCases(t *testing.T) {
 	// Nothing at all.
 	if h, d = resolveGalleryAuthor(map[string]interface{}{}); h != "" || d != "" {
 		t.Errorf("empty = %q/%q, want empty", h, d)
+	}
+}
+
+// writeTestImage writes a solid-colour JPEG so a test can identify which file
+// the thumbnail was built from by its colour.
+func writeTestImage(t *testing.T, path string, c color.RGBA) {
+	t.Helper()
+	m := image.NewRGBA(image.Rect(0, 0, 900, 900))
+	for y := 0; y < 900; y++ {
+		for x := 0; x < 900; x++ {
+			m.Set(x, y, c)
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, m, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func avgRGB(t *testing.T, data []byte) (r, g, b int) {
+	t.Helper()
+	img, err := jpeg.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	bounds := img.Bounds()
+	var sr, sg, sb, n int
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			cr, cg, cb, _ := img.At(x, y).RGBA()
+			sr += int(cr >> 8)
+			sg += int(cg >> 8)
+			sb += int(cb >> 8)
+			n++
+		}
+	}
+	return sr / n, sg / n, sb / n
+}
+
+func TestGalleryThumbnailUsesFirstStillImage(t *testing.T) {
+	dir := t.TempDir()
+	writeTestImage(t, filepath.Join(dir, "001.jpg"), color.RGBA{220, 20, 20, 255})
+	writeTestImage(t, filepath.Join(dir, "002.jpg"), color.RGBA{20, 20, 220, 255})
+
+	meta := &GalleryMetadata{Files: []GalleryFile{
+		{Name: "001.jpg", ContentType: "image/jpeg"},
+		{Name: "002.jpg", ContentType: "image/jpeg"},
+	}}
+
+	got := galleryThumbnail(dir, meta, io.Discard)
+	if got == nil {
+		t.Fatal("expected a thumbnail")
+	}
+	if r, _, b := avgRGB(t, got.Data); r < 150 || b > 100 {
+		t.Errorf("used the wrong slide: avg r=%d b=%d, want slide 1 (red)", r, b)
+	}
+}
+
+// A carousel that opens with a video should fall through to its first photo
+// rather than giving up.
+func TestGalleryThumbnailSkipsLeadingVideo(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "001.mp4"), []byte("video bytes"), 0o600); err != nil {
+		t.Fatalf("write video: %v", err)
+	}
+	writeTestImage(t, filepath.Join(dir, "002.jpg"), color.RGBA{20, 220, 20, 255})
+
+	meta := &GalleryMetadata{Files: []GalleryFile{
+		{Name: "001.mp4", ContentType: "video/mp4", IsVideo: true},
+		{Name: "002.jpg", ContentType: "image/jpeg"},
+	}}
+
+	got := galleryThumbnail(dir, meta, io.Discard)
+	if got == nil {
+		t.Fatal("expected the photo slide to be used")
+	}
+	if _, g, _ := avgRGB(t, got.Data); g < 150 {
+		t.Errorf("expected the green photo slide, got g=%d", g)
+	}
+}
+
+func TestGalleryThumbnailReturnsNilWhenNoStillImage(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "001.mp4"), []byte("video"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	meta := &GalleryMetadata{Files: []GalleryFile{
+		{Name: "001.mp4", ContentType: "video/mp4", IsVideo: true},
+	}}
+	if got := galleryThumbnail(dir, meta, io.Discard); got != nil {
+		t.Errorf("all-video post produced a thumbnail: %+v", got)
+	}
+}
+
+// A corrupt slide must not abort the whole preview; the next one should work.
+func TestGalleryThumbnailSkipsCorruptImage(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "001.jpg"), []byte("not a jpeg"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	writeTestImage(t, filepath.Join(dir, "002.jpg"), color.RGBA{20, 220, 20, 255})
+
+	meta := &GalleryMetadata{Files: []GalleryFile{
+		{Name: "001.jpg", ContentType: "image/jpeg"},
+		{Name: "002.jpg", ContentType: "image/jpeg"},
+	}}
+
+	got := galleryThumbnail(dir, meta, io.Discard)
+	if got == nil {
+		t.Fatal("expected fallback to the second slide")
+	}
+	if _, g, _ := avgRGB(t, got.Data); g < 150 {
+		t.Errorf("expected the green second slide, got g=%d", g)
+	}
+}
+
+func TestGalleryThumbnailToleratesNilMetadata(t *testing.T) {
+	if got := galleryThumbnail(t.TempDir(), nil, io.Discard); got != nil {
+		t.Errorf("expected nil, got %+v", got)
 	}
 }

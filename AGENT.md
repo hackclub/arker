@@ -290,12 +290,26 @@ served from `/thumb/{shortid}[/{type}]`.
   ~490KB "thumbnail" in testing versus ~35KB for JPEG, and it panics on some
   low-colour-count inputs. `x/image/webp` is decode-only and reads back what
   `nativewebp` wrote.
-- **Generation is two-path**. New captures: `ScreenshotArchiver` derives it from
-  the image it has already decoded, so it costs one downscale and no extra
-  browser work. Pre-existing archives: the `/thumb` handler enqueues a
-  `ThumbnailJobArgs` job on the `high_priority` queue the first time somebody
-  views one. Never generate inline in a request — a full-page screenshot reaches
-  60 megapixels (~240MB decoded) and one dashboard render asks for hundreds.
+- **Each archiver supplies its own source**, inline, from work it already does:
+  | Type | Source | Crop |
+  | --- | --- | --- |
+  | `screenshot` | the full-page image it already decoded — no extra browser work | `CropTop` |
+  | `yt-dlp` | the platform's own poster via `--write-thumbnail` (YouTube serves **WebP**) | `CropCenter` |
+  | `gallery-dl` | the post's first still image, from the temp dir before it is zipped | `CropCenter` |
+  | `mhtml`, `git`, `itch` | none — the capture falls back to a sibling item's thumbnail | — |
+- **The crop anchor is a required argument, and it matters.** A page screenshot
+  is `CropTop` (its identity is the header). A video or photo thumbnail is
+  `CropCenter` — a 9:16 reel cover frames its subject in the middle, and
+  top-cropping returns the empty space above their head.
+- **Only `screenshot` can be backfilled** (`CanDeriveFromArchive`). The `/thumb`
+  handler enqueues a `ThumbnailJobArgs` job on the `high_priority` queue the
+  first time somebody views an archive lacking one. Video and gallery posters
+  exist only at capture time, so pre-existing ones stay without a thumbnail by
+  design.
+- **Never generate inline in a request** — a full-page screenshot reaches 60
+  megapixels (~240MB decoded) and one dashboard render asks for hundreds.
+- **gallery-dl's thumbnail must be built before the ZIP goroutine starts.** That
+  goroutine owns `cleanupTmp`, so the downloaded files can vanish once it runs.
 - **`thumbnail_status` must be set to `unavailable` for permanent failures**
   (unsupported type, oversized, undecodable). Without it the lazy path
   re-enqueues the same impossible job on every page view.

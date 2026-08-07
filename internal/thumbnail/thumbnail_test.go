@@ -57,7 +57,7 @@ func avg(t *testing.T, data []byte) (r, g, b int) {
 
 func TestFromImageProducesTargetSize(t *testing.T) {
 	// A full-page screenshot shape: narrow and very tall.
-	got, err := FromImage(solid(3000, 18000, color.RGBA{10, 120, 200, 255}))
+	got, err := FromImage(solid(3000, 18000, color.RGBA{10, 120, 200, 255}), CropTop)
 	if err != nil {
 		t.Fatalf("FromImage: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestFromImageProducesTargetSize(t *testing.T) {
 func TestFromImageCropsFromTopForTallSources(t *testing.T) {
 	red := color.RGBA{255, 0, 0, 255}
 	blue := color.RGBA{0, 0, 255, 255}
-	got, err := FromImage(banded(1000, 10000, red, blue))
+	got, err := FromImage(banded(1000, 10000, red, blue), CropTop)
 	if err != nil {
 		t.Fatalf("FromImage: %v", err)
 	}
@@ -88,9 +88,76 @@ func TestFromImageCropsFromTopForTallSources(t *testing.T) {
 	}
 }
 
+// thirds builds an image in three horizontal bands, so a test can tell exactly
+// which vertical slice a crop selected.
+func thirds(w, h int, top, mid, bottom color.RGBA) *image.RGBA {
+	m := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		c := top
+		switch {
+		case y >= 2*h/3:
+			c = bottom
+		case y >= h/3:
+			c = mid
+		}
+		for x := 0; x < w; x++ {
+			m.Set(x, y, c)
+		}
+	}
+	return m
+}
+
+// A 9:16 reel cover frames its subject in the middle. Top-cropping one returns
+// the empty space above their head, which is why the anchor is a parameter.
+func TestFromImageCropsFromCenterForTallSources(t *testing.T) {
+	red := color.RGBA{255, 0, 0, 255}
+	green := color.RGBA{0, 255, 0, 255}
+	blue := color.RGBA{0, 0, 255, 255}
+
+	// Portrait video thumbnail proportions.
+	src := thirds(1080, 1920, red, green, blue)
+
+	centered, err := FromImage(src, CropCenter)
+	if err != nil {
+		t.Fatalf("FromImage(CropCenter): %v", err)
+	}
+	r, g, b := avg(t, centered.Data)
+	if g < 200 || r > 60 || b > 60 {
+		t.Errorf("CropCenter picked the wrong band: avg r=%d g=%d b=%d, want green-dominant", r, g, b)
+	}
+
+	// The same source under CropTop must select a different band, or the
+	// parameter is not doing anything.
+	top, err := FromImage(src, CropTop)
+	if err != nil {
+		t.Fatalf("FromImage(CropTop): %v", err)
+	}
+	tr, tg, _ := avg(t, top.Data)
+	if tr < 200 || tg > 60 {
+		t.Errorf("CropTop picked the wrong band: avg r=%d g=%d, want red-dominant", tr, tg)
+	}
+}
+
+// Wide sources are centred horizontally regardless of the vertical anchor, so
+// both modes must agree there.
+func TestCropModeIrrelevantForWideSources(t *testing.T) {
+	src := thirds(4000, 500, color.RGBA{200, 0, 0, 255}, color.RGBA{0, 200, 0, 255}, color.RGBA{0, 0, 200, 255})
+	a, err := FromImage(src, CropTop)
+	if err != nil {
+		t.Fatalf("CropTop: %v", err)
+	}
+	b, err := FromImage(src, CropCenter)
+	if err != nil {
+		t.Fatalf("CropCenter: %v", err)
+	}
+	if !bytes.Equal(a.Data, b.Data) {
+		t.Error("crop mode changed the result for a source wider than 16:9, where it should not apply")
+	}
+}
+
 func TestFromImageCentersWideSources(t *testing.T) {
 	// Wider than 16:9, so the crop trims the sides and keeps full height.
-	got, err := FromImage(solid(4000, 500, color.RGBA{0, 200, 0, 255}))
+	got, err := FromImage(solid(4000, 500, color.RGBA{0, 200, 0, 255}), CropTop)
 	if err != nil {
 		t.Fatalf("FromImage: %v", err)
 	}
@@ -104,7 +171,7 @@ func TestFromImageCentersWideSources(t *testing.T) {
 }
 
 func TestFromImageNeverUpscales(t *testing.T) {
-	got, err := FromImage(solid(160, 4000, color.RGBA{40, 40, 40, 255}))
+	got, err := FromImage(solid(160, 4000, color.RGBA{40, 40, 40, 255}), CropTop)
 	if err != nil {
 		t.Fatalf("FromImage: %v", err)
 	}
@@ -120,7 +187,7 @@ func TestFromImageNeverUpscales(t *testing.T) {
 // transparent, and without flattening it would encode as solid black.
 func TestFromImageFlattensTransparencyToWhite(t *testing.T) {
 	src := image.NewRGBA(image.Rect(0, 0, 1200, 1200)) // fully transparent
-	got, err := FromImage(src)
+	got, err := FromImage(src, CropTop)
 	if err != nil {
 		t.Fatalf("FromImage: %v", err)
 	}
@@ -131,10 +198,10 @@ func TestFromImageFlattensTransparencyToWhite(t *testing.T) {
 }
 
 func TestFromImageRejectsEmptyBounds(t *testing.T) {
-	if _, err := FromImage(image.NewRGBA(image.Rect(0, 0, 0, 0))); err == nil {
+	if _, err := FromImage(image.NewRGBA(image.Rect(0, 0, 0, 0)), CropTop); err == nil {
 		t.Fatal("expected an error for a zero-sized source")
 	}
-	if _, err := FromImage(nil); err == nil {
+	if _, err := FromImage(nil, CropTop); err == nil {
 		t.Fatal("expected an error for a nil source")
 	}
 }
@@ -166,7 +233,7 @@ func TestFromReaderDecodesEveryStoredScreenshotFormat(t *testing.T) {
 		{"webp", webpBuf.Bytes()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := FromReader(bytes.NewReader(tc.data))
+			got, err := FromReader(bytes.NewReader(tc.data), CropTop)
 			if err != nil {
 				t.Fatalf("FromReader: %v", err)
 			}
@@ -205,7 +272,7 @@ func hugePNGHeader(w, h uint32) []byte {
 
 func TestFromReaderRejectsOversizedSourceBeforeDecoding(t *testing.T) {
 	// 8000x8000 = 64 megapixels, comfortably over the limit.
-	_, err := FromReader(bytes.NewReader(hugePNGHeader(8000, 8000)))
+	_, err := FromReader(bytes.NewReader(hugePNGHeader(8000, 8000)), CropTop)
 	if err == nil {
 		t.Fatal("expected an error for an oversized source")
 	}
@@ -217,7 +284,7 @@ func TestFromReaderRejectsOversizedSourceBeforeDecoding(t *testing.T) {
 func TestFromReaderAcceptsSourceJustUnderTheLimit(t *testing.T) {
 	// Header says 6000x6000 = 36MP (under the limit) but the pixel data is
 	// truncated, so this proves the size gate passed and decoding was attempted.
-	_, err := FromReader(bytes.NewReader(hugePNGHeader(6000, 6000)))
+	_, err := FromReader(bytes.NewReader(hugePNGHeader(6000, 6000)), CropTop)
 	if errors.Is(err, ErrSourceTooLarge) {
 		t.Fatalf("36MP source was rejected as too large: %v", err)
 	}
@@ -241,7 +308,7 @@ func TestFromReaderHandlesGarbageWithoutPanicking(t *testing.T) {
 		}()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := FromReader(bytes.NewReader(tc.data)); err == nil {
+			if _, err := FromReader(bytes.NewReader(tc.data), CropTop); err == nil {
 				t.Error("expected an error, got nil")
 			}
 		})

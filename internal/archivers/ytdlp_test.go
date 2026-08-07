@@ -1,10 +1,16 @@
 package archivers
 
 import (
+	"bytes"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"arker/internal/thumbnail"
 )
 
 func TestYtDlpDownloadArgsWriteRemuxedMP4File(t *testing.T) {
@@ -105,4 +111,146 @@ func hasArgPair(args []string, key, value string) bool {
 		}
 	}
 	return false
+}
+
+// The platform's own poster image is the best available preview for a video,
+// and it is free -- it used to be explicitly discarded via --no-write-thumbnail.
+// This guards against that flag coming back.
+func TestYtDlpDownloadArgsRequestThumbnail(t *testing.T) {
+	args := ytDlpDownloadArgs("/tmp/arker-video-123.%(ext)s")
+
+	var hasWrite bool
+	for _, a := range args {
+		if a == "--no-write-thumbnail" {
+			t.Fatal("--no-write-thumbnail is back; it throws away the video's own poster image")
+		}
+		if a == "--write-thumbnail" {
+			hasWrite = true
+		}
+	}
+	if !hasWrite {
+		t.Errorf("--write-thumbnail missing from %v", args)
+	}
+}
+
+func TestFindDownloadedThumbnail(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		files   []string
+		video   string
+		wantExt string
+	}{
+		{"jpg beside video", []string{".mp4", ".jpg"}, ".mp4", ".jpg"},
+		{"webp beside video", []string{".mp4", ".webp"}, ".mp4", ".webp"},
+		{"png beside video", []string{".mp4", ".png"}, ".mp4", ".png"},
+		{"no thumbnail written", []string{".mp4"}, ".mp4", ""},
+		{"ignores non-image siblings", []string{".mp4", ".part", ".json"}, ".mp4", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := filepath.Join(t.TempDir(), "arker-video-abc")
+			for _, ext := range tc.files {
+				if err := os.WriteFile(base+ext, []byte("x"), 0o600); err != nil {
+					t.Fatalf("write %s: %v", ext, err)
+				}
+			}
+			got := findDownloadedThumbnail(base, base+tc.video)
+			if tc.wantExt == "" {
+				if got != "" {
+					t.Errorf("found %q, want none", got)
+				}
+				return
+			}
+			if got != base+tc.wantExt {
+				t.Errorf("found %q, want %q", got, base+tc.wantExt)
+			}
+		})
+	}
+}
+
+// The video must never be mistaken for its own poster image.
+func TestFindDownloadedThumbnailNeverReturnsTheVideo(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "arker-video-abc")
+	if err := os.WriteFile(base+".mp4", []byte("video"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got := findDownloadedThumbnail(base, base+".mp4"); got != "" {
+		t.Errorf("returned %q, which is the video itself", got)
+	}
+}
+
+// A missing or corrupt poster is not an archive failure.
+func TestVideoThumbnailToleratesBadInput(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "arker-video-abc")
+	if err := os.WriteFile(base+".mp4", []byte("video"), 0o600); err != nil {
+		t.Fatalf("write video: %v", err)
+	}
+
+	if got := videoThumbnail(base, base+".mp4", io.Discard); got != nil {
+		t.Errorf("expected nil when no thumbnail was written, got %+v", got)
+	}
+
+	if err := os.WriteFile(base+".jpg", []byte("not actually a jpeg"), 0o600); err != nil {
+		t.Fatalf("write thumb: %v", err)
+	}
+	if got := videoThumbnail(base, base+".mp4", io.Discard); got != nil {
+		t.Errorf("expected nil for undecodable poster, got %+v", got)
+	}
+}
+
+// The happy path: a real poster image becomes a real thumbnail.
+func TestVideoThumbnailFromRealImage(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "arker-video-abc")
+	if err := os.WriteFile(base+".mp4", []byte("video"), 0o600); err != nil {
+		t.Fatalf("write video: %v", err)
+	}
+
+	// Portrait, like a reel cover: red top, green middle, blue bottom.
+	src := image.NewRGBA(image.Rect(0, 0, 1080, 1920))
+	for y := 0; y < 1920; y++ {
+		c := color.RGBA{255, 0, 0, 255}
+		switch {
+		case y >= 1280:
+			c = color.RGBA{0, 0, 255, 255}
+		case y >= 640:
+			c = color.RGBA{0, 255, 0, 255}
+		}
+		for x := 0; x < 1080; x++ {
+			src.Set(x, y, c)
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, src, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if err := os.WriteFile(base+".jpg", buf.Bytes(), 0o600); err != nil {
+		t.Fatalf("write thumb: %v", err)
+	}
+
+	got := videoThumbnail(base, base+".mp4", io.Discard)
+	if got == nil {
+		t.Fatal("expected a thumbnail")
+	}
+	if got.Width != thumbnail.Width || got.Height != thumbnail.Height {
+		t.Errorf("size = %dx%d, want %dx%d", got.Width, got.Height, thumbnail.Width, thumbnail.Height)
+	}
+
+	// Center-cropped, so the middle (green) band must dominate.
+	out, err := jpeg.Decode(bytes.NewReader(got.Data))
+	if err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	var sr, sg, sb, n int
+	b := out.Bounds()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			cr, cg, cb, _ := out.At(x, y).RGBA()
+			sr += int(cr >> 8)
+			sg += int(cg >> 8)
+			sb += int(cb >> 8)
+			n++
+		}
+	}
+	if sg/n < 200 || sr/n > 60 || sb/n > 60 {
+		t.Errorf("avg rgb(%d,%d,%d): want green-dominant (center band of a portrait poster)", sr/n, sg/n, sb/n)
+	}
 }

@@ -86,7 +86,7 @@ func seedCapture(t *testing.T, db *gorm.DB, store storage.Storage, shortID, orig
 		if spec.thumbColor == nil {
 			continue
 		}
-		th, err := thumbnail.FromImage(banded(1200, 2400, *spec.thumbColor, color.RGBA{0, 0, 0, 255}))
+		th, err := thumbnail.FromImage(banded(1200, 2400, *spec.thumbColor, color.RGBA{0, 0, 0, 255}), thumbnail.CropTop)
 		if err != nil {
 			t.Fatalf("build thumbnail: %v", err)
 		}

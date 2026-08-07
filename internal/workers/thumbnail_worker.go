@@ -101,7 +101,9 @@ func (w *ThumbnailWorker) generate(ctx context.Context, args ThumbnailJobArgs) e
 	}
 	defer reader.Close()
 
-	thumb, err := thumbnail.FromReader(reader)
+	// CropTop: this path only ever runs on screenshots (CanDeriveFromArchive
+	// gates it above), whose identity is at the top of the page.
+	thumb, err := thumbnail.FromReader(reader, thumbnail.CropTop)
 	if err != nil {
 		// Every failure below the decoder is a property of these bytes and will
 		// not change on retry.
