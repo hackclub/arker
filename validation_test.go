@@ -2,8 +2,25 @@ package main
 
 import (
 	"arker/internal/utils"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+// withMediaCookies configures a cookie jar for the duration of a test. Routing
+// depends on it: login-only sites are not queued when no jar is available.
+func withMediaCookies(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cookies.txt")
+	if err := os.WriteFile(path, []byte("# Netscape HTTP Cookie File\n"), 0o600); err != nil {
+		t.Fatalf("write cookies: %v", err)
+	}
+	if _, err := utils.InitYtDlpCookies(path, "", dir); err != nil {
+		t.Fatalf("init cookies: %v", err)
+	}
+	t.Cleanup(func() { utils.InitYtDlpCookies("", "", dir) })
+}
 
 func TestURLValidation(t *testing.T) {
 	tests := []struct {
@@ -202,6 +219,9 @@ func TestGitURLDetection(t *testing.T) {
 }
 
 func TestGetArchiveTypes(t *testing.T) {
+	// Cookies configured: login-only sites (Instagram, X) are routed.
+	withMediaCookies(t)
+
 	tests := []struct {
 		name     string
 		url      string
@@ -293,6 +313,57 @@ func TestGetArchiveTypes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Without a cookie jar, a login-only site cannot be archived at all, so no
+// gallery-dl item is created: it would be a guaranteed failure that still
+// spends requests against a site that rate-limits us for them.
+func TestGetArchiveTypesSkipsLoginOnlySitesWithoutCookies(t *testing.T) {
+	loginOnly := []string{
+		"https://www.instagram.com/p/ABC123/",
+		"https://www.instagram.com/tv/ABC123/",
+		"https://x.com/someone/status/123",
+		"https://twitter.com/someone/status/123",
+		"https://www.pinterest.com/pin/123/",
+	}
+	for _, url := range loginOnly {
+		types := utils.GetArchiveTypes(url)
+		for _, archiveType := range types {
+			if archiveType == utils.ArchiveTypeGalleryDl {
+				t.Errorf("GetArchiveTypes(%q) = %v, want no gallery-dl item without cookies", url, types)
+			}
+		}
+	}
+
+	// Sites that work anonymously keep their gallery-dl item.
+	for _, url := range []string{
+		"https://imgur.com/a/Kn9lB",
+		"https://bsky.app/profile/a.bsky.social/post/abc",
+		"https://www.reddit.com/r/pics/comments/abc/title/",
+	} {
+		found := false
+		for _, archiveType := range utils.GetArchiveTypes(url) {
+			if archiveType == utils.ArchiveTypeGalleryDl {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("GetArchiveTypes(%q) dropped gallery-dl, but the site works anonymously", url)
+		}
+	}
+
+	// An Instagram reel is unaffected: it goes to yt-dlp, which archives it
+	// anonymously.
+	reelTypes := utils.GetArchiveTypes("https://www.instagram.com/reel/ABC123/")
+	found := false
+	for _, archiveType := range reelTypes {
+		if archiveType == utils.ArchiveTypeYtDlp {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("GetArchiveTypes(reel) = %v, want a yt-dlp item", reelTypes)
 	}
 }
 

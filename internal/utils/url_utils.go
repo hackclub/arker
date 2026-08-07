@@ -181,6 +181,9 @@ type galleryDLSite struct {
 	// paths are path prefixes/segments; an empty list means the host alone is
 	// enough. Matched against the URL path only, never the query string.
 	paths []string
+	// requiresCookies marks sites that serve nothing at all to logged-out
+	// clients, so a capture without a cookie jar is guaranteed to fail.
+	requiresCookies bool
 }
 
 // galleryDLSites is the set of sites Arker sends to gallery-dl. gallery-dl
@@ -189,9 +192,11 @@ type galleryDLSite struct {
 // Adding a site is a one-line change here.
 var galleryDLSites = []galleryDLSite{
 	// Instagram feed posts. Reels stay on yt-dlp (see IsVideoURL).
-	{host: "instagram.com", paths: []string{"/p/", "/tv/"}},
-	{host: "twitter.com", paths: []string{"/status/"}},
-	{host: "x.com", paths: []string{"/status/"}},
+	// Logged out, Instagram redirects every request to its login page.
+	{host: "instagram.com", paths: []string{"/p/", "/tv/"}, requiresCookies: true},
+	{host: "twitter.com", paths: []string{"/status/"}, requiresCookies: true},
+	{host: "x.com", paths: []string{"/status/"}, requiresCookies: true},
+	{host: "pinterest.com", paths: []string{"/pin/"}, requiresCookies: true},
 	{host: "reddit.com", paths: []string{"/comments/"}},
 	{host: "redd.it"},
 	{host: "tumblr.com", paths: []string{"/post/"}},
@@ -201,7 +206,6 @@ var galleryDLSites = []galleryDLSite{
 	{host: "deviantart.com", paths: []string{"/art/"}},
 	{host: "artstation.com", paths: []string{"/artwork/"}},
 	{host: "pixiv.net", paths: []string{"/artworks/"}},
-	{host: "pinterest.com", paths: []string{"/pin/"}},
 	{host: "newgrounds.com", paths: []string{"/art/view/"}},
 	{host: "vsco.co", paths: []string{"/media/"}},
 }
@@ -255,6 +259,40 @@ func hostMatches(hostname, domain string) bool {
 	return hostname == domain || strings.HasSuffix(hostname, "."+domain)
 }
 
+// GalleryDLURLRequiresCookies reports whether a gallery-dl URL is on a site
+// that serves nothing to logged-out clients.
+func GalleryDLURLRequiresCookies(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	for _, site := range galleryDLSites {
+		if site.requiresCookies && hostMatches(hostname, site.host) {
+			return true
+		}
+	}
+	return false
+}
+
+// ShouldCreateGalleryDLItem reports whether a capture of this URL should get a
+// gallery-dl item at all.
+//
+// A login-only site with no cookie jar configured cannot succeed, so queueing
+// it buys a guaranteed-failed archive item and spends real requests against the
+// site getting there — which is how an unattended archiver walks itself into a
+// rate limit that then affects the URLs it *could* have captured. Sites that
+// work anonymously are unaffected.
+func ShouldCreateGalleryDLItem(rawURL string) bool {
+	if !IsGalleryDLURL(rawURL) {
+		return false
+	}
+	if GalleryDLURLRequiresCookies(rawURL) && !MediaCookiesConfigured() {
+		return false
+	}
+	return true
+}
+
 // Check if URL is an itch.io URL
 func IsItchURL(url string) bool {
 	lowerURL := strings.ToLower(url)
@@ -270,8 +308,9 @@ func GetArchiveTypes(url string) []string {
 		types = append(types, ArchiveTypeItch)
 	}
 
-	// Add gallery-dl for photo posts and mixed photo/video carousels
-	if IsGalleryDLURL(url) {
+	// Add gallery-dl for photo posts and mixed photo/video carousels, unless
+	// the site needs a login we do not have.
+	if ShouldCreateGalleryDLItem(url) {
 		types = append(types, ArchiveTypeGalleryDl)
 	}
 

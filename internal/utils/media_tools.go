@@ -24,6 +24,16 @@ func MediaProxyArgs() []string {
 	return YtDlpProxyArgs()
 }
 
+// MediaCookiesConfigured reports whether a cookie jar is available. Sites that
+// serve nothing to logged-out clients are not worth queueing without one: the
+// job cannot succeed, and the requests it spends still count against the rate
+// limits of the sites that can.
+func MediaCookiesConfigured() bool {
+	ytDlpCookiesMu.RLock()
+	defer ytDlpCookiesMu.RUnlock()
+	return ytDlpCookiesFilePath != ""
+}
+
 // MediaProxyRedactionSecrets returns substrings that must never reach persisted
 // logs, currently the proxy URL (which may embed credentials).
 func MediaProxyRedactionSecrets() []string {

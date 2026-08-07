@@ -218,7 +218,9 @@ var mediaBackfillURLPattern = map[string]struct {
 	},
 	utils.ArchiveTypeGalleryDl: {
 		sqlLike: "(LOWER(archived_urls.original) LIKE '%instagram.com%' OR LOWER(archived_urls.original) LIKE '%twitter.com%' OR LOWER(archived_urls.original) LIKE '%x.com%' OR LOWER(archived_urls.original) LIKE '%reddit.com%' OR LOWER(archived_urls.original) LIKE '%redd.it%' OR LOWER(archived_urls.original) LIKE '%tumblr.com%' OR LOWER(archived_urls.original) LIKE '%bsky.app%' OR LOWER(archived_urls.original) LIKE '%flickr.com%' OR LOWER(archived_urls.original) LIKE '%imgur.com%' OR LOWER(archived_urls.original) LIKE '%deviantart.com%' OR LOWER(archived_urls.original) LIKE '%artstation.com%' OR LOWER(archived_urls.original) LIKE '%pixiv.net%' OR LOWER(archived_urls.original) LIKE '%pinterest.com%' OR LOWER(archived_urls.original) LIKE '%newgrounds.com%' OR LOWER(archived_urls.original) LIKE '%vsco.co%')",
-		matches: utils.IsGalleryDLURL,
+		// Same gate as live capture: without cookies, backfilling a login-only
+		// site would queue thousands of guaranteed failures.
+		matches: utils.ShouldCreateGalleryDLItem,
 	},
 }
 

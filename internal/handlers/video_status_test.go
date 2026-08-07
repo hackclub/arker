@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"os"
+	"path/filepath"
+
 	"arker/internal/models"
 	"arker/internal/storage"
 	"arker/internal/utils"
@@ -163,6 +166,22 @@ func TestServeArchiveMissingItemReturnsPlainNotFound(t *testing.T) {
 	}
 }
 
+// withMediaCookies configures a cookie jar for the test. The gallery-dl
+// backfill skips login-only sites without one, so an Instagram backfill test
+// has to declare that cookies exist.
+func withMediaCookies(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cookies.txt")
+	if err := os.WriteFile(path, []byte("# Netscape HTTP Cookie File\n"), 0o600); err != nil {
+		t.Fatalf("write cookies: %v", err)
+	}
+	if _, err := utils.InitYtDlpCookies(path, "", dir); err != nil {
+		t.Fatalf("init cookies: %v", err)
+	}
+	t.Cleanup(func() { utils.InitYtDlpCookies("", "", dir) })
+}
+
 func newBackfillRouter(t *testing.T, db *gorm.DB) *gin.Engine {
 	t.Helper()
 	r := gin.New()
@@ -237,6 +256,7 @@ func TestBackfillMissingMediaItemsDryRunYtDlp(t *testing.T) {
 // (if any) could never have succeeded.
 func TestBackfillMissingMediaItemsDryRunGalleryDL(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	withMediaCookies(t)
 	db := newHandlerLogTestDB(t)
 	createVideoCapture(t, db, "7fbf9", "https://www.instagram.com/p/Dbj-2q4jWvx/", map[string]string{
 		"screenshot": "completed",
@@ -265,6 +285,7 @@ func TestBackfillMissingMediaItemsDryRunGalleryDL(t *testing.T) {
 // concurrency that previously got the account soft-blocked.
 func TestBackfillMissingMediaItemsRespectsLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	withMediaCookies(t)
 	db := newHandlerLogTestDB(t)
 	for _, shortID := range []string{"aaaaa", "bbbbb", "ccccc"} {
 		createVideoCapture(t, db, shortID, "https://www.instagram.com/p/"+shortID+"/", map[string]string{
@@ -305,5 +326,38 @@ func TestBackfillMissingMediaItemsAcceptsLegacyTypeName(t *testing.T) {
 	got := body.ShortIDs[utils.ArchiveTypeYtDlp]
 	if len(got) != 1 || got[0] != "08aWq" {
 		t.Fatalf("short_ids[yt-dlp] = %v, want [08aWq]", got)
+	}
+}
+
+// Without cookies the Instagram backfill must select nothing: queueing
+// thousands of guaranteed-failed jobs is how an unattended backfill rate-limits
+// the archiver out of the captures it could have made.
+func TestBackfillMissingMediaItemsSkipsLoginOnlySitesWithoutCookies(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newHandlerLogTestDB(t)
+	createVideoCapture(t, db, "7fbf9", "https://www.instagram.com/p/Dbj-2q4jWvx/", map[string]string{
+		"screenshot": "completed",
+	})
+	createVideoCapture(t, db, "imgr1", "https://imgur.com/a/Kn9lB", map[string]string{
+		"screenshot": "completed",
+	})
+
+	body := doBackfill(t, newBackfillRouter(t, db), "type=gallery-dl&dry_run=true")
+
+	got := body.ShortIDs[utils.ArchiveTypeGalleryDl]
+	for _, shortID := range got {
+		if shortID == "7fbf9" {
+			t.Error("Instagram post was selected for backfill with no cookies configured")
+		}
+	}
+	// The anonymous site is still backfilled.
+	found := false
+	for _, shortID := range got {
+		if shortID == "imgr1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("short_ids = %v, want the Imgur capture, which works anonymously", got)
 	}
 }
