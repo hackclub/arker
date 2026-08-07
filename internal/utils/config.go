@@ -19,14 +19,21 @@ const CaptureFreshnessWindowKey = "capture_freshness_window"
 const DefaultCaptureFreshnessWindow = 24 * time.Hour
 
 // GetOrCreateConfigValue retrieves a config value from the database, creating
-// the row with defaultValue when it does not exist yet.
+// the row with defaultValue when it does not exist yet. Two callers racing to
+// create the same key are both fine: the loser of the unique-constraint race
+// re-reads the winner's row.
 func GetOrCreateConfigValue(db *gorm.DB, key string, defaultValue string) (string, error) {
 	var config models.Config
 	if err := db.Where("key = ?", key).First(&config).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			config = models.Config{Key: key, Value: defaultValue}
-			if err := db.Create(&config).Error; err != nil {
-				return "", err
+			if createErr := db.Create(&config).Error; createErr != nil {
+				// Lost a concurrent-create race (or the insert failed for
+				// another reason): the authoritative row may exist now.
+				if err := db.Where("key = ?", key).First(&config).Error; err != nil {
+					return "", createErr
+				}
+				return config.Value, nil
 			}
 			return defaultValue, nil
 		}

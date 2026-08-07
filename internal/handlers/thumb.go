@@ -32,6 +32,11 @@ import (
 func ServeThumbnail(c *gin.Context, store storage.Storage, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
 	shortID := c.Param("shortid")
 	requestedType := strings.TrimPrefix(c.Param("type"), "/")
+	// Alias captures own no items; redirect to the canonical capture's
+	// thumbnail so <img> tags pointing at an alias short ID still render.
+	if redirectIfAlias(c, db, shortID) {
+		return
+	}
 
 	var capture models.Capture
 	if err := db.Where("short_id = ?", shortID).Preload("ArchiveItems").First(&capture).Error; err != nil {
