@@ -209,14 +209,16 @@ func findReusableCapture(tx *gorm.DB, archivedURLID uint, types []string) *model
 }
 
 // captureCoversTypes reports whether the capture has an archive item for every
-// requested type and none of those items is failed.
+// requested type and none of those items is failed. Types are compared in
+// canonical form so rows still carrying a retired name (the startup rename
+// migration is best-effort) keep matching.
 func captureCoversTypes(c *models.Capture, types []string) bool {
 	byType := make(map[string]string, len(c.ArchiveItems))
 	for _, item := range c.ArchiveItems {
-		byType[item.Type] = item.Status
+		byType[utils.NormalizeArchiveType(item.Type)] = item.Status
 	}
 	for _, t := range types {
-		status, ok := byType[t]
+		status, ok := byType[utils.NormalizeArchiveType(t)]
 		if !ok || status == "failed" {
 			return false
 		}
