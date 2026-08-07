@@ -74,7 +74,8 @@ When using Amp with `make dev` running in another window:
 │   │   ├── ytdlp.go        # Video downloading via yt-dlp
 │   │   ├── gallery_dl.go   # Photo/carousel downloading via gallery-dl
 │   │   ├── itch.go         # itch.io game archiving
-│   │   └── browser_utils.go # Shared browser utilities
+│   │   ├── pwbundle.go     # Playwright browser/page lifecycle
+│   │   └── utils.go        # Shared browser utilities & page loading
 │   ├── handlers/           # HTTP handlers
 │   │   ├── admin.go        # Admin interface endpoints
 │   │   ├── api.go          # REST API endpoints
@@ -83,16 +84,24 @@ When using Amp with `make dev` running in another window:
 │   │   ├── git.go          # Git HTTP backend
 │   │   ├── itch_serve.go   # itch.io individual file serving
 │   │   ├── gallery_dl_serve.go # gallery-dl manifest + per-file serving
+│   │   ├── thumb.go        # Thumbnail serving + placeholder
 │   │   └── serve.go        # File serving with streaming
 │   ├── models/             # Database models & types
 │   │   └── models.go       # User, ArchivedURL, Capture, ArchiveItem
 │   ├── storage/            # Storage interface & implementations
-│   │   └── fs.go           # Filesystem storage (S3-ready interface)
+│   │   ├── fs.go           # Filesystem storage
+│   │   ├── s3.go           # S3/R2 storage with presigned direct URLs
+│   │   ├── direct.go       # DirectURLStorage interface
+│   │   └── memory_storage.go # In-memory storage (tests)
+│   ├── thumbnail/          # Derived preview images
+│   │   └── thumbnail.go    # Crop/scale/encode helper
 │   ├── monitoring/         # Browser process monitoring
 │   ├── utils/              # Shared utilities
 │   └── workers/            # Async job processing
 │       ├── queue.go        # Job queue management
-│       └── worker.go       # Background worker implementation
+│       ├── archive_worker.go   # Archive job processing
+│       ├── thumbnail_worker.go # On-demand thumbnail backfill
+│       └── cleanup_worker.go   # Stuck-job reaper
 ├── templates/              # HTML templates for web interface
 └── Makefile               # Development workflow commands
 ```
@@ -100,16 +109,22 @@ When using Amp with `make dev` running in another window:
 ## Core Interfaces & Architecture
 
 ### Key Interfaces
-- **`Storage`** - Pluggable storage backend (filesystem now, S3-ready)
+- **`Storage`** - Pluggable storage backend (filesystem or S3/R2)
   - Methods: `Writer(key)`, `Reader(key)`, `Exists(key)`, `Size(key)`
-  - Current: Filesystem storage with zstd compression
+  - `SeekableStorage` adds `SeekableReader` for range requests; `DirectURLStorage`
+    adds presigned redirects. There is no delete method: the production bucket is
+    locked, so objects are written once under a nonced key and never replaced.
+  - Objects are stored **uncompressed** — the bytes on disk are exactly what the
+    archiver wrote.
 - **`Archiver`** - Different archiving strategies
-  - Methods: `Archive(url, writer)`, content type detection
-  - Types: MHTML, Screenshot, Git, YouTube, Itch
+  - Method: `Archive(ctx, url, logWriter, db, itemID) (Result, error)`
+  - `Result` carries the artifact reader, extension, content type, the Playwright
+    bundle (browser archivers), and an optional derived thumbnail
+  - Types: MHTML, Screenshot, Git, yt-dlp, gallery-dl, Itch
 
 ### Performance Features
 - **Browser Instance Reuse**: Playwright browsers reused across jobs for efficiency
-- **Streaming**: All file operations use streaming with zstd compression
+- **Streaming**: All file operations use streaming
 - **Async Processing**: Queue-based job processing with configurable worker pools
 - **Concurrent Workers**: Default 5 workers (configurable via `MAX_WORKERS`)
 - **Browser Monitoring**: Tracks browser processes to prevent memory leaks
@@ -140,6 +155,8 @@ When using Amp with `make dev` running in another window:
 - `GET /itch/:shortid/list` - JSON list of files in itch.io game archive
 - `GET /gallery/:shortid/list` - JSON post metadata + media file list for a gallery-dl archive
 - `GET /gallery/:shortid/file/*filepath` - Stream one media file out of a gallery-dl archive
+- `GET|HEAD /thumb/:shortid` - Preview image for a capture (480x270 JPEG); falls back to an SVG placeholder and queues generation
+- `GET|HEAD /thumb/:shortid/:type` - Preview image for one archive type
 
 ### Admin Interface (Session Authentication)
 - `GET /login` - Admin login page
@@ -195,13 +212,18 @@ git clone https://archive.selfhosted.hackclub.com/git/{shortid}
 ## Testing
 
 ### Test Files
-- `storage_test.go` - Storage interface tests
-- `archiver_test.go` - Archiver interface tests
-- `monitoring_test.go` - Browser monitoring tests
-- `validation_test.go` - Input validation tests
-- `login_text_test.go` - Login text handling tests
 
-- `vimeo_test.go` - Vimeo video archiving tests
+Most tests live beside the package they cover (`internal/*/..._test.go`); a few
+integration-level ones sit at the repo root (`storage_test.go`,
+`monitoring_test.go`, `validation_test.go`). Run `go test ./...` rather than
+working from a list here — this section has drifted before.
+
+Two conventions worth knowing:
+- DB-backed tests use in-memory SQLite (`gorm.io/driver/sqlite`) with
+  `AutoMigrate`, so they need no running Postgres. See `newWorkerTestDB` in
+  `internal/workers/archive_worker_test.go` for the pattern.
+- Handler tests build a real `gin` engine and drive it with `httptest`, so route
+  registration and middleware are exercised too. See `internal/handlers/thumb_test.go`.
 
 ### Running Tests
 ```bash
@@ -220,7 +242,8 @@ go test -run TestFSStorage    # Run specific test
 ### Archive & Browser
 - **mxschmitt/playwright-go** v0.6100.0 - Browser automation
 - **go-git/go-git/v5** v5.8.1 - Git operations
-- **klauspost/compress** v1.18.0 - zstd compression
+- **HugoSmits86/nativewebp** v1.2.0 - WebP encoding (lossless only)
+- **golang.org/x/image** v0.44.0 - WebP decoding + high-quality rescaling
 
 ### Utilities
 - **golang.org/x/crypto** v0.33.0 - Password hashing (bcrypt)
@@ -250,6 +273,40 @@ Type names are stable identifiers: they appear in stored rows, in permalinks
 (`/{shortid}/{type}`), and in API requests. Renaming one means adding a
 `legacyArchiveTypeAliases` entry so old names keep resolving, plus a rename in
 `migrateLegacyArchiveTypes`. Never just change the string.
+
+An archiver returns an `archivers.Result` struct, not a list of values, so a new
+derived artifact does not churn every archiver's signature. `Result.Thumbnail`
+is optional and nil is not an error.
+
+### Thumbnails
+
+Thumbnails are a **derived artifact**, not an archive type — they have no tab,
+no permalink type segment, and no entry in `canonicalArchiveTypes`. They live in
+four columns on `archive_items` (`thumbnail_key/width/height/status`) and are
+served from `/thumb/{shortid}[/{type}]`.
+
+- **Size/format**: 480x270 JPEG (`internal/thumbnail`). JPEG because the only
+  WebP encoder in the tree (`nativewebp`) is lossless-only — it produced a
+  ~490KB "thumbnail" in testing versus ~35KB for JPEG, and it panics on some
+  low-colour-count inputs. `x/image/webp` is decode-only and reads back what
+  `nativewebp` wrote.
+- **Generation is two-path**. New captures: `ScreenshotArchiver` derives it from
+  the image it has already decoded, so it costs one downscale and no extra
+  browser work. Pre-existing archives: the `/thumb` handler enqueues a
+  `ThumbnailJobArgs` job on the `high_priority` queue the first time somebody
+  views one. Never generate inline in a request — a full-page screenshot reaches
+  60 megapixels (~240MB decoded) and one dashboard render asks for hundreds.
+- **`thumbnail_status` must be set to `unavailable` for permanent failures**
+  (unsupported type, oversized, undecodable). Without it the lazy path
+  re-enqueues the same impossible job on every page view.
+- **A thumbnail failure must never fail an archive.** The archive is the
+  product; the preview is not.
+- Keys carry an upload nonce like archive keys (`{shortid}/{type}-{nonce}-thumb.jpg`)
+  because the bucket forbids overwrites and deletes. Regenerating means writing a
+  new object and repointing the row.
+- `/thumb` always returns an image, falling back to a generated SVG placeholder
+  with a short `max-age` so a refresh picks up the real one. Callers can render
+  a card unconditionally.
 
 ### Database Changes
 1. Update models in `internal/models/models.go`
@@ -283,7 +340,7 @@ Type names are stable identifiers: they appear in stored rows, in permalinks
 - **Modular Design**: Clean separation of concerns with internal packages
 - **Interface-Driven**: Storage and Archiver interfaces for extensibility
 - **Resilient Processing**: Error handling with retries, timeouts, and status tracking
-- **Memory Efficient**: Streaming operations for large files with compression
+- **Memory Efficient**: Streaming operations for large files
 - **Production Ready**: Docker deployment with health checks and resource limits
 - **Git Integration**: Full Git HTTP backend for repository cloning
 - **API-First**: RESTful API with web interface as overlay
