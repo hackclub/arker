@@ -63,48 +63,96 @@ func (c *Client) archiveYouTube(ctx context.Context, targetURL string, logWriter
 		URL:           targetURL,
 		Product:       "browser_api",
 	}
-	finishUsage := func(bytesTransferred int64, success bool, detail string) {
-		usage.BytesTransferred = bytesTransferred + browserPageOverheadBytes
+	var totalBytes int64
+	sessions := 0
+	finishUsage := func(success bool, detail string) {
+		usage.BytesTransferred = totalBytes + int64(sessions)*browserPageOverheadBytes
 		usage.CostUSD = float64(usage.BytesTransferred) / 1e9 * c.cfg.BrowserCostPerGB
 		usage.Success = success
 		usage.Detail = truncate(detail, 500)
 		c.recordUsage(db, usage)
 	}
 
-	fmt.Fprintf(logWriter, "Connecting to Bright Data browser session...\n")
+	// Session exit countries, in order. The first session lets Bright Data
+	// pick any peer; if YouTube then refuses playback with a country block,
+	// later sessions pin the exit elsewhere — a rights-holder block (the main
+	// rescuable YouTube failure) rarely covers all of these at once. Pool
+	// errors ("no_peers") also advance to the next session.
+	countries := []string{"", "de", "gb"}
+	var lastErr error
+	for _, country := range countries {
+		if lastErr != nil {
+			fmt.Fprintf(logWriter, "Retrying with a different session geography (%s) after: %v\n",
+				countryLabel(country), lastErr)
+		}
+		sessions++
+
+		var info *youtubeMediaInfo
+		var videoPath string
+		var size int64
+		info, videoPath, size, lastErr = c.youtubeSession(ctx, country, watchURL, videoID, logWriter)
+		totalBytes += size
+		if lastErr == nil {
+			finishUsage(true, fmt.Sprintf("%s %s %d bytes", info.Title, info.QualityLabel, size))
+			fmt.Fprintf(logWriter, "Downloaded %d bytes through Bright Data browser session\n", size)
+
+			// The poster image is fetched directly (i.ytimg.com is not blocked
+			// for Arker), so it costs nothing through the session.
+			thumb := c.thumbnailFromURL(ctx, info.ThumbnailURL, logWriter)
+
+			reader, err := openTempFileReader(videoPath)
+			if err != nil {
+				removeFile(videoPath)
+				return archivers.Result{}, err
+			}
+			return archivers.Result{
+				Data:        reader,
+				Extension:   ".mp4",
+				ContentType: "video/mp4",
+				Thumbnail:   thumb,
+				Source:      models.ArchiveSourceBrightData,
+			}, nil
+		}
+
+		if ctx.Err() != nil || !retryableInAnotherCountry(lastErr) {
+			break
+		}
+	}
+
+	finishUsage(false, lastErr.Error())
+	return archivers.Result{}, lastErr
+}
+
+// youtubeSession runs one complete browser session attempt: connect, navigate,
+// resolve, download. Returns the media info, temp file path, and bytes
+// fetched (bytes are reported even on failure, for usage accounting).
+func (c *Client) youtubeSession(ctx context.Context, country, watchURL, videoID string, logWriter io.Writer) (*youtubeMediaInfo, string, int64, error) {
+	fmt.Fprintf(logWriter, "Connecting to Bright Data browser session (%s)...\n", countryLabel(country))
 	pw, err := playwright.Run()
 	if err != nil {
-		finishUsage(0, false, "playwright start failed: "+err.Error())
-		return archivers.Result{}, fmt.Errorf("failed to start Playwright: %w", err)
+		return nil, "", 0, fmt.Errorf("failed to start Playwright: %w", err)
 	}
 	defer pw.Stop()
 
-	browser, err := pw.Chromium.ConnectOverCDP(c.browserWSEndpoint())
+	browser, err := pw.Chromium.ConnectOverCDP(c.browserWSEndpoint(country))
 	if err != nil {
-		finishUsage(0, false, "browser connect failed: "+err.Error())
-		return archivers.Result{}, fmt.Errorf("failed to connect to Bright Data browser: %w", err)
+		return nil, "", 0, fmt.Errorf("failed to connect to Bright Data browser: %w", err)
 	}
 	defer browser.Close()
 
 	page, err := browserPage(browser)
 	if err != nil {
-		finishUsage(0, false, "page create failed: "+err.Error())
-		return archivers.Result{}, err
+		return nil, "", 0, err
 	}
 
 	fmt.Fprintf(logWriter, "Loading %s in remote browser...\n", watchURL)
-	if _, err := page.Goto(watchURL, playwright.PageGotoOptions{
-		Timeout:   playwright.Float(90000),
-		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
-	}); err != nil {
-		finishUsage(0, false, "navigation failed: "+err.Error())
-		return archivers.Result{}, fmt.Errorf("remote browser navigation failed: %w", err)
+	if err := gotoWithRetry(ctx, page, watchURL, logWriter); err != nil {
+		return nil, "", 0, fmt.Errorf("remote browser navigation failed: %w", err)
 	}
 
 	info, err := resolveYouTubeMedia(page, videoID, c.cfg)
 	if err != nil {
-		finishUsage(0, false, "resolve failed: "+err.Error())
-		return archivers.Result{}, err
+		return nil, "", 0, err
 	}
 	fmt.Fprintf(logWriter, "Resolved %s (%s) by %s: %s, %d bytes\n",
 		info.Title, info.QualityLabel, info.Author, info.MimeType, info.ContentLength)
@@ -117,34 +165,57 @@ func (c *Client) archiveYouTube(ctx context.Context, targetURL string, logWriter
 
 	videoPath, size, err := fetchMediaThroughPage(ctx, page, info, logWriter)
 	if err != nil {
-		finishUsage(size, false, "media fetch failed: "+err.Error())
-		return archivers.Result{}, err
+		return nil, "", size, err
 	}
 	if err := verifyMP4(videoPath); err != nil {
 		removeFile(videoPath)
-		finishUsage(size, false, err.Error())
-		return archivers.Result{}, err
+		return nil, "", size, err
 	}
+	return info, videoPath, size, nil
+}
 
-	finishUsage(size, true, fmt.Sprintf("%s %s %d bytes", info.Title, info.QualityLabel, size))
-	fmt.Fprintf(logWriter, "Downloaded %d bytes through Bright Data browser session\n", size)
-
-	// The poster image is fetched directly (i.ytimg.com is not blocked for
-	// Arker), so it costs nothing through the session.
-	thumb := c.thumbnailFromURL(ctx, info.ThumbnailURL, logWriter)
-
-	reader, err := openTempFileReader(videoPath)
-	if err != nil {
-		removeFile(videoPath)
-		return archivers.Result{}, err
+// retryableInAnotherCountry classifies failures a fresh session elsewhere
+// could fix: country-blocked playability and Bright Data pool errors.
+func retryableInAnotherCountry(err error) bool {
+	if err == nil {
+		return false
 	}
-	return archivers.Result{
-		Data:        reader,
-		Extension:   ".mp4",
-		ContentType: "video/mp4",
-		Thumbnail:   thumb,
-		Source:      models.ArchiveSourceBrightData,
-	}, nil
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not available in your country") ||
+		strings.Contains(msg, "no_peers") ||
+		strings.Contains(msg, "no peer found")
+}
+
+func countryLabel(country string) string {
+	if country == "" {
+		return "any peer"
+	}
+	return "country " + country
+}
+
+// gotoWithRetry navigates with a few retries. Bright Data's browser pool
+// intermittently reports "No Peer Found (no_peers)" when no exit is free;
+// their docs class it as transient, and a short wait usually clears it.
+func gotoWithRetry(ctx context.Context, page playwright.Page, targetURL string, logWriter io.Writer) error {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			fmt.Fprintf(logWriter, "Retrying navigation after transient error: %v\n", lastErr)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt) * 10 * time.Second):
+			}
+		}
+		_, lastErr = page.Goto(targetURL, playwright.PageGotoOptions{
+			Timeout:   playwright.Float(90000),
+			WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+		})
+		if lastErr == nil {
+			return nil
+		}
+	}
+	return lastErr
 }
 
 // browserPage returns a fresh page in the remote browser's default context.

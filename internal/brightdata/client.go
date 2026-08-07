@@ -138,9 +138,15 @@ func (c *Client) BrowserReady() bool {
 }
 
 // browserWSEndpoint builds the CDP connect URL for a Browser API session.
-func (c *Client) browserWSEndpoint() string {
-	return fmt.Sprintf("wss://brd-customer-%s-zone-%s:%s@brd.superproxy.io:9222",
-		c.cfg.CustomerID, c.cfg.BrowserZone, url.QueryEscape(c.cfg.BrowserZonePassword))
+// A non-empty country pins the session's exit geography (the zone has the
+// "country" permission); empty lets Bright Data pick any peer.
+func (c *Client) browserWSEndpoint(country string) string {
+	username := fmt.Sprintf("brd-customer-%s-zone-%s", c.cfg.CustomerID, c.cfg.BrowserZone)
+	if country != "" {
+		username += "-country-" + country
+	}
+	return fmt.Sprintf("wss://%s:%s@brd.superproxy.io:9222",
+		username, url.QueryEscape(c.cfg.BrowserZonePassword))
 }
 
 func (c *Client) fetchCustomerID(ctx context.Context) (string, error) {
