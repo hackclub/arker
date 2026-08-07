@@ -17,6 +17,8 @@
             align-items: center; 
             gap: 15px;
         }
+        .past-archive-row { display: flex; align-items: center; gap: 10px; }
+        .past-archive-thumb { width: 64px; height: 36px; object-fit: cover; object-position: top; border-radius: 3px; border: 1px solid #e0e0e0; background: #f5f5f5; flex-shrink: 0; }
         .past-archives-dropdown {
             position: relative;
             display: inline-block;
@@ -511,7 +513,10 @@
                             const isCurrent = archive.short_id === '{{.short_id}}';
                             const style = isCurrent ? 'font-weight: bold; color: #007bff;' : '';
                             const currentLabel = isCurrent ? ' (current)' : '';
-                            return `<a href="/${archive.short_id}" style="${style}">${localDateTime} - ${relativeTime}${currentLabel}</a>`;
+                            const thumb = archive.thumbnail_url
+                                ? `<img class="past-archive-thumb" src="${archive.thumbnail_url}" width="64" height="36" alt="" loading="lazy" decoding="async">`
+                                : '';
+                            return `<a href="/${archive.short_id}" class="past-archive-row" style="${style}">${thumb}<span>${localDateTime} - ${relativeTime}${currentLabel}</span></a>`;
                         }).join('');
                     }
                 } else {

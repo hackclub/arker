@@ -13,37 +13,37 @@ import (
 type MHTMLArchiver struct {
 }
 
-func (a *MHTMLArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *PWBundle, error) {
+func (a *MHTMLArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (Result, error) {
 	fmt.Fprintf(logWriter, "Starting MHTML archive for: %s\n", url)
 
 	bundle, page, err := setupBrowserForArchiving(logWriter)
 	if err != nil {
 		// If bundle is not nil, it means the browser was created and must be cleaned up by the worker.
-		return nil, "", "", bundle, err
+		return Result{Bundle: bundle}, err
 	}
 	// Note: PWBundle cleanup is deferred in the main worker loop.
 
 	if err = PerformCompletePageLoadWithContext(ctx, page, url, logWriter, true); err != nil {
-		return nil, "", "", bundle, err
+		return Result{Bundle: bundle}, err
 	}
 
 	return a.ArchiveWithPageContext(ctx, page, url, logWriter, bundle)
 }
 
-func (a *MHTMLArchiver) ArchiveWithPageContext(ctx context.Context, page playwright.Page, url string, logWriter io.Writer, bundle *PWBundle) (io.Reader, string, string, *PWBundle, error) {
+func (a *MHTMLArchiver) ArchiveWithPageContext(ctx context.Context, page playwright.Page, url string, logWriter io.Writer, bundle *PWBundle) (Result, error) {
 	fmt.Fprintf(logWriter, "Creating CDP session for MHTML capture...\n")
 
 	// Check context before creating CDP session
 	select {
 	case <-ctx.Done():
-		return nil, "", "", bundle, ctx.Err()
+		return Result{Bundle: bundle}, ctx.Err()
 	default:
 	}
 
 	session, err := page.Context().NewCDPSession(page)
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to create CDP session: %v\n", err)
-		return nil, "", "", bundle, err
+		return Result{Bundle: bundle}, err
 	}
 
 	fmt.Fprintf(logWriter, "Capturing MHTML snapshot with context awareness...\n")
@@ -51,7 +51,7 @@ func (a *MHTMLArchiver) ArchiveWithPageContext(ctx context.Context, page playwri
 	// Check context before MHTML capture
 	select {
 	case <-ctx.Done():
-		return nil, "", "", bundle, ctx.Err()
+		return Result{Bundle: bundle}, ctx.Err()
 	default:
 	}
 
@@ -72,7 +72,7 @@ func (a *MHTMLArchiver) ArchiveWithPageContext(ctx context.Context, page playwri
 	select {
 	case <-ctx.Done():
 		fmt.Fprintf(logWriter, "Context cancelled during MHTML capture\n")
-		return nil, "", "", bundle, ctx.Err()
+		return Result{Bundle: bundle}, ctx.Err()
 	case cdpRes := <-resultChan:
 		result = cdpRes.result
 		err = cdpRes.err
@@ -80,16 +80,16 @@ func (a *MHTMLArchiver) ArchiveWithPageContext(ctx context.Context, page playwri
 
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to capture MHTML snapshot: %v\n", err)
-		return nil, "", "", bundle, err
+		return Result{Bundle: bundle}, err
 	}
 
 	dataStr, err := parseMHTMLSnapshot(result)
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to parse MHTML snapshot result: %v\n", err)
-		return nil, "", "", bundle, err
+		return Result{Bundle: bundle}, err
 	}
 	fmt.Fprintf(logWriter, "MHTML archive completed successfully, size: %d bytes\n", len(dataStr))
-	return strings.NewReader(dataStr), ".mhtml", "application/x-mhtml", bundle, nil
+	return Result{Data: strings.NewReader(dataStr), Extension: ".mhtml", ContentType: "application/x-mhtml", Bundle: bundle}, nil
 }
 
 // parseMHTMLSnapshot extracts the MHTML payload from a Page.captureSnapshot CDP

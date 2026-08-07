@@ -19,15 +19,15 @@ import (
 
 type stubArchiver struct{ err error }
 
-func (s stubArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *archivers.PWBundle, error) {
-	return nil, "", "", nil, s.err
+func (s stubArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (archivers.Result, error) {
+	return archivers.Result{}, s.err
 }
 
 // dataArchiver is a stub that returns fixed content and no error.
 type dataArchiver struct{ payload []byte }
 
-func (d dataArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *archivers.PWBundle, error) {
-	return bytes.NewReader(d.payload), ".mhtml", "application/x-mhtml", nil, nil
+func (d dataArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (archivers.Result, error) {
+	return archivers.Result{Data: bytes.NewReader(d.payload), Extension: ".mhtml", ContentType: "application/x-mhtml"}, nil
 }
 
 func newWorkerTestDB(t *testing.T) *gorm.DB {

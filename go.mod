@@ -20,6 +20,7 @@ require (
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.23.1
 	github.com/riverqueue/river/rivertype v0.23.1
 	golang.org/x/crypto v0.54.0
+	golang.org/x/image v0.44.0
 	golang.org/x/net v0.57.0
 	gorm.io/driver/postgres v1.5.2
 	gorm.io/driver/sqlite v1.6.0
@@ -98,7 +99,6 @@ require (
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	go.uber.org/goleak v1.3.0 // indirect
 	golang.org/x/arch v0.3.0 // indirect
-	golang.org/x/image v0.44.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect

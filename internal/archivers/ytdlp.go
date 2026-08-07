@@ -33,13 +33,13 @@ func (r *tempVideoReader) Close() error {
 // yt-dlp rejects with "There is no video in this post".
 type YtDlpArchiver struct{}
 
-func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (io.Reader, string, string, *PWBundle, error) {
+func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (Result, error) {
 	fmt.Fprintf(logWriter, "Starting video archive for: %s\n", url)
 
 	// Check context before starting
 	select {
 	case <-ctx.Done():
-		return nil, "", "", nil, ctx.Err()
+		return Result{}, ctx.Err()
 	default:
 	}
 
@@ -49,7 +49,7 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 	cookieArgs, cleanupCookies, err := utils.YtDlpCookieArgsForRun()
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to prepare yt-dlp cookies: %v\n", err)
-		return nil, "", "", nil, err
+		return Result{}, err
 	}
 	defer cleanupCookies()
 
@@ -75,21 +75,21 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 	testOutput, err := testCmd.CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(redactedLog, "yt-dlp test failed: %v\nOutput: %s\n", err, string(testOutput))
-		return nil, "", "", nil, fmt.Errorf("yt-dlp cannot access video: %v", err)
+		return Result{}, fmt.Errorf("yt-dlp cannot access video: %v", err)
 	}
 	fmt.Fprintf(redactedLog, "Video info:\n%s\n", string(testOutput))
 
 	// Check context before main download
 	select {
 	case <-ctx.Done():
-		return nil, "", "", nil, ctx.Err()
+		return Result{}, ctx.Err()
 	default:
 	}
 
 	tempBase, err := createTempVideoBase()
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to create temp video path: %v\n", err)
-		return nil, "", "", nil, err
+		return Result{}, err
 	}
 	keepTempFile := ""
 	defer func() {
@@ -112,7 +112,7 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 	fmt.Fprintf(logWriter, "Starting yt-dlp download process...\n")
 	if err = cmd.Start(); err != nil {
 		fmt.Fprintf(logWriter, "Failed to start yt-dlp: %v\n", err)
-		return nil, "", "", nil, err
+		return Result{}, err
 	}
 
 	// Kill the whole process group when the context times out
@@ -131,25 +131,25 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 
 	if err = cmd.Wait(); err != nil {
 		fmt.Fprintf(logWriter, "yt-dlp download failed: %v\n", err)
-		return nil, "", "", nil, fmt.Errorf("yt-dlp download failed: %w", err)
+		return Result{}, fmt.Errorf("yt-dlp download failed: %w", err)
 	}
 
 	outputPath, err := findDownloadedMP4(tempBase)
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to find downloaded MP4: %v\n", err)
-		return nil, "", "", nil, err
+		return Result{}, err
 	}
 
 	file, err := os.Open(outputPath)
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to open downloaded MP4: %v\n", err)
-		return nil, "", "", nil, err
+		return Result{}, err
 	}
 	keepTempFile = outputPath
 
 	fmt.Fprintf(logWriter, "Video download completed successfully\n")
 
-	return &tempVideoReader{File: file, path: outputPath}, ".mp4", "video/mp4", nil, nil
+	return Result{Data: &tempVideoReader{File: file, path: outputPath}, Extension: ".mp4", ContentType: "video/mp4"}, nil
 }
 
 func ytDlpDownloadArgs(outputTemplate string) []string {

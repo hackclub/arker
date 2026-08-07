@@ -31,7 +31,8 @@ func TestGitArchiveCleansTempDir(t *testing.T) {
 	before := countTempCloneDirs(t)
 
 	a := &GitArchiver{}
-	r, _, _, _, err := a.Archive(context.Background(), "file://"+repo, io.Discard, nil, 0)
+	res, err := a.Archive(context.Background(), "file://"+repo, io.Discard, nil, 0)
+	r := res.Data
 	if err != nil {
 		t.Fatalf("archive: %v", err)
 	}
