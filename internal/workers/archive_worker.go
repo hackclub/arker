@@ -1,9 +1,11 @@
 package workers
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -145,8 +147,9 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 	// overwrites and deletes (bucket lock), so every upload attempt writes a
 	// fresh object; the item's storage_key records the key that succeeded.
 	nonce := uploadNonce()
-	key := fmt.Sprintf("%s/%s-%s%s", jobArgs.ShortID, jobArgs.Type, nonce, result.Extension)
-	err = saveArchiveData(result.Data, key, result.Extension, result.Source, storage, db, item)
+	keyBase := fmt.Sprintf("%s/%s-%s", jobArgs.ShortID, jobArgs.Type, nonce)
+	key := keyBase + result.Extension
+	err = saveArchiveResult(result, keyBase, storage, db, item)
 	if err != nil {
 		slog.Error("Failed to save archive data", "short_id", jobArgs.ShortID, "type", jobArgs.Type, "error", err)
 		fmt.Fprintf(dbLogWriter, "\nFailed to save archive data: %v\n", err)
@@ -171,6 +174,64 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 	}
 
 	return nil
+}
+
+// saveArchiveResult stores the primary artifact and every sidecar before it
+// marks the database item completed. The bucket is append-only, so a failure
+// can leave unreachable objects behind, but it can never publish a completed
+// item whose required metadata is only partly stored.
+func saveArchiveResult(result archivers.Result, keyBase string, store storage.Storage, db *gorm.DB, item *models.ArchiveItem) error {
+	key := keyBase + result.Extension
+	fileSize, err := writeArchiveData(result.Data, key, store)
+	if err != nil {
+		return err
+	}
+
+	metadataKey := ""
+	if result.Metadata != nil {
+		metadataKey = keyBase + ".metadata.json"
+		if err := writeJSONSidecar(store, metadataKey, result.Metadata.Data); err != nil {
+			return fmt.Errorf("failed to store normalized metadata: %w", err)
+		}
+	}
+	rawMetadataKey := ""
+	if result.RawMetadata != nil {
+		rawMetadataKey = keyBase + ".raw-metadata.json"
+		if err := writeJSONSidecar(store, rawMetadataKey, result.RawMetadata.Data); err != nil {
+			return fmt.Errorf("failed to store raw metadata: %w", err)
+		}
+	}
+
+	updates := map[string]interface{}{
+		"status":           "completed",
+		"storage_key":      key,
+		"extension":        result.Extension,
+		"file_size":        fileSize,
+		"metadata_key":     metadataKey,
+		"raw_metadata_key": rawMetadataKey,
+	}
+	if result.Source != "" {
+		updates["source"] = result.Source
+	}
+	return db.Model(item).Updates(updates).Error
+}
+
+func writeJSONSidecar(store storage.Storage, key string, data []byte) error {
+	if len(data) == 0 {
+		return fmt.Errorf("sidecar is empty")
+	}
+	if !json.Valid(data) {
+		return fmt.Errorf("sidecar is not valid JSON")
+	}
+	w, err := store.Writer(key)
+	if err != nil {
+		return err
+	}
+	_, writeErr := io.Copy(w, bytes.NewReader(data))
+	if closeErr := w.Close(); closeErr != nil && writeErr == nil {
+		writeErr = closeErr
+	}
+	return writeErr
 }
 
 // StoreThumbnail writes an encoded thumbnail to storage and points the archive
@@ -216,6 +277,30 @@ func uploadNonce() string {
 
 // saveArchiveData handles writing archive data to storage and updating the database.
 func saveArchiveData(data io.Reader, key, ext, source string, storage storage.Storage, db *gorm.DB, item *models.ArchiveItem) error {
+	fileSize, err := writeArchiveData(data, key, storage)
+	if err != nil {
+		return err
+	}
+
+	// Mark as completed and store final metadata.
+	updates := map[string]interface{}{
+		"status":      "completed",
+		"storage_key": key,
+		"extension":   ext,
+		"file_size":   fileSize,
+	}
+	// Source is only written when the archiver declared one (the Bright Data
+	// fallback does); native archivers leave the column at its default.
+	if source != "" {
+		updates["source"] = source
+	}
+	return db.Model(item).Updates(updates).Error
+}
+
+func writeArchiveData(data io.Reader, key string, storage storage.Storage) (int64, error) {
+	if data == nil {
+		return 0, fmt.Errorf("archive data is nil")
+	}
 	// Archivers hand back readers backed by a live process or a goroutine
 	// writing into an io.Pipe, and closing is what releases them. Every return
 	// path below must close, including the early one when Writer fails: an
@@ -236,7 +321,7 @@ func saveArchiveData(data io.Reader, key, ext, source string, storage storage.St
 
 	w, err := storage.Writer(key)
 	if err != nil {
-		return fmt.Errorf("failed to get storage writer: %w", err)
+		return 0, fmt.Errorf("failed to get storage writer: %w", err)
 	}
 
 	_, copyErr := io.Copy(w, data)
@@ -251,7 +336,7 @@ func saveArchiveData(data io.Reader, key, ext, source string, storage storage.St
 	}
 
 	if copyErr != nil {
-		return fmt.Errorf("failed during data copy/close: %w", copyErr)
+		return 0, fmt.Errorf("failed during data copy/close: %w", copyErr)
 	}
 
 	fileSize, err := storage.Size(key)
@@ -259,18 +344,5 @@ func saveArchiveData(data io.Reader, key, ext, source string, storage storage.St
 		log.Printf("Warning: Could not get file size for %s: %v", key, err)
 		fileSize = 0
 	}
-
-	// Mark as completed and store final metadata.
-	updates := map[string]interface{}{
-		"status":      "completed",
-		"storage_key": key,
-		"extension":   ext,
-		"file_size":   fileSize,
-	}
-	// Source is only written when the archiver declared one (the Bright Data
-	// fallback does); native archivers leave the column at its default.
-	if source != "" {
-		updates["source"] = source
-	}
-	return db.Model(item).Updates(updates).Error
+	return fileSize, nil
 }

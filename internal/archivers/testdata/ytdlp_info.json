@@ -1,0 +1,42 @@
+{
+  "id": "dQw4w9WgXcQ",
+  "title": "Never Gonna Give You Up",
+  "description": "The official video caption.",
+  "extractor": "youtube",
+  "extractor_key": "Youtube",
+  "webpage_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "uploader": "Rick Astley",
+  "uploader_id": "RickAstleyYT",
+  "channel": "Rick Astley",
+  "channel_id": "UCuAXFkgsw1L7xaCfnd5JJOw",
+  "timestamp": 1276886742,
+  "duration": 212.25,
+  "view_count": 1600000000,
+  "like_count": 18000000,
+  "comment_count": 2500000,
+  "repost_count": 42000,
+  "tags": ["pop", "music"],
+  "format_id": "137+140",
+  "format": "1080p+audio",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "vcodec": "avc1.640028",
+  "acodec": "mp4a.40.2",
+  "tbr": 4500.5,
+  "resolution": "1920x1080",
+  "proxy": "http://proxy-user:proxy-pass@private.proxy.example:8000",
+  "cookies": "SID=super-secret-cookie",
+  "http_headers": {
+    "Authorization": "Bearer secret-access-token",
+    "Cookie": "SID=super-secret-cookie",
+    "User-Agent": "yt-dlp test"
+  },
+  "url": "https://rr.example.googlevideo.com/videoplayback?id=media-id&expire=1999999999&ip=10.20.30.40&signature=secret-signature",
+  "formats": [
+    {
+      "format_id": "18",
+      "url": "https://rr.example.googlevideo.com/videoplayback?id=media-id&expire=1999999999&ip=10.20.30.40&sig=secret-signature"
+    }
+  ]
+}

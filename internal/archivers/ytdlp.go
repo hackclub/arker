@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"arker/internal/thumbnail"
 	"arker/internal/utils"
@@ -18,11 +19,15 @@ import (
 type tempVideoReader struct {
 	*os.File
 	path string
+	dir  string
 }
 
 func (r *tempVideoReader) Close() error {
 	err1 := r.File.Close()
 	err2 := os.Remove(r.path)
+	if r.dir != "" {
+		_ = os.Remove(r.dir)
+	}
 	if err1 != nil {
 		return err1
 	}
@@ -55,7 +60,9 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 	}
 	defer cleanupCookies()
 
-	if version, versionErr := utils.YtDlpVersion(ctx); versionErr == nil {
+	version := ""
+	if detectedVersion, versionErr := utils.YtDlpVersion(ctx); versionErr == nil {
+		version = detectedVersion
 		fmt.Fprintf(logWriter, "yt-dlp version: %s\n", version)
 	} else {
 		fmt.Fprintf(logWriter, "Could not determine yt-dlp version: %v\n", versionErr)
@@ -142,6 +149,36 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 		return Result{}, err
 	}
 
+	infoPath, err := findYtDlpInfoJSON(tempBase)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to find yt-dlp info JSON: %v\n", err)
+		return Result{}, err
+	}
+	rawInfo, err := os.ReadFile(infoPath)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to read yt-dlp info JSON: %v\n", err)
+		return Result{}, err
+	}
+	videoStat, err := os.Stat(outputPath)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to inspect downloaded MP4: %v\n", err)
+		return Result{}, err
+	}
+	metadata, sanitizedRaw, err := BuildYtDlpVideoArtifacts(rawInfo, url, version, VideoMedia{
+		Extension:   ".mp4",
+		ContentType: "video/mp4",
+		SizeBytes:   videoStat.Size(),
+	}, time.Now())
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to normalize yt-dlp info JSON: %v\n", err)
+		return Result{}, err
+	}
+	metadataJSON, err := MarshalVideoMetadata(metadata)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to encode normalized video metadata: %v\n", err)
+		return Result{}, err
+	}
+
 	file, err := os.Open(outputPath)
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to open downloaded MP4: %v\n", err)
@@ -156,10 +193,13 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 	fmt.Fprintf(logWriter, "Video download completed successfully\n")
 
 	return Result{
-		Data:        &tempVideoReader{File: file, path: outputPath},
+		Data:        &tempVideoReader{File: file, path: outputPath, dir: filepath.Dir(tempBase)},
 		Extension:   ".mp4",
 		ContentType: "video/mp4",
 		Thumbnail:   thumb,
+		Source:      "native",
+		Metadata:    &Sidecar{Data: metadataJSON},
+		RawMetadata: &Sidecar{Data: sanitizedRaw},
 	}, nil
 }
 
@@ -173,11 +213,26 @@ func ytDlpDownloadArgs(outputTemplate string) []string {
 		// subject. It costs one CDN GET and yt-dlp treats a thumbnail failure
 		// as a warning, so it cannot fail the download.
 		"--write-thumbnail",
+		// Keep the complete extractor result as an auditable sidecar. Arker
+		// sanitizes it before it ever reaches durable storage or an API response.
+		"--write-info-json",
+		"--no-clean-infojson",
 		"--merge-output-format", "mp4",
 		"--remux-video", "mp4",
 		"--verbose",
 		"-o", outputTemplate,
 	}
+}
+
+func findYtDlpInfoJSON(tempBase string) (string, error) {
+	matches, err := filepath.Glob(tempBase + "*.info.json")
+	if err != nil {
+		return "", err
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("yt-dlp did not write an info JSON sidecar")
+	}
+	return matches[0], nil
 }
 
 // thumbnailImageExtensions are the formats yt-dlp may write a poster image in.
@@ -240,19 +295,14 @@ func findDownloadedThumbnail(tempBase, videoPath string) string {
 }
 
 func createTempVideoBase() (string, error) {
-	f, err := os.CreateTemp("", "arker-video-*")
+	// The unclean yt-dlp info JSON can contain request headers and signed media
+	// URLs before Arker sanitizes it. Keep every output in a 0700 directory so
+	// no other local user can read the transient raw record.
+	dir, err := os.MkdirTemp("", "arker-video-*")
 	if err != nil {
 		return "", err
 	}
-	path := f.Name()
-	if err := f.Close(); err != nil {
-		os.Remove(path)
-		return "", err
-	}
-	if err := os.Remove(path); err != nil {
-		return "", err
-	}
-	return path, nil
+	return filepath.Join(dir, "video"), nil
 }
 
 func findDownloadedMP4(tempBase string) (string, error) {
@@ -285,5 +335,8 @@ func cleanupTempVideoFilesExcept(tempBase, keep string) {
 			continue
 		}
 		_ = os.Remove(match)
+	}
+	if keep == "" {
+		_ = os.Remove(filepath.Dir(tempBase))
 	}
 }

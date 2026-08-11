@@ -189,6 +189,37 @@
         </div>
         <p>View the MHTML archive rendered as HTML in the browser.</p>
 
+		<h3>Video Metadata Manifest</h3>
+		<div class="code-block">
+			<code>GET https://{{.baseURL}}/video/&lt;short_id&gt;/manifest</code>
+		</div>
+		<p>Returns a machine-readable video/post manifest with <code>capture_status</code>, the playable <code>media_url</code>, provenance, and normalized metadata such as title, caption, author, publication time, engagement, tags, duration, and media format. No API key is required because it describes the same public archive as the viewer.</p>
+		<div class="response">
+			<div class="code-block"><code>{
+  "schema_version": "1",
+  "short_id": "a1b2c",
+  "capture_status": "completed",
+  "media_url": "/archive/a1b2c/yt-dlp",
+  "metadata_available": true,
+  "metadata": {
+    "schema_version": "1",
+    "source_url": "https://www.youtube.com/watch?v=example",
+    "platform": "youtube",
+    "title": "Example video",
+    "provenance": "native",
+    "media": {"extension": ".mp4", "content_type": "video/mp4", "size_bytes": 123456}
+  },
+  "raw_metadata_url": "/video/a1b2c/raw"
+}</code></div>
+		</div>
+		<p>For videos captured before structured metadata was introduced, the endpoint still returns the real capture status and media URL, with <code>metadata: null</code>, <code>metadata_available: false</code>, and <code>metadata_unavailable_reason: "legacy_archive_without_structured_metadata"</code>. It never synthesizes fields from archive logs.</p>
+
+		<h3>Sanitized Raw Video Metadata</h3>
+		<div class="code-block">
+			<code>GET https://{{.baseURL}}/video/&lt;short_id&gt;/raw</code>
+		</div>
+		<p>Returns the captured yt-dlp info JSON or Bright Data provider response after credentials, cookies, authorization headers, proxy details, signed URL secrets, and similar sensitive values have been redacted.</p>
+
         <h3>Git Repository Access</h3>
         <div class="code-block">
             <code>git clone https://{{.baseURL}}/git/&lt;short_id&gt;</code>

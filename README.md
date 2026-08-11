@@ -57,6 +57,14 @@ The `.env` file is optional. If it doesn't exist, Arker will use environment var
 
 Arker shells out to `yt-dlp` for YouTube/Vimeo/Instagram-reel/TikTok/Facebook-style videos. The production Dockerfile installs yt-dlp from the nightly (`--pre`) channel with `curl-cffi` because Instagram extractor fixes often land before stable releases. The Docker build also cache-busts on the latest yt-dlp nightly release metadata so redeploys do not keep a stale yt-dlp layer.
 
+Each new video capture stores three durable objects: the playable/remuxed media,
+a normalized provider-neutral post record, and the sanitized raw yt-dlp or
+Bright Data provider record. `GET /video/:shortid/manifest` returns the capture
+status, the existing `/archive/:shortid/yt-dlp` media URL, and normalized
+metadata. `GET /video/:shortid/raw` returns the sanitized raw record for audits.
+Older completed videos remain playable; their manifest explicitly returns
+`metadata_available: false` rather than guessing metadata from logs or the URL.
+
 For manual installs, prefer:
 
 ```bash

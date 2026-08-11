@@ -93,8 +93,14 @@ func (c *Client) archiveYouTube(ctx context.Context, targetURL string, logWriter
 		info, videoPath, size, lastErr = c.youtubeSession(ctx, country, watchURL, videoID, logWriter)
 		totalBytes += size
 		if lastErr == nil {
-			finishUsage(true, fmt.Sprintf("%s %s %d bytes", info.Title, info.QualityLabel, size))
 			fmt.Fprintf(logWriter, "Downloaded %d bytes through Bright Data browser session\n", size)
+
+			metadata, rawMetadata, err := buildBrightDataYouTubeArtifacts(info, targetURL, videoID, size, time.Now())
+			if err != nil {
+				removeFile(videoPath)
+				finishUsage(false, "metadata build failed: "+err.Error())
+				return archivers.Result{}, fmt.Errorf("failed to build Bright Data video metadata: %w", err)
+			}
 
 			// The poster image is fetched directly (i.ytimg.com is not blocked
 			// for Arker), so it costs nothing through the session.
@@ -103,14 +109,18 @@ func (c *Client) archiveYouTube(ctx context.Context, targetURL string, logWriter
 			reader, err := openTempFileReader(videoPath)
 			if err != nil {
 				removeFile(videoPath)
+				finishUsage(false, err.Error())
 				return archivers.Result{}, err
 			}
+			finishUsage(true, fmt.Sprintf("%s %s %d bytes", info.Title, info.QualityLabel, size))
 			return archivers.Result{
 				Data:        reader,
 				Extension:   ".mp4",
 				ContentType: "video/mp4",
 				Thumbnail:   thumb,
 				Source:      models.ArchiveSourceBrightData,
+				Metadata:    metadata,
+				RawMetadata: rawMetadata,
 			}, nil
 		}
 
@@ -233,18 +243,23 @@ func browserPage(browser playwright.Browser) (playwright.Page, error) {
 
 // youtubeMediaInfo is what the in-page resolution returns.
 type youtubeMediaInfo struct {
-	OK               bool   `json:"ok"`
-	Reason           string `json:"reason"`
-	URL              string `json:"url"`
-	ContentLength    int64  `json:"contentLength,string"`
-	MimeType         string `json:"mimeType"`
-	QualityLabel     string `json:"qualityLabel"`
-	Title            string `json:"title"`
-	Author           string `json:"author"`
-	LengthSeconds    int64  `json:"lengthSeconds,string"`
-	ViewCount        string `json:"viewCount"`
-	ShortDescription string `json:"shortDescription"`
-	ThumbnailURL     string `json:"thumbnailUrl"`
+	OK               bool            `json:"ok"`
+	Reason           string          `json:"reason"`
+	URL              string          `json:"url"`
+	ContentLength    int64           `json:"contentLength,string"`
+	MimeType         string          `json:"mimeType"`
+	QualityLabel     string          `json:"qualityLabel"`
+	Title            string          `json:"title"`
+	Author           string          `json:"author"`
+	LengthSeconds    int64           `json:"lengthSeconds,string"`
+	ViewCount        string          `json:"viewCount"`
+	ShortDescription string          `json:"shortDescription"`
+	ThumbnailURL     string          `json:"thumbnailUrl"`
+	FormatID         string          `json:"formatId"`
+	Width            int64           `json:"width"`
+	Height           int64           `json:"height"`
+	FPS              float64         `json:"fps"`
+	Raw              json.RawMessage `json:"raw"`
 }
 
 // resolveYouTubeMediaJS runs in the watch page. Deliberately, it does NOT
@@ -316,10 +331,121 @@ async (args) => {
     lengthSeconds: String(details.lengthSeconds || '0'),
     viewCount: String(details.viewCount || ''),
     shortDescription: details.shortDescription || '',
-    thumbnailUrl: bestThumb,
+	thumbnailUrl: bestThumb,
+	formatId: String(best.itag || ''),
+	width: best.width || 0,
+	height: best.height || 0,
+	fps: best.fps || 0,
+	raw: response,
   });
 }
 `
+
+func buildBrightDataYouTubeArtifacts(info *youtubeMediaInfo, sourceURL, videoID string, size int64, archivedAt time.Time) (*archivers.Sidecar, *archivers.Sidecar, error) {
+	if info == nil {
+		return nil, nil, fmt.Errorf("YouTube media info is nil")
+	}
+	if len(info.Raw) == 0 {
+		return nil, nil, fmt.Errorf("Innertube response is missing")
+	}
+
+	var provider struct {
+		VideoDetails struct {
+			ChannelID string   `json:"channelId"`
+			Keywords  []string `json:"keywords"`
+		} `json:"videoDetails"`
+		Microformat struct {
+			Renderer struct {
+				PublishDate string `json:"publishDate"`
+				UploadDate  string `json:"uploadDate"`
+			} `json:"playerMicroformatRenderer"`
+		} `json:"microformat"`
+	}
+	if err := json.Unmarshal(info.Raw, &provider); err != nil {
+		return nil, nil, fmt.Errorf("decode Innertube response: %w", err)
+	}
+
+	var duration *float64
+	if info.LengthSeconds > 0 {
+		value := float64(info.LengthSeconds)
+		duration = &value
+	}
+	var views *int64
+	if value, err := strconv.ParseInt(info.ViewCount, 10, 64); err == nil {
+		views = &value
+	}
+	var width, height *int64
+	if info.Width > 0 {
+		value := info.Width
+		width = &value
+	}
+	if info.Height > 0 {
+		value := info.Height
+		height = &value
+	}
+	var fps *float64
+	if info.FPS > 0 {
+		value := info.FPS
+		fps = &value
+	}
+	contentType := strings.TrimSpace(strings.Split(info.MimeType, ";")[0])
+	if contentType == "" {
+		contentType = "video/mp4"
+	}
+	publishedAt := normalizeProviderDate(firstNonEmptyString(
+		provider.Microformat.Renderer.PublishDate,
+		provider.Microformat.Renderer.UploadDate,
+	))
+
+	metadataJSON, err := archivers.MarshalVideoMetadata(&archivers.VideoMetadata{
+		SchemaVersion:        archivers.VideoMetadataSchemaVersion,
+		SourceURL:            archivers.SanitizeURL(sourceURL, nil),
+		Platform:             "youtube",
+		Extractor:            "youtube:innertube",
+		PostID:               videoID,
+		CanonicalURL:         "https://www.youtube.com/watch?v=" + url.QueryEscape(videoID),
+		Title:                info.Title,
+		Description:          info.ShortDescription,
+		Author:               info.Author,
+		Uploader:             info.Author,
+		Channel:              info.Author,
+		ChannelID:            provider.VideoDetails.ChannelID,
+		PublicationTimestamp: publishedAt,
+		DurationSeconds:      duration,
+		Engagement:           archivers.VideoEngagement{Views: views},
+		Tags:                 provider.VideoDetails.Keywords,
+		Media: archivers.VideoMedia{
+			FormatID:     info.FormatID,
+			Extension:    ".mp4",
+			ContentType:  contentType,
+			SizeBytes:    size,
+			Width:        width,
+			Height:       height,
+			FPS:          fps,
+			QualityLabel: info.QualityLabel,
+		},
+		ArchivedAt: archivedAt.UTC().Format(time.RFC3339),
+		Provenance: models.ArchiveSourceBrightData,
+		Provider:   "brightdata_browser_api",
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	rawJSON, err := archivers.SanitizeJSON(info.Raw, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sanitize Innertube response: %w", err)
+	}
+	return &archivers.Sidecar{Data: metadataJSON}, &archivers.Sidecar{Data: rawJSON}, nil
+}
+
+func normalizeProviderDate(value string) string {
+	for _, layout := range []string{time.RFC3339, "2006-01-02", "2006-01-02 15:04:05"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed.UTC().Format(time.RFC3339)
+		}
+	}
+	return ""
+}
 
 func resolveYouTubeMedia(page playwright.Page, videoID string, cfg Config) (*youtubeMediaInfo, error) {
 	raw, err := page.Evaluate(resolveYouTubeMediaJS, map[string]interface{}{

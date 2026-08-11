@@ -677,6 +677,10 @@ func main() {
 	r.GET("/archive/:shortid/:type", func(c *gin.Context) { handlers.ServeArchive(c, storageInstance, db) })
 	r.HEAD("/archive/:shortid/:type", func(c *gin.Context) { handlers.ServeArchive(c, storageInstance, db) })
 	r.GET("/archive/:shortid/mhtml/html", func(c *gin.Context) { handlers.ServeMHTMLAsHTML(c, storageInstance, db) })
+	// Video metadata routes expose a stable post manifest without changing the
+	// long-lived /archive/:shortid/yt-dlp media URL.
+	r.GET("/video/:shortid/manifest", func(c *gin.Context) { handlers.ServeVideoManifest(c, storageInstance, db) })
+	r.GET("/video/:shortid/raw", func(c *gin.Context) { handlers.ServeVideoRawMetadata(c, storageInstance, db) })
 
 	// Thumbnail routes - MUST come before /:shortid/:type catch-all.
 	// HEAD is registered alongside GET, matching /archive/:shortid/:type:

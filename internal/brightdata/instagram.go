@@ -92,25 +92,92 @@ func (c *Client) instagramVideo(ctx context.Context, targetURL string, logWriter
 
 		usage.Success = true
 		usage.Detail = fmt.Sprintf("video %d bytes", size)
-		c.recordUsage(db, usage)
+
+		metadata, rawMetadata, err := buildBrightDataInstagramVideoArtifacts(record, targetURL, size, time.Now())
+		if err != nil {
+			removeFile(videoPath)
+			usage.Success = false
+			usage.Detail = truncate("metadata build failed: "+err.Error(), 500)
+			c.recordUsage(db, usage)
+			return archivers.Result{}, fmt.Errorf("failed to build Bright Data video metadata: %w", err)
+		}
 
 		reader, err := openTempFileReader(videoPath)
 		if err != nil {
 			removeFile(videoPath)
+			usage.Success = false
+			usage.Detail = truncate(err.Error(), 500)
+			c.recordUsage(db, usage)
 			return archivers.Result{}, err
 		}
+		c.recordUsage(db, usage)
 		return archivers.Result{
 			Data:        reader,
 			Extension:   ".mp4",
 			ContentType: "video/mp4",
 			Thumbnail:   c.thumbnailFromURL(ctx, stringField(record, "thumbnail"), logWriter),
 			Source:      models.ArchiveSourceBrightData,
+			Metadata:    metadata,
+			RawMetadata: rawMetadata,
 		}, nil
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no Bright Data dataset could resolve %s", targetURL)
 	}
 	return archivers.Result{}, lastErr
+}
+
+func buildBrightDataInstagramVideoArtifacts(record map[string]any, sourceURL string, size int64, archivedAt time.Time) (*archivers.Sidecar, *archivers.Sidecar, error) {
+	raw, err := json.Marshal(record)
+	if err != nil {
+		return nil, nil, fmt.Errorf("encode Bright Data Instagram record: %w", err)
+	}
+	sanitized, err := archivers.SanitizeJSON(raw, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sanitize Bright Data Instagram record: %w", err)
+	}
+
+	var duration *float64
+	if seconds := intField(record, "video_duration", "duration"); seconds != nil {
+		value := float64(*seconds)
+		duration = &value
+	}
+	metadataJSON, err := archivers.MarshalVideoMetadata(&archivers.VideoMetadata{
+		SchemaVersion:        archivers.VideoMetadataSchemaVersion,
+		SourceURL:            archivers.SanitizeURL(sourceURL, nil),
+		Platform:             "instagram",
+		Extractor:            "instagram",
+		PostID:               stringField(record, "shortcode", "post_id", "content_id"),
+		CanonicalURL:         archivers.SanitizeURL(firstNonEmptyString(stringField(record, "url"), sourceURL), nil),
+		Title:                stringField(record, "title"),
+		Description:          stringField(record, "description", "caption"),
+		Author:               stringField(record, "user_posted", "username", "owner_username"),
+		AuthorID:             stringField(record, "user_id", "owner_id"),
+		Uploader:             stringField(record, "user_posted", "username", "owner_username"),
+		UploaderID:           stringField(record, "user_id", "owner_id"),
+		PublicationTimestamp: normalizeProviderDate(stringField(record, "date_posted", "timestamp")),
+		DurationSeconds:      duration,
+		Engagement: archivers.VideoEngagement{
+			Views:    intField(record, "video_view_count", "views", "view_count"),
+			Likes:    intField(record, "likes", "like_count"),
+			Comments: intField(record, "num_comments", "comments", "comment_count"),
+		},
+		Tags: stringSlice(record, "hashtags"),
+		Media: archivers.VideoMedia{
+			Extension:   ".mp4",
+			ContentType: "video/mp4",
+			SizeBytes:   size,
+			Width:       intField(record, "video_width", "width"),
+			Height:      intField(record, "video_height", "height"),
+		},
+		ArchivedAt: archivedAt.UTC().Format(time.RFC3339),
+		Provenance: models.ArchiveSourceBrightData,
+		Provider:   "brightdata_web_scraper",
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return &archivers.Sidecar{Data: metadataJSON}, &archivers.Sidecar{Data: sanitized}, nil
 }
 
 // instagramGallery produces a gallery ZIP for a feed post, in the same layout

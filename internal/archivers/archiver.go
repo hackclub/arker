@@ -20,6 +20,14 @@ type Thumbnail struct {
 	Height int
 }
 
+// Sidecar is a small durable artifact stored beside the primary archive.
+// Video captures use one for normalized metadata and one for the sanitized raw
+// extractor/provider record. Sidecars are bytes because JSON metadata is small
+// and must remain available after an archiver's temp directory is removed.
+type Sidecar struct {
+	Data []byte
+}
+
 // Result is what an archiver produces for one item.
 //
 // This is a struct rather than a list of return values so that adding a derived
@@ -44,6 +52,12 @@ type Result struct {
 	// provenance (see models.ArchiveItem.Source). Empty means the item's
 	// regular native archiver.
 	Source string
+	// Metadata is the stable, normalized machine-readable record for an
+	// artifact. RawMetadata preserves the sanitized provider-native record for
+	// auditability. They are optional for archive types that do not use separate
+	// sidecars and for legacy test archivers.
+	Metadata    *Sidecar
+	RawMetadata *Sidecar
 }
 
 // Archiver captures a URL into a single stored artifact.

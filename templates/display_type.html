@@ -179,9 +179,9 @@
             margin-bottom: 10px;
             border-left: 4px solid #2196f3;
         }
-        .gallery-post { max-width: 900px; }
-        .gallery-meta {
-            background: #f8f9fa;
+		.gallery-post, .video-post { max-width: 900px; }
+		.gallery-meta, .video-meta {
+			background: #f8f9fa;
             border: 1px solid #ddd;
             border-radius: 4px;
             padding: 12px 15px;
@@ -189,11 +189,17 @@
         }
         .gallery-meta .gallery-author { font-weight: 600; }
         .gallery-meta .gallery-sub { color: #666; font-size: 13px; margin-top: 2px; }
-        .gallery-meta .gallery-caption {
+		.gallery-meta .gallery-caption {
             margin-top: 10px;
             white-space: pre-wrap;
             overflow-wrap: anywhere;
-        }
+		}
+		.video-meta .video-title { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+		.video-meta .video-author { font-weight: 600; }
+		.video-meta .video-sub { color: #666; font-size: 13px; margin-top: 3px; }
+		.video-meta .video-description { margin-top: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+		.video-meta .video-tags { color: #666; font-size: 13px; margin-top: 10px; overflow-wrap: anywhere; }
+		.video-meta .metadata-note { color: #666; font-style: italic; }
         .gallery-items {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -257,13 +263,16 @@
             {{else if eq .current_type "screenshot"}}
                 <img src="/archive/{{.short_id}}/{{.current_type}}" alt="Full page screenshot" class="screenshot-img">
                 <a href="/archive/{{.short_id}}/{{.current_type}}" class="download-link screenshot-download-link" id="screenshot-download-btn">Download Screenshot</a>
-            {{else if eq .current_type "yt-dlp"}}
-                <h3>Video</h3>
-                <video src="/archive/{{.short_id}}/{{.current_type}}" controls class="video-player">
-                    Your browser does not support the video tag.
-                </video>
-                <br><br>
-                <a href="/archive/{{.short_id}}/{{.current_type}}" class="download-link">Download Video</a>
+			{{else if eq .current_type "yt-dlp"}}
+				<div class="video-post">
+					<div class="video-meta" id="video-meta">Loading post information…</div>
+					<video src="/archive/{{.short_id}}/{{.current_type}}" controls class="video-player">
+						Your browser does not support the video tag.
+					</video>
+					<br><br>
+					<a href="/archive/{{.short_id}}/{{.current_type}}" class="download-link">Download Video</a>
+					<a href="/video/{{.short_id}}/manifest" class="download-link">View Metadata JSON</a>
+				</div>
             {{else if eq .current_type "gallery-dl"}}
                 <div class="gallery-post">
                     <div class="gallery-meta" id="gallery-meta"></div>
@@ -314,7 +323,7 @@
         // Renders the gallery-dl tab: post metadata plus every downloaded slide.
         // The file list comes from the archive itself, so the page can only ever
         // show media that is actually stored.
-        async function loadGallery() {
+		async function loadGallery() {
             const itemsEl = document.getElementById('gallery-items');
             const metaEl = document.getElementById('gallery-meta');
             if (!itemsEl) return;
@@ -335,7 +344,88 @@
                     authorEl.className = 'gallery-author';
                     authorEl.textContent = name;
                     metaEl.appendChild(authorEl);
-                }
+		}
+
+		// Renders the normalized post record for native yt-dlp and Bright Data
+		// captures. Legacy archives explicitly report that metadata is absent;
+		// nothing is guessed from the URL or historical logs.
+		async function loadVideoMetadata() {
+			const metaEl = document.getElementById('video-meta');
+			if (!metaEl) return;
+
+			try {
+				const response = await fetch(`/video/${shortId}/manifest`);
+				if (!response.ok) throw new Error(`HTTP ${response.status}`);
+				const manifest = await response.json();
+				metaEl.innerHTML = '';
+
+				if (!manifest.metadata_available || !manifest.metadata) {
+					const note = document.createElement('div');
+					note.className = 'metadata-note';
+					note.textContent = manifest.metadata_unavailable_reason === 'legacy_archive_without_structured_metadata'
+						? 'Structured post metadata was not captured for this older archive.'
+						: 'Structured post metadata is not available.';
+					metaEl.appendChild(note);
+					return;
+				}
+
+				const meta = manifest.metadata;
+				if (meta.title) {
+					const title = document.createElement('div');
+					title.className = 'video-title';
+					title.textContent = meta.title;
+					metaEl.appendChild(title);
+				}
+
+				const author = meta.author || meta.uploader || meta.channel;
+				if (author) {
+					const authorEl = document.createElement('div');
+					authorEl.className = 'video-author';
+					authorEl.textContent = author;
+					metaEl.appendChild(authorEl);
+				}
+
+				const sub = [];
+				if (meta.platform || meta.extractor) sub.push(meta.platform || meta.extractor);
+				if (meta.publication_timestamp) {
+					const published = new Date(meta.publication_timestamp);
+					sub.push(Number.isNaN(published.valueOf()) ? meta.publication_timestamp : published.toLocaleString());
+				}
+				if (typeof meta.duration_seconds === 'number') {
+					const seconds = Math.round(meta.duration_seconds);
+					const minutes = Math.floor(seconds / 60);
+					sub.push(`${minutes}:${String(seconds % 60).padStart(2, '0')}`);
+				}
+				const engagement = meta.engagement || {};
+				if (typeof engagement.views === 'number') sub.push(`${engagement.views.toLocaleString()} views`);
+				if (typeof engagement.likes === 'number') sub.push(`${engagement.likes.toLocaleString()} likes`);
+				if (typeof engagement.comments === 'number') sub.push(`${engagement.comments.toLocaleString()} comments`);
+				if (meta.provenance) sub.push(meta.provenance === 'brightdata' ? 'Bright Data capture' : 'native capture');
+				if (sub.length) {
+					const subEl = document.createElement('div');
+					subEl.className = 'video-sub';
+					subEl.textContent = sub.join(' · ');
+					metaEl.appendChild(subEl);
+				}
+
+				if (meta.description) {
+					const description = document.createElement('div');
+					description.className = 'video-description';
+					description.textContent = meta.description;
+					metaEl.appendChild(description);
+				}
+				if (Array.isArray(meta.tags) && meta.tags.length) {
+					const tags = document.createElement('div');
+					tags.className = 'video-tags';
+					tags.textContent = meta.tags.map(tag => `#${tag}`).join(' ');
+					metaEl.appendChild(tags);
+				}
+				if (!metaEl.childNodes.length) metaEl.style.display = 'none';
+			} catch (error) {
+				console.error('Error loading video metadata:', error);
+				metaEl.textContent = 'Could not load post information for this video.';
+			}
+		}
 
                 const sub = [];
                 if (meta.extractor) sub.push(meta.extractor);
@@ -667,9 +757,12 @@
             // Start log polling if needed
             startLogPolling();
 
-            // Render the gallery-dl tab (no-op on every other tab)
-            loadGallery();
-        });
+			// Render the gallery-dl tab (no-op on every other tab)
+			loadGallery();
+
+			// Render normalized video/post metadata (no-op on every other tab)
+			loadVideoMetadata();
+		});
     </script>
 </body>
 </html>

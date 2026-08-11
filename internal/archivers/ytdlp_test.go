@@ -2,13 +2,16 @@ package archivers
 
 import (
 	"bytes"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"arker/internal/thumbnail"
 )
@@ -31,6 +34,89 @@ func TestYtDlpDownloadArgsWriteRemuxedMP4File(t *testing.T) {
 	}
 }
 
+func TestYtDlpDownloadArgsCaptureFullInfoJSON(t *testing.T) {
+	args := ytDlpDownloadArgs("/tmp/arker-video.%(ext)s")
+	for _, required := range []string{"--write-info-json", "--no-clean-infojson"} {
+		found := false
+		for _, arg := range args {
+			if arg == required {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s missing from yt-dlp arguments: %v", required, args)
+		}
+	}
+}
+
+func TestBuildYtDlpVideoArtifactsFromFixture(t *testing.T) {
+	raw, err := os.ReadFile("testdata/ytdlp_info.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivedAt := time.Date(2026, 8, 11, 21, 30, 0, 0, time.UTC)
+	metadata, sanitized, err := BuildYtDlpVideoArtifacts(raw, "https://youtu.be/dQw4w9WgXcQ", "2026.08.11", VideoMedia{
+		Extension:   ".mp4",
+		ContentType: "video/mp4",
+		SizeBytes:   987654321,
+	}, archivedAt)
+	if err != nil {
+		t.Fatalf("BuildYtDlpVideoArtifacts: %v", err)
+	}
+
+	if metadata.SchemaVersion != VideoMetadataSchemaVersion || metadata.Platform != "youtube" || metadata.Extractor != "youtube" {
+		t.Errorf("provider identity = version %q platform %q extractor %q", metadata.SchemaVersion, metadata.Platform, metadata.Extractor)
+	}
+	if metadata.PostID != "dQw4w9WgXcQ" || metadata.CanonicalURL != "https://www.youtube.com/watch?v=dQw4w9WgXcQ" {
+		t.Errorf("post identity = id %q URL %q", metadata.PostID, metadata.CanonicalURL)
+	}
+	if metadata.Title != "Never Gonna Give You Up" || metadata.Author != "Rick Astley" || metadata.ChannelID != "UCuAXFkgsw1L7xaCfnd5JJOw" {
+		t.Errorf("post fields not normalized: %+v", metadata)
+	}
+	if metadata.DurationSeconds == nil || *metadata.DurationSeconds != 212.25 {
+		t.Errorf("duration = %v", metadata.DurationSeconds)
+	}
+	if metadata.Engagement.Views == nil || *metadata.Engagement.Views != 1600000000 || metadata.Engagement.Likes == nil || *metadata.Engagement.Likes != 18000000 {
+		t.Errorf("engagement = %+v", metadata.Engagement)
+	}
+	if metadata.Media.SizeBytes != 987654321 || metadata.Media.Width == nil || *metadata.Media.Width != 1920 || metadata.Media.VideoCodec != "avc1.640028" {
+		t.Errorf("media = %+v", metadata.Media)
+	}
+	if metadata.YtDlpVersion != "2026.08.11" || metadata.ArchivedAt != "2026-08-11T21:30:00Z" || metadata.Provenance != "native" {
+		t.Errorf("capture fields not normalized: %+v", metadata)
+	}
+
+	var sanitizedObject map[string]interface{}
+	if err := json.Unmarshal(sanitized, &sanitizedObject); err != nil {
+		t.Fatalf("sanitized raw JSON is invalid: %v", err)
+	}
+	text := string(sanitized)
+	for _, secret := range []string{
+		"proxy-user", "proxy-pass", "private.proxy.example", "super-secret-cookie",
+		"secret-access-token", "secret-signature", "10.20.30.40", "1999999999",
+	} {
+		if strings.Contains(text, secret) {
+			t.Errorf("sanitized raw JSON leaked %q: %s", secret, text)
+		}
+	}
+	if !strings.Contains(text, "[REDACTED]") || !strings.Contains(text, "yt-dlp test") {
+		t.Errorf("sanitization removed useful data or omitted redaction marker: %s", text)
+	}
+}
+
+func TestFindYtDlpInfoJSON(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "video")
+	path := base + ".info.json"
+	if err := os.WriteFile(path, []byte(`{"id":"abc"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := findYtDlpInfoJSON(base)
+	if err != nil || got != path {
+		t.Fatalf("findYtDlpInfoJSON = %q, %v; want %q", got, err, path)
+	}
+}
+
 func TestFindDownloadedMP4PrefersFinalOutput(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "video")
@@ -50,6 +136,28 @@ func TestFindDownloadedMP4PrefersFinalOutput(t *testing.T) {
 	}
 	if got != finalPath {
 		t.Fatalf("findDownloadedMP4 = %q, want %q", got, finalPath)
+	}
+}
+
+func TestCreateTempVideoBaseUsesPrivateDirectory(t *testing.T) {
+	base, err := createTempVideoBase()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(base)
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got&0o077 != 0 {
+		t.Errorf("temp directory permissions = %o, want no group/other access", got)
+	}
+	if err := os.WriteFile(base+".info.json", []byte(`{"proxy":"secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupTempVideoFiles(base)
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("cleanupTempVideoFiles left private directory behind: %v", err)
 	}
 }
 

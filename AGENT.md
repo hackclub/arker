@@ -155,6 +155,8 @@ When using Amp with `make dev` running in another window:
 - `GET /itch/:shortid/list` - JSON list of files in itch.io game archive
 - `GET /gallery/:shortid/list` - JSON post metadata + media file list for a gallery-dl archive
 - `GET /gallery/:shortid/file/*filepath` - Stream one media file out of a gallery-dl archive
+- `GET /video/:shortid/manifest` - Video capture status, normalized post metadata, and archived media URL
+- `GET /video/:shortid/raw` - Sanitized raw yt-dlp/Bright Data provider record
 - `GET|HEAD /thumb/:shortid` - Preview image for a capture (480x270 JPEG); falls back to an SVG placeholder and queues generation
 - `GET|HEAD /thumb/:shortid/:type` - Preview image for one archive type
 

@@ -30,6 +30,19 @@ func (d dataArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 	return archivers.Result{Data: bytes.NewReader(d.payload), Extension: ".mhtml", ContentType: "application/x-mhtml"}, nil
 }
 
+type videoDataArchiver struct{}
+
+func (videoDataArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (archivers.Result, error) {
+	return archivers.Result{
+		Data:        bytes.NewReader([]byte("mp4-data")),
+		Extension:   ".mp4",
+		ContentType: "video/mp4",
+		Source:      models.ArchiveSourceNative,
+		Metadata:    &archivers.Sidecar{Data: []byte(`{"schema_version":"1","title":"Fixture video"}`)},
+		RawMetadata: &archivers.Sidecar{Data: []byte(`{"title":"Fixture video","cookie":"[REDACTED]"}`)},
+	}, nil
+}
+
 func newWorkerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
@@ -133,6 +146,47 @@ func TestProcessArchiveJobSuccessCompletes(t *testing.T) {
 	}
 	if got.StorageKey == "" {
 		t.Fatal("storage key not set on completion")
+	}
+}
+
+func TestProcessArchiveJobStoresVideoMetadataSidecars(t *testing.T) {
+	db := newWorkerTestDB(t)
+	url := models.ArchivedURL{Original: "https://www.youtube.com/watch?v=fixture"}
+	db.Create(&url)
+	capture := models.Capture{ArchivedURLID: url.ID, Timestamp: time.Now(), ShortID: "vid01"}
+	db.Create(&capture)
+	item := models.ArchiveItem{CaptureID: capture.ID, Type: "yt-dlp", Status: "processing"}
+	db.Create(&item)
+
+	store := storage.NewMemoryStorage()
+	m := map[string]archivers.Archiver{"yt-dlp": videoDataArchiver{}}
+	args := ArchiveJobArgs{ShortID: "vid01", Type: "yt-dlp", URL: url.Original}
+	if err := processArchiveJob(context.Background(), args, &item, store, db, m); err != nil {
+		t.Fatalf("processArchiveJob: %v", err)
+	}
+
+	var got models.ArchiveItem
+	db.First(&got, item.ID)
+	if got.Status != "completed" || got.StorageKey == "" || got.MetadataKey == "" || got.RawMetadataKey == "" {
+		t.Fatalf("video item was not finalized with all artifact keys: %+v", got)
+	}
+	if got.Source != models.ArchiveSourceNative {
+		t.Errorf("source = %q, want native", got.Source)
+	}
+	for key, want := range map[string]string{
+		got.StorageKey:     "mp4-data",
+		got.MetadataKey:    `{"schema_version":"1","title":"Fixture video"}`,
+		got.RawMetadataKey: `{"title":"Fixture video","cookie":"[REDACTED]"}`,
+	} {
+		reader, err := store.Reader(key)
+		if err != nil {
+			t.Fatalf("read %s: %v", key, err)
+		}
+		data, err := io.ReadAll(reader)
+		reader.Close()
+		if err != nil || string(data) != want {
+			t.Errorf("stored %s = %q, err %v; want %q", key, data, err, want)
+		}
 	}
 }
 

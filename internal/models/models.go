@@ -67,8 +67,14 @@ type ArchiveItem struct {
 	StorageKey string
 	Extension  string // .webp, .mhtml, .tar.zst, .mp4, etc.
 	FileSize   int64  // file size in bytes
-	Logs       string `gorm:"type:text"`
-	RetryCount int
+	// MetadataKey points at a stable normalized JSON sidecar. RawMetadataKey
+	// points at the sanitized extractor/provider record used to build it. Both
+	// are empty for archive types without sidecars and for older video captures;
+	// an empty key must never be treated as inferred metadata.
+	MetadataKey    string
+	RawMetadataKey string
+	Logs           string `gorm:"type:text"`
+	RetryCount     int
 	// Source records which flow produced the stored artifact: "" or "native"
 	// for the regular archivers, "brightdata" when the Bright Data fallback
 	// rescued a failed native run. Provenance matters here: fallback artifacts
