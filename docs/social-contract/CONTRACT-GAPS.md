@@ -104,6 +104,12 @@ Given a social-media URL, Arker creates a durable true archive with:
 - **G11 (multi-item social)**: buildSocialPost picks first yt-dlp-or-gallery-dl item
   (archive_result.go:230-235); prefer the media item that matches the URL's routed
   type; if both exist prefer completed one.
+- **G12 (raw sidecar sanitization at rest)**: /gallery/:id/raw sanitizes at serve
+  time (gallery_dl_serve.go:266) but the public zip bundle stores gallery-dl
+  sidecars UNsanitized (gallery_dl.go writeGalleryZip) while yt-dlp raw is
+  sanitized before storage (ytdlp.go:167 BuildYtDlpVideoArtifacts). Fix: sanitize
+  .json sidecars during zip writing (archivers.SanitizeJSON). Manager will handle
+  at integration if not covered by an agent.
 
 ## Guardrails for all agents (this run)
 
