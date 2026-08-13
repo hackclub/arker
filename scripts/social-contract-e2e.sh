@@ -16,11 +16,12 @@ POLL_TIMEOUT_SECS="${POLL_TIMEOUT_SECS:-420}"
 URL_ORDINARY="${URL_ORDINARY:-https://example.com/}"
 URL_YT_VIDEO="${URL_YT_VIDEO:-https://www.youtube.com/watch?v=jNQXAC9IVRw}"   # "Me at the zoo"
 URL_YT_VIDEO_ALT="${URL_YT_VIDEO_ALT:-https://youtu.be/jNQXAC9IVRw}"          # same video, alt spelling (canonical identity check)
-URL_YT_SHORT="${URL_YT_SHORT:-}"        # set at run time: a stable public Short
+URL_YT_SHORT="${URL_YT_SHORT:-https://www.youtube.com/shorts/K6rUDI0MVXI}"  # verified: serves at /shorts/ with no redirect
 URL_VIMEO="${URL_VIMEO:-https://vimeo.com/76979871}"                          # Vimeo player demo video (62s)
 URL_REDDIT_GALLERY="${URL_REDDIT_GALLERY:-}"  # set at run time: stable public gallery post
-URL_BLUESKY_IMAGE="${URL_BLUESKY_IMAGE:-}"    # set at run time: stable public image post
-URL_IMGUR_ALBUM="${URL_IMGUR_ALBUM:-}"        # set at run time: stable public album
+URL_BLUESKY_IMAGE="${URL_BLUESKY_IMAGE:-https://bsky.app/profile/bsky.app/post/3msqpuobiwk2t}"  # verified via gallery-dl --simulate
+URL_IMGUR_ALBUM="${URL_IMGUR_ALBUM:-}"        # optional; covered by fixtures
+URL_FLICKR_PHOTO="${URL_FLICKR_PHOTO:-https://www.flickr.com/photos/library_of_congress/2163445674/}"  # verified via gallery-dl --simulate
 
 pass=0; fail=0; declare -a results=()
 ok()   { pass=$((pass+1)); results+=("PASS  $1"); }
