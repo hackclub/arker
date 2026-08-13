@@ -109,6 +109,16 @@ func TestRunSweepRecordsPassingProbe(t *testing.T) {
 	if item.Status != "completed" || item.Type != utils.ArchiveTypeYtDlp {
 		t.Errorf("probe item = %s/%s, want completed yt-dlp", item.Type, item.Status)
 	}
+
+	// Only the media item is captured. Adding MHTML and screenshot would launch
+	// a browser per probe every interval for no extra contract signal.
+	var itemCount int64
+	db.Model(&models.ArchiveItem{}).
+		Joins("JOIN captures ON captures.id = archive_items.capture_id").
+		Where("captures.short_id = ?", run.ShortID).Count(&itemCount)
+	if itemCount != 1 {
+		t.Errorf("probe capture has %d archive items, want just the media one", itemCount)
+	}
 }
 
 // A native failure is recorded as a native failure, with the extractor's own
