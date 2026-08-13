@@ -3,6 +3,7 @@ package brightdata
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 )
