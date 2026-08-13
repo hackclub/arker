@@ -353,13 +353,13 @@ func subtitleKindsFromInfo(rawInfo []byte) map[string]string {
 	if err != nil {
 		return kinds
 	}
-	for key, kind := range map[string]string{"automatic_captions": SubtitleKindAuto, "subtitles": SubtitleKindManual} {
-		langs, ok := info[key].(map[string]interface{})
+	for _, source := range subtitleKindSources {
+		langs, ok := info[source.field].(map[string]interface{})
 		if !ok {
 			continue
 		}
 		for lang := range langs {
-			kinds[lang] = kind
+			kinds[lang] = source.kind
 		}
 	}
 	return kinds

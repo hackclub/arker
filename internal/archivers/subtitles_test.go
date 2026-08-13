@@ -2,6 +2,8 @@ package archivers
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -212,5 +214,58 @@ func TestSetSubtitleStorageKeys(t *testing.T) {
 	same, err := SetSubtitleStorageKeys(plain, map[string]string{".sub.en.vtt": "x"})
 	if err != nil || string(same) != string(plain) {
 		t.Fatalf("metadata without subtitles was rewritten: %v / %s", err, same)
+	}
+}
+
+// The real thing: the English caption track YouTube serves for jNQXAC9IVRw,
+// captured live during development. A synthetic fixture only proves the parser
+// handles what its author imagined.
+func TestTranscriptFromRealYouTubeCaptions(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "youtube_captions.en.vtt"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	got, truncated := TranscriptFromVTT(string(raw))
+	if truncated {
+		t.Error("a 440-byte track reported truncation")
+	}
+
+	want := strings.Join([]string{
+		"All right, so here we are, in front of the",
+		"elephants",
+		"the cool thing about these guys is that they",
+		"have really...",
+		"really really long trunks",
+		"and that's cool",
+		"(baaaaaaaaaaahhh!!)",
+		"and that's pretty much all there is to",
+		"say",
+	}, "\n")
+	if got != want {
+		t.Fatalf("transcript =\n%q\nwant\n%q", got, want)
+	}
+	// The header block describes the track, not the speech.
+	if strings.Contains(got, "WEBVTT") || strings.Contains(got, "Kind:") || strings.Contains(got, "Language:") {
+		t.Errorf("VTT header leaked into the transcript:\n%s", got)
+	}
+}
+
+// A language listed as both automatic and manual is written by yt-dlp as the
+// manual track, and the recorded kind must say so on every run — ranging over a
+// Go map would decide this at random.
+func TestSubtitleKindsPreferManualDeterministically(t *testing.T) {
+	info := []byte(`{"subtitles":{"en":[{"ext":"vtt"}]},"automatic_captions":{"en":[{"ext":"vtt"}],"de":[{"ext":"vtt"}]}}`)
+	for i := 0; i < 50; i++ {
+		kinds := subtitleKindsFromInfo(info)
+		if kinds["en"] != SubtitleKindManual {
+			t.Fatalf("run %d: en = %q, want manual", i, kinds["en"])
+		}
+		if kinds["de"] != SubtitleKindAuto {
+			t.Fatalf("run %d: de = %q, want auto", i, kinds["de"])
+		}
+	}
+	// An unparseable record yields no claims rather than wrong ones.
+	if kinds := subtitleKindsFromInfo([]byte("not json")); len(kinds) != 0 {
+		t.Fatalf("kinds = %v, want none", kinds)
 	}
 }

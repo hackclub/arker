@@ -192,6 +192,19 @@ func languageMatches(code, want string) bool {
 	return code != "" && code == want
 }
 
+// subtitleKindSources lists the info-record fields that name caption tracks, in
+// increasing order of authority. Order is the point: a language can appear in
+// both maps, and yt-dlp writes the manual track when it does, so manual must be
+// applied last. Ranging over a Go map here would decide it at random and make
+// the same archive report different provenance on different runs.
+var subtitleKindSources = []struct {
+	field string
+	kind  string
+}{
+	{"automatic_captions", SubtitleKindAuto},
+	{"subtitles", SubtitleKindManual},
+}
+
 // SubtitleArtifactSuffix names a track's stored object relative to the archive
 // item's key base. Manual and automatic tracks for one language cannot collide
 // because yt-dlp writes only one file per language, preferring the manual one.
