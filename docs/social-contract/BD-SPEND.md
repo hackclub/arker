@@ -7,7 +7,7 @@ but is monitored via GET /admin/brightdata-usage during the window.
 
 | # | UTC time | Purpose | Product | Dataset/zone | Request/snapshot id | Est. cost | Running total |
 |---|---|---|---|---|---|---|---|
-| (none yet) | | | | | | $0.00 | $0.00 |
+| 1 | 2026-08-13 ~04:25 | Local integration E2E: IG reel fallback verification (dev stack, no cookies, native fails => BD rescue) | web_scraper (reels dataset trigger) | gd_lyclm20il4r5helnj | (snapshot id recorded post-run) | est $0.002-0.01 (1-3 ops x $0.0015/record + retries) | <= $0.01 |
 
 Planned spend (subject to remaining budget):
 - End-of-run fallback-path verification: 1-2 deliberate rescues (dataset trigger
