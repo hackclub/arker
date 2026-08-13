@@ -263,3 +263,69 @@ func TestCanonicalizeArchiveURLKeepsUnknownParams(t *testing.T) {
 		})
 	}
 }
+
+// TestCanonicalizeArchiveURLNeverCollidesAcrossDistinctPosts is the blast-radius
+// test for the worst failure this file can cause. A collision means
+// find-or-create serves an archive of a different post than the one requested —
+// silently, and with a plausible-looking result. Every entry below is a distinct
+// post, account, or page; no two may share an identity.
+func TestCanonicalizeArchiveURLNeverCollidesAcrossDistinctPosts(t *testing.T) {
+	var corpus []string
+	for _, id := range []string{"aaaaaaaaaaa", "bbbbbbbbbbb", "abc123XYZ_-", "ABC123xyz_-"} {
+		corpus = append(corpus,
+			"https://www.youtube.com/watch?v="+id,
+			"https://www.youtube.com/shorts/"+id,
+			"https://www.youtube.com/live/"+id,
+			"https://www.instagram.com/p/"+id+"/",
+			"https://www.instagram.com/reel/"+id+"/",
+			"https://www.instagram.com/tv/"+id+"/",
+			"https://bsky.app/profile/alice.bsky.social/post/"+id,
+			"https://bsky.app/profile/bob.bsky.social/post/"+id,
+			"https://www.reddit.com/r/golang/comments/"+id+"/",
+			"https://www.reddit.com/r/golang/comments/"+id+"/slug/cmt001/",
+			"https://redd.it/"+id+"x",
+		)
+	}
+	for _, id := range []string{"20", "21", "1234567890", "9999999999"} {
+		corpus = append(corpus,
+			"https://x.com/jack/status/"+id,
+			"https://www.tiktok.com/@user/video/"+id,
+			"https://www.tiktok.com/@user/photo/"+id,
+			"https://www.tiktok.com/@other/video/"+id,
+			"https://vimeo.com/"+id,
+			"https://vimeo.com/"+id+"/hash01",
+			"https://vimeo.com/"+id+"/hash02",
+			"https://www.facebook.com/watch/?v="+id,
+			"https://www.facebook.com/reel/"+id,
+			"https://www.facebook.com/pagea/videos/"+id+"/",
+			"https://www.facebook.com/pageb/videos/"+id+"/",
+			"https://fb.watch/"+id+"/",
+		)
+	}
+	// Ordinary URLs that differ only in the ways a naive normalizer would erase.
+	corpus = append(corpus,
+		"https://example.com/page",
+		"https://example.com/page/",
+		"https://www.example.com/page",
+		"http://example.com/page",
+		"https://example.com/page?a=1",
+		"https://example.com/page?a=2",
+		"https://example.com/page?a=1&b=2",
+		"https://example.com/page?b=2&a=1",
+		"https://example.com/page#one",
+		"https://example.com/page#two",
+	)
+
+	seen := make(map[string]string, len(corpus))
+	for _, raw := range corpus {
+		canonical := CanonicalizeArchiveURL(raw)
+		if previous, clash := seen[canonical]; clash {
+			t.Errorf("distinct posts share identity %q:\n  %s\n  %s", canonical, previous, raw)
+			continue
+		}
+		seen[canonical] = raw
+	}
+	if len(seen) != len(corpus) {
+		t.Errorf("%d distinct inputs produced %d identities", len(corpus), len(seen))
+	}
+}
