@@ -363,18 +363,31 @@ Platform quirks worth knowing before changing a route:
 - **Vimeo** main-site URLs are login-only as of yt-dlp 2026.08.04. The archiver
   fetches `player.vimeo.com/video/<id>` instead (`utils.YtDlpFetchURL`),
   carrying the unlisted-video hash. Player pages carry less metadata: no upload
-  date and no engagement counts.
+  date and no engagement counts. Vimeo has **no Bright Data pathway and should
+  not get one**: the Vimeo Videos dataset crawler errors on exactly the
+  DRM-protected class the native path cannot fetch either. DRM is cryptographic
+  rather than positional, so a different network position buys nothing.
 - **TikTok** photo posts (`/photo/`) go to gallery-dl — yt-dlp cannot download a
   slideshow. Videos and `vm`/`vt`/`t` short links stay on yt-dlp; a short link
   that resolves to a photo post fails explicitly rather than being resolved at
   routing time, which would mean a network call from a pure function.
 - **Bluesky** videos come back as the poster's original atproto blob, so the
   archive is the source file, byte for byte.
-- **Login-only sites** (Instagram feed posts, X, Pinterest) get no gallery-dl
-  item without a cookie jar: the run cannot succeed and would spend rate limit
-  proving it. The API reports `authentication_required` for those. The
-  exception is a site the Bright Data fallback covers — Instagram and X today —
-  which does get an item when the fallback is configured, because the
+- **Facebook** splits by shape. Video permalinks (`/reel/`, `/videos/`,
+  `/watch`, `fb.watch`) are yt-dlp items; photo posts and post permalinks
+  (`/photo/?fbid=`, `/photo.php?fbid=`, `/<page>/photos/<id>`,
+  `/<page>/posts/<id>` including `pfbid…`) are gallery-dl items. The two claims
+  are disjoint and pinned that way in the matrix test, so no Facebook URL gets
+  two media items. Containers — a page, its photo tab, its feed — stay
+  unclaimed ordinary URLs; claiming one would point an extractor at an entire
+  account. `story.php` and `permalink.php` are unclaimed too: visibility-gated
+  shapes whose dataset coverage is unverified.
+- **Login-only sites** (Instagram feed posts, X, Pinterest, Facebook posts) get
+  no gallery-dl item without a cookie jar: the run cannot succeed and would
+  spend rate limit proving it. The API reports `authentication_required` for
+  those. The exception is a site the Bright Data fallback covers — Instagram,
+  X, Pinterest and Facebook posts today — which does get an item when the
+  fallback is configured, because the
   guaranteed-failed native run is then followed by one that can actually
   succeed. Routing asks the fallback client itself
   (`utils.SetBrightDataMediaFallback` carries `Client.SupportsFallback`), so
@@ -398,13 +411,23 @@ scoped API key cannot read Bright Data's billing endpoints.
 | TikTok photo post | gallery-dl | Dataset, direct CDN download, browser session per refused still |
 | Reddit post | gallery-dl | Dataset, then direct download of the muxed `packaged-media.redd.it` MP4 |
 | X status | gallery-dl | Dataset, then direct `pbs.twimg.com` / `video.twimg.com` download |
+| Pinterest pin | gallery-dl | Dataset, then direct `i.pinimg.com` download |
+| Facebook video permalink | yt-dlp | Dataset, then direct `video.fbcdn.net` download |
+| Facebook photo post / post permalink | gallery-dl | Dataset, then direct `scontent` / `video.fbcdn.net` download |
+
+Vimeo is deliberately absent: see the Vimeo note under platform routing.
 
 The split that matters: **YouTube and TikTok sign their media against the
 resolving IP**, so those bytes can only be fetched from inside a Bright Data
 browser session (`internal/brightdata/browser_fetch.go`) and need
-`BRIGHTDATA_BROWSER_ZONE` credentials. Instagram, Reddit and X sign but do not
-IP-lock, so only the resolution is paid for and the download runs over Arker's
-own connection.
+`BRIGHTDATA_BROWSER_ZONE` credentials. Instagram, Reddit, X, Pinterest and
+Facebook sign but do not IP-lock, so only the resolution is paid for and the
+download runs over Arker's own connection.
+
+Two Facebook-specific traps, both verified against live records: a video
+attachment's `url` is the post's page rather than its media (the bytes are in
+`video_url`), and a video post carries a second `audio` attachment holding the
+DASH audio stream, which is not a second asset of the post.
 
 Raw provider records are sanitized before storage, in the sidecar and inside
 the gallery ZIP: on a signed media host every query parameter is redacted,
