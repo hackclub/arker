@@ -412,7 +412,10 @@ func (r *Runner) executeProbe(ctx context.Context, probe Probe, paidAllowed bool
 		v.Provenance = provenanceOf(fresh)
 		return v, shortID
 	}
-	return ValidateArchive(probe, &fresh, r.store, spend, r.cfg.AllowPaidFallback), shortID
+	// paidAllowed, not cfg.AllowPaidFallback: if paid probes are configured but
+	// this sweep was over budget, the probe ran native-only and recorded spend
+	// is still a violation.
+	return ValidateArchive(probe, &fresh, r.store, spend, paidAllowed), shortID
 }
 
 func provenanceOf(item models.ArchiveItem) string {
