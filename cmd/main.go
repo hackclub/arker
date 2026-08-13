@@ -27,6 +27,7 @@ import (
 
 	"arker/internal/archivers"
 	"arker/internal/brightdata"
+	"arker/internal/canary"
 	"arker/internal/handlers"
 	"arker/internal/models"
 	"arker/internal/monitoring"
@@ -99,6 +100,12 @@ type Config struct {
 	// env when YouTube retires it (no code change needed).
 	BrightDataYouTubeClientName    string `envconfig:"BRIGHTDATA_YT_CLIENT_NAME" default:"ANDROID"`
 	BrightDataYouTubeClientVersion string `envconfig:"BRIGHTDATA_YT_CLIENT_VERSION" default:"20.10.38"`
+
+	// Production canaries. CANARY_SCHEDULE is the only switch that starts
+	// recurring probes; everything else is unreachable until it is set. See
+	// docs/canaries.md. Embedded (not a named field) so envconfig keeps the
+	// CANARY_* names rather than prefixing them.
+	canary.RawConfig
 }
 
 // CustomErrorHandler implements the River ErrorHandler interface and updates archive items.
@@ -335,8 +342,9 @@ func main() {
 		log.Fatalf("Failed to initialize GORM with shared pool: %v", err)
 	}
 
-	// Auto-migrate database models
-	if err := db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.ArchiveItemLog{}, &models.Config{}, &models.BrightDataUsage{}); err != nil {
+	// Auto-migrate database models. CanaryRun is a new, additive table; nothing
+	// existing references it.
+	if err := db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.ArchiveItemLog{}, &models.Config{}, &models.BrightDataUsage{}, &models.CanaryRun{}); err != nil {
 		slog.Error("AutoMigrate failed with detailed error", "error", err, "error_type", fmt.Sprintf("%T", err), "error_string", err.Error())
 		slog.Info("Continuing startup despite AutoMigrate error")
 	}
@@ -478,6 +486,17 @@ func main() {
 		utils.ArchiveTypeItch:       &archivers.ItchArchiver{ItchDlPath: cfg.ItchDlPath, APIKey: cfg.ItchAPIKey},
 	}
 
+	// Snapshot of the archiver map before any paid wrapper is applied. This is
+	// what the canaries run on, and it is the reason a canary cannot spend
+	// money: it holds no reference to a billable archiver, so there is nothing
+	// for a failing probe to escalate to. Taken here, before the wrapping
+	// below, rather than reconstructed later — a second construction site would
+	// be one more place to forget.
+	nativeArchiversMap := make(map[string]archivers.Archiver, len(archiversMap))
+	for name, arch := range archiversMap {
+		nativeArchiversMap[name] = arch
+	}
+
 	// Bright Data fallback: wraps the media archivers so a failed native run
 	// on an Instagram/YouTube URL gets one paid second chance. Native flows
 	// stay preferred; the fallback only runs after they fail.
@@ -530,6 +549,33 @@ func main() {
 		slog.Error("Archive type rename migration failed", "error", err)
 	}
 
+	// Production canaries. Disabled unless CANARY_SCHEDULE is set: a bad value
+	// logs and leaves them off rather than killing the server, matching how
+	// every other optional subsystem here fails.
+	canaryConfig, canaryConfigErr := canary.LoadConfig(cfg.RawConfig, os.Environ())
+	if canaryConfigErr != nil {
+		slog.Error("Canary configuration rejected; recurring canaries stay disabled", "error", canaryConfigErr)
+	}
+	canaryPaidArchivers := map[string]archivers.Archiver(nil)
+	if canaryConfig.AllowPaidFallback {
+		canaryPaidArchivers = archiversMap
+		slog.Warn("Paid canary probes are enabled; canaries may spend money on Bright Data",
+			"max_cost_per_run_usd", canaryConfig.MaxCostPerRunUSD,
+			"max_cost_per_day_usd", canaryConfig.MaxCostPerDayUSD)
+	}
+	canaryRunner := canary.New(canary.Options{
+		DB:              db,
+		Store:           storageInstance,
+		NativeArchivers: nativeArchiversMap,
+		PaidArchivers:   canaryPaidArchivers,
+		Config:          canaryConfig,
+	})
+	if canaryConfig.ScheduleEnabled() {
+		slog.Info("Production canaries enabled", "schedule", canaryConfig.Schedule, "interval", canaryConfig.Interval)
+	} else {
+		slog.Info("Production canaries disabled (no recurring sweeps)", "env", canary.ScheduleEnvVar)
+	}
+
 	// Create worker registry
 	riverWorkers := river.NewWorkers()
 	archiveWorker := workers.NewArchiveWorker(storageInstance, db, archiversMap)
@@ -537,22 +583,34 @@ func main() {
 	// Backfills thumbnails for archives captured before the feature existed.
 	// New captures produce theirs inline and never enqueue this.
 	river.AddWorker(riverWorkers, workers.NewThumbnailWorker(storageInstance, db))
+	// Registered unconditionally so an operator can trigger a sweep by hand;
+	// nothing enqueues this job unless CANARY_SCHEDULE is set.
+	river.AddWorker(riverWorkers, canary.NewWorker(canaryRunner))
 
 	// Create River client with configuration
 	errorHandler := &CustomErrorHandler{db: db}
 	timeoutConfig := utils.DefaultTimeoutConfig()
 	jobTimeout := timeoutConfig.YtDlpMaxTimeout + 30*time.Minute
 	rescueStuckJobsAfter := jobTimeout + 5*time.Minute
-	riverClient, err := river.NewClient(riverpgxv5.New(dbPool), &river.Config{
+	riverConfig := &river.Config{
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: cfg.MaxWorkers},
 			"high_priority":    {MaxWorkers: max(2, cfg.MaxWorkers/2)}, // At least 2 workers, or half of total workers
+			// Canaries get one worker of their own so a sweep never competes
+			// with real captures and two sweeps never overlap.
+			canary.QueueName: {MaxWorkers: 1},
 		},
 		Workers:              riverWorkers,
 		JobTimeout:           jobTimeout,
 		RescueStuckJobsAfter: rescueStuckJobsAfter,
 		ErrorHandler:         errorHandler,
-	})
+	}
+	// The periodic entry only exists when the schedule is configured, so a
+	// default deployment has no recurring canary registration at all.
+	if periodic := canary.PeriodicJob(canaryConfig); periodic != nil {
+		riverConfig.PeriodicJobs = []*river.PeriodicJob{periodic}
+	}
+	riverClient, err := river.NewClient(riverpgxv5.New(dbPool), riverConfig)
 	if err != nil {
 		log.Fatalf("Failed to create River client: %v", err)
 	}
@@ -621,7 +679,9 @@ func main() {
 	r.Use(sessions.Sessions("session", store))
 
 	// Setup routes
-	r.GET("/health", handlers.HealthCheckHandler(db))
+	r.GET("/health", handlers.HealthCheckHandler(db, func() canary.Summary {
+		return canary.HealthSummary(db, canaryConfig)
+	}))
 	r.GET("/metrics/browser", func(c *gin.Context) {
 		if !handlers.RequireLogin(c) {
 			return
@@ -656,6 +716,8 @@ func main() {
 	admin.POST("/url/:id/capture", func(c *gin.Context) { handlers.RequestCapture(c, db, riverClient) })
 	admin.POST("/archive", func(c *gin.Context) { handlers.AdminArchive(c, db, riverClient) })
 	admin.GET("/item/:id/log", func(c *gin.Context) { handlers.GetItemLog(c, db) })
+	admin.GET("/canaries", func(c *gin.Context) { handlers.CanariesGet(c, db, canaryRunner) })
+	admin.POST("/canaries/run", func(c *gin.Context) { handlers.CanariesRun(c, db, canaryRunner) })
 	// Create protected River UI routes
 	r.GET("/queue", func(c *gin.Context) {
 		if !handlers.RequireLogin(c) {
