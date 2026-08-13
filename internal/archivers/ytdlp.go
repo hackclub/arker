@@ -70,6 +70,15 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 
 	redactedLog := utils.NewRedactingWriter(logWriter, utils.YtDlpProxyRedactionSecrets())
 
+	// Some platforms serve the video from somewhere other than the page a
+	// human visits (Vimeo's main site is login-only; its player is not). Only
+	// the fetch target changes — the archive stays recorded against url.
+	fetchURL := utils.YtDlpFetchURL(url)
+	if fetchURL != url {
+		fmt.Fprintf(logWriter, "Fetching via %s (the page URL is not retrievable without an account)\n", fetchURL)
+	}
+	refererArgs := utils.YtDlpRefererArgsForURL(fetchURL)
+
 	// Prepare command arguments
 	testArgs := []string{"--print", "title,duration,uploader"}
 
@@ -78,9 +87,10 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 	testCmd := exec.CommandContext(ctx, "yt-dlp")
 	testCmd.Args = append(testCmd.Args, testArgs...)
 	testCmd.Args = append(testCmd.Args, utils.YtDlpImpersonateArgsForURL(url)...)
+	testCmd.Args = append(testCmd.Args, refererArgs...)
 	testCmd.Args = append(testCmd.Args, cookieArgs...)
 	testCmd.Args = append(testCmd.Args, utils.YtDlpProxyArgs()...)
-	testCmd.Args = append(testCmd.Args, url)
+	testCmd.Args = append(testCmd.Args, fetchURL)
 	testOutput, err := testCmd.CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(redactedLog, "yt-dlp test failed: %v\nOutput: %s\n", err, string(testOutput))
@@ -109,9 +119,10 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 	cmd := exec.CommandContext(ctx, "yt-dlp")
 	cmd.Args = append(cmd.Args, ytDlpDownloadArgs(outputTemplate)...)
 	cmd.Args = append(cmd.Args, utils.YtDlpImpersonateArgsForURL(url)...)
+	cmd.Args = append(cmd.Args, refererArgs...)
 	cmd.Args = append(cmd.Args, cookieArgs...)
 	cmd.Args = append(cmd.Args, utils.YtDlpProxyArgs()...)
-	cmd.Args = append(cmd.Args, url)
+	cmd.Args = append(cmd.Args, fetchURL)
 	cmd.Stdout = redactedLog
 	cmd.Stderr = redactedLog
 
