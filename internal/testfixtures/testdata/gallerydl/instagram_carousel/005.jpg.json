@@ -3,7 +3,6 @@
   "category": "instagram",
   "count": 10,
   "date": "2026-08-04 18:12:03",
-  "description": "ten slides from the trip — swipe #coding #devops",
   "extension": "jpg",
   "fullname": "Agent Verse",
   "height": 1350,
@@ -20,5 +19,6 @@
     "devops"
   ],
   "username": "agentverseinsta",
-  "width": 1080
+  "width": 1080,
+  "accessibility_caption": "ten slides from the trip — swipe #coding #devops"
 }

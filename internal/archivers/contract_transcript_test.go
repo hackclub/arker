@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"arker/internal/testfixtures"
+	"arker/internal/utils"
 )
 
 // G13: transcripts, subtitles and alt text.
@@ -52,7 +53,9 @@ func normalizedMetadataMap(t *testing.T, fake testfixtures.YtDlpFake, url string
 // TestYtDlpAsksForSubtitles pins the argv half of G13. Arker cannot store a
 // transcript it never asked yt-dlp to download.
 func TestYtDlpAsksForSubtitles(t *testing.T) {
-	args := ytDlpDownloadArgs("/tmp/out.%(ext)s")
+	// Subtitle flags live in their own helper so the language filter can be
+	// built per video; the contract is about the composed invocation.
+	args := append(ytDlpDownloadArgs("/tmp/out.%(ext)s"), utils.YtDlpSubtitleArgs("")...)
 	joined := strings.Join(args, " ")
 
 	// Already true and load-bearing for the transcript work: the info JSON is
@@ -98,8 +101,8 @@ func TestFulfilledYouTubeExposesTranscriptAndSubtitles(t *testing.T) {
 			if strings.TrimSpace(text) == "" {
 				t.Fatal("G13: transcript text is empty")
 			}
-			if lang, _ := transcript["language"].(string); lang != "en" {
-				t.Errorf("G13: transcript language = %q, want en", lang)
+			if lang, _ := transcript["lang"].(string); lang != "en" {
+				t.Errorf("G13: transcript lang = %q, want en", lang)
 			}
 			// The provenance of the words matters: an auto-caption is a
 			// machine guess and a viewer needs to know that.
@@ -127,11 +130,13 @@ func TestFulfilledYouTubeExposesTranscriptAndSubtitles(t *testing.T) {
 				t.Fatal("G13: normalized metadata links no subtitle artifact")
 			}
 			first, _ := subtitles[0].(map[string]any)
-			if first["language"] != "en" {
-				t.Errorf("G13: subtitle language = %v, want en", first["language"])
+			if first["lang"] != "en" {
+				t.Errorf("G13: subtitle lang = %v, want en", first["lang"])
 			}
-			if url, _ := first["url"].(string); url == "" {
-				t.Error("G13: subtitle entry has no Arker-hosted URL")
+			// The normalized record locates the artifact; the Arker-hosted URL
+			// itself is an API concern, asserted in the handlers contract tests.
+			if suffix, _ := first["artifact_suffix"].(string); suffix == "" {
+				t.Error("G13: subtitle entry has no artifact_suffix locating its stored track")
 			}
 		})
 	}
@@ -150,8 +155,8 @@ func TestUploaderSuppliedCaptionsAreNotLabelledAuto(t *testing.T) {
 	if !ok {
 		t.Fatal("G13: no transcript for a captioned TikTok video")
 	}
-	if source, _ := transcript["source"].(string); source != "uploader" {
-		t.Errorf("G13: transcript source = %q, want uploader for a supplied caption track", source)
+	if source, _ := transcript["source"].(string); source != "manual" {
+		t.Errorf("G13: transcript source = %q, want manual for a supplied caption track", source)
 	}
 }
 

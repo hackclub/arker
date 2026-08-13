@@ -200,6 +200,15 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 	// recorded completeness the stored archive claims to be the post, and a
 	// 3-of-10 carousel reads exactly like a 3-slide one.
 	completeness := galleryCompleteness(tmpDir, media, sidecars, runErr != nil, logWriter)
+	// Some post shapes are structurally single-asset (a Flickr photo page, a
+	// Pinterest pin): when the extractor exposes no count field, the URL shape
+	// itself supplies expected=1, so those posts are not condemned to
+	// unknown-completeness forever.
+	if completeness.State == CompletenessUnknown && len(media) == 1 && utils.StructurallySingleAssetGalleryURL(url) {
+		one := 1
+		completeness = CompletenessFromCounts(&one, len(media), runErr != nil)
+		fmt.Fprintf(logWriter, "Completeness: post shape is structurally single-asset; expected count is 1 by construction\n")
+	}
 	logGalleryCompleteness(logWriter, completeness)
 
 	metadata := buildGalleryMetadata(tmpDir, url, version, media, sidecars, logWriter)
@@ -703,7 +712,7 @@ func buildGalleryMetadata(dir, sourceURL, version string, media []string, sideca
 // the caption everywhere else — reading it generically would stamp Instagram's
 // caption onto every slide as if it were alt text.
 func galleryAltText(perFile map[string]interface{}, extractor string) string {
-	if alt := galleryString(perFile, "alt_text", "ext_alt_text", "alt", "altText", "media_alt"); alt != "" {
+	if alt := galleryString(perFile, "alt_text", "ext_alt_text", "alt", "altText", "media_alt", "accessibility_caption"); alt != "" {
 		return alt
 	}
 	if strings.EqualFold(extractor, "bluesky") {

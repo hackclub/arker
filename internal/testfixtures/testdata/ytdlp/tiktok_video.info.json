@@ -37,5 +37,14 @@
   "vcodec": "avc1.640028",
   "view_count": 8801244,
   "webpage_url": "https://www.tiktok.com/@arkerfixture/video/7106594312292453675",
-  "width": 1080
+  "width": 1080,
+  "subtitles": {
+    "en": [
+      {
+        "ext": "vtt",
+        "url": "https://example.invalid/fixture-caption.vtt",
+        "name": "English"
+      }
+    ]
+  }
 }

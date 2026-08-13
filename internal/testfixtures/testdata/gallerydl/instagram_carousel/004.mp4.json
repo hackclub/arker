@@ -3,7 +3,6 @@
   "category": "instagram",
   "count": 10,
   "date": "2026-08-04 18:12:03",
-  "description": "ten slides from the trip — swipe #coding #devops",
   "extension": "mp4",
   "fullname": "Agent Verse",
   "height": 1280,
@@ -21,5 +20,6 @@
   ],
   "username": "agentverseinsta",
   "video_url": "https://scontent.cdninstagram.com/o1/v/slide4.mp4?oh=SYNTHETIC-OH-NOT-A-REAL-SECRET",
-  "width": 720
+  "width": 720,
+  "accessibility_caption": "ten slides from the trip — swipe #coding #devops"
 }

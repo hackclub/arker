@@ -491,3 +491,44 @@ func GenerateArchiveFilename(capture models.Capture, archivedURL models.Archived
 
 	return fmt.Sprintf("%s_%s.%s", date, url, extension)
 }
+
+// StructurallySingleAssetGalleryURL reports whether a gallery-routed URL's
+// shape guarantees exactly one media asset, so an archive holding one file is
+// complete even when the extractor exposes no count field.
+//
+// Only shapes where the platform's own URL design rules out multi-asset posts
+// belong here: a Flickr /photos/<user>/<id> page is one photo (albums live
+// under /albums/), a Pinterest pin is one image, a VSCO /media/ page is one
+// item, DeviantArt /art/ and Newgrounds /art/view/ are one artwork. Instagram,
+// X, Reddit, Bluesky, Tumblr and Imgur posts can all carry several files and
+// must never be listed.
+func StructurallySingleAssetGalleryURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	path := strings.ToLower(parsed.Path)
+	if !strings.HasSuffix(path, "/") {
+		path += "/"
+	}
+	switch {
+	case hostMatches(hostname, "flickr.com"):
+		// /photos/<user>/<id>/ is a single photo; /photos/<user>/albums/... and
+		// /photos/<user>/sets/... are containers.
+		if !strings.Contains(path, "/photos/") || strings.Contains(path, "/albums/") || strings.Contains(path, "/sets/") {
+			return false
+		}
+		segments := strings.Split(strings.Trim(path, "/"), "/")
+		return len(segments) >= 3
+	case hostMatches(hostname, "pinterest.com"):
+		return strings.Contains(path, "/pin/")
+	case hostMatches(hostname, "vsco.co"):
+		return strings.Contains(path, "/media/")
+	case hostMatches(hostname, "deviantart.com"):
+		return strings.Contains(path, "/art/")
+	case hostMatches(hostname, "newgrounds.com"):
+		return strings.Contains(path, "/art/view/")
+	}
+	return false
+}

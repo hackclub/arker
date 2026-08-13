@@ -472,19 +472,18 @@ func TestPartialCarouselIsNeverRecordedAsComplete(t *testing.T) {
 	// follows is the contract the fix has to add.
 
 	raw := manifestRaw(t, data)
-	expected, ok := raw["expected_file_count"]
-	if !ok {
-		t.Fatal("G1: manifest records no expected_file_count, so a partial post is indistinguishable from a complete one")
-	}
-	if expected != float64(10) {
-		t.Errorf("expected_file_count = %v, want 10 (the sidecar's declared count)", expected)
-	}
-	completeness, ok := raw["completeness"]
+	completeness, ok := raw["completeness"].(map[string]any)
 	if !ok {
 		t.Fatal("G1: manifest records no completeness verdict")
 	}
-	if completeness != "partial" {
-		t.Errorf("completeness = %v, want partial", completeness)
+	if completeness["expected"] != float64(10) {
+		t.Errorf("completeness.expected = %v, want 10 (the sidecar's declared count)", completeness["expected"])
+	}
+	if completeness["state"] != "partial" {
+		t.Errorf("completeness.state = %v, want partial", completeness["state"])
+	}
+	if completeness["stored"] != float64(3) {
+		t.Errorf("completeness.stored = %v, want 3", completeness["stored"])
 	}
 }
 
@@ -508,10 +507,11 @@ func TestCompleteCarouselIsRecordedAsComplete(t *testing.T) {
 	}
 
 	raw := manifestRaw(t, data)
-	if raw["completeness"] != "complete" {
-		t.Errorf("completeness = %v, want complete: every declared slide was stored, "+
+	completeness, _ := raw["completeness"].(map[string]any)
+	if completeness["state"] != "complete" {
+		t.Errorf("completeness.state = %v, want complete: every declared slide was stored, "+
 			"so a non-zero exit about something else must not downgrade the verdict",
-			raw["completeness"])
+			completeness["state"])
 	}
 }
 
@@ -531,8 +531,10 @@ func TestSingleMediaPostIsStructurallyComplete(t *testing.T) {
 				t.Fatalf("file_count = %d, want 1", meta.FileCount)
 			}
 
-			if raw := manifestRaw(t, data); raw["completeness"] != "complete" {
-				t.Errorf("completeness = %v, want complete", raw["completeness"])
+			raw := manifestRaw(t, data)
+			completeness, _ := raw["completeness"].(map[string]any)
+			if completeness["state"] != "complete" {
+				t.Errorf("completeness.state = %v, want complete", completeness["state"])
 			}
 		})
 	}
