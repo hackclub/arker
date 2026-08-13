@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"arker/internal/archivers"
 	"arker/internal/models"
@@ -465,5 +466,24 @@ func TestArchiveTikTokPhotoPostBrowserDeliveredNothing(t *testing.T) {
 	}
 	if browser.BytesTransferred != browserPageOverheadBytes {
 		t.Errorf("browser bytes = %d; want the page overhead it did spend", browser.BytesTransferred)
+	}
+}
+
+// share_count arrives as a string in the live record while every other counter
+// is a number, so the normalized metadata has to read both without relying on
+// the num_share_count duplicate happening to exist.
+func TestTikTokShareCountIsReadFromTheStringField(t *testing.T) {
+	record := loadRecords(t, "tiktok_post.json")[0]
+	if _, isString := record["share_count"].(string); !isString {
+		t.Skip("fixture no longer carries share_count as a string")
+	}
+	delete(record, "num_share_count")
+
+	_, _, err := buildBrightDataTikTokVideoArtifacts(record, tiktokVideoURL, 1, time.Now())
+	if err != nil {
+		t.Fatalf("buildBrightDataTikTokVideoArtifacts: %v", err)
+	}
+	if got := intValue(intField(record, "share_count")); got != 99 {
+		t.Errorf("share_count = %d; want 99 read from the string value", got)
 	}
 }

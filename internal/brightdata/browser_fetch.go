@@ -333,7 +333,11 @@ func fetchURLThroughPage(ctx context.Context, page pageEvaluator, mediaURL strin
 		if status == 200 || int64(len(chunk)) < requested || (total > 0 && offset >= total) {
 			break
 		}
-		fmt.Fprintf(logWriter, "Fetched %d / %d bytes...\n", offset, total)
+		if total > 0 {
+			fmt.Fprintf(logWriter, "Fetched %d / %d bytes...\n", offset, total)
+		} else {
+			fmt.Fprintf(logWriter, "Fetched %d bytes so far (total not disclosed by the CDN)...\n", offset)
+		}
 	}
 
 	if offset == 0 {

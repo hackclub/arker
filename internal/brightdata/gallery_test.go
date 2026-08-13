@@ -175,3 +175,41 @@ func TestBuildGalleryArchiveFailsWhenNothingDownloads(t *testing.T) {
 		t.Fatalf("error = %v; want an all-downloads-failed failure", err)
 	}
 }
+
+// Provider records mix numeric types within one record: TikTok returns
+// share_count as the string "99" beside digg_count as the number 1807. A
+// reader that only accepts JSON numbers drops the string ones silently, and
+// the archive then reports a post with no shares rather than reporting an
+// error.
+func TestIntFieldAcceptsNumericStrings(t *testing.T) {
+	record := map[string]any{
+		"digg_count":  float64(1807),
+		"share_count": "99",
+		"padded":      " 42 ",
+		"approximate": "1.2K",
+		"empty":       "",
+		"object":      map[string]any{"n": 1},
+	}
+	cases := map[string]int64{
+		"digg_count":  1807,
+		"share_count": 99,
+		"padded":      42,
+	}
+	for key, want := range cases {
+		got := intField(record, key)
+		if got == nil || *got != want {
+			t.Errorf("intField(%s) = %v; want %d", key, got, want)
+		}
+	}
+	// A rounded display string is not a count this can honestly report, and
+	// neither is anything that is not a number at all.
+	for _, key := range []string{"approximate", "empty", "object", "missing"} {
+		if got := intField(record, key); got != nil {
+			t.Errorf("intField(%s) = %d; want nil", key, *got)
+		}
+	}
+	// The first key that yields a value wins, in order.
+	if got := intField(record, "missing", "share_count", "digg_count"); got == nil || *got != 99 {
+		t.Errorf("key precedence broken: %v", got)
+	}
+}
