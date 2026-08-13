@@ -440,6 +440,13 @@ func fetchOneChunk(page pageEvaluator, mediaURL string, start, end int64) ([]byt
 // gotoWithRetry navigates with a few retries. Bright Data's browser pool
 // intermittently reports "No Peer Found (no_peers)" when no exit is free;
 // their docs class it as transient, and a short wait usually clears it.
+//
+// Policy refusals are the opposite of transient: Bright Data gates some
+// navigation targets (tiktok.com among them) behind account-level KYC
+// approval, and every retry against that wall bills another attempt at the
+// same guaranteed refusal. Verified live 2026-08-13: three retried sessions
+// against a KYC-gated TikTok URL cost ~$0.08 to fail identically. Those
+// errors abort immediately with a message naming the account-level fix.
 func gotoWithRetry(ctx context.Context, page playwright.Page, targetURL string, logWriter io.Writer) error {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
@@ -458,8 +465,25 @@ func gotoWithRetry(ctx context.Context, page playwright.Page, targetURL string, 
 		if lastErr == nil {
 			return nil
 		}
+		if compliancePolicyError(lastErr) {
+			fmt.Fprintf(logWriter, "Bright Data compliance policy refuses this navigation target; "+
+				"not retrying. Fix is account-level: complete Bright Data's KYC approval "+
+				"(https://brightdata.com/cp/kyc), after which this pathway works unchanged.\n")
+			return fmt.Errorf("bright data compliance policy blocks this target (account KYC approval required): %w", lastErr)
+		}
 	}
 	return lastErr
+}
+
+// compliancePolicyError reports whether a navigation error is Bright Data's
+// permanent compliance-policy refusal rather than a transient pool problem.
+func compliancePolicyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "requires special permission") ||
+		strings.Contains(message, "compliance policy")
 }
 
 // browserPage returns a fresh page in the remote browser's default context.
