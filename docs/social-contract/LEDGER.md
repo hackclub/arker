@@ -22,6 +22,9 @@ Rule: fetch origin/main before every integration; agents never push; manager nev
 ## Integrated into fulfill-social-contract
 - agent/canaries (9 commits): canary_runs table, internal/canary pkg (probes/validate/budget/history/runner/job), workers inline runner, /admin/canaries + /health degraded field, docs/canaries.md. Manager-reviewed: native-only map snapshot verified in cmd/main.go, PaidFallbackEnabled fail-closed check, dedicated 1-worker queue, periodic job only when CANARY_SCHEDULE set. Full tests green post-merge.
 
+## SHIPPED
+- 2026-08-13 05:04 UTC (~01:04 ET... corrected: ~05:04Z): pushed fulfill-social-contract -> main, 814fd21..0c476b5 (73 commits, fast-forward, no force). All 5 agent branches + manager fixes (G12, G14, Vimeo DRM, structural-single, IG alt key). Local gates at push: fmt/vet clean, 12/12 packages, race+postgres suites, full E2E incl. BD-fallback carousel (10/10, $0.0015) and YouTube transcript end-to-end.
+
 ## Cross-cutting findings during integration
 - E: AutoMigrate silently no-ops on EXISTING prod tables (driver bug) — every new column needs explicit ADD COLUMN IF NOT EXISTS DDL; A warned; verify at A integration.
 - C: G14 path-embedded googlevideo secrets in raw metadata — FIXED (ed08670), test enabled.
