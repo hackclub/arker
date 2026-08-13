@@ -124,16 +124,6 @@ func isAllDigits(segment string) bool {
 	return true
 }
 
-func splitPathSegments(path string) []string {
-	var segments []string
-	for _, segment := range strings.Split(path, "/") {
-		if segment != "" {
-			segments = append(segments, segment)
-		}
-	}
-	return segments
-}
-
 // YtDlpFetchURL returns the URL yt-dlp should actually fetch for rawURL.
 //
 // It is normally the URL itself. A platform only earns an entry here when the
