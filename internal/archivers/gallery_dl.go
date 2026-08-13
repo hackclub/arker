@@ -2,6 +2,7 @@ package archivers
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -122,10 +124,14 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 	args = append(args, utils.GalleryDlSleepArgs()...)
 	args = append(args, url)
 
+	// Watch for the one failure that turns a video post into an empty archive
+	// with an unhelpful exit code (see galleryDlYtdlImportError).
+	ytdlWatch := newPhraseWatcher(redactedLog, galleryDlYtdlImportError)
+
 	cmd := exec.CommandContext(ctx, "gallery-dl")
 	cmd.Args = append(cmd.Args, args...)
-	cmd.Stdout = redactedLog
-	cmd.Stderr = redactedLog
+	cmd.Stdout = ytdlWatch
+	cmd.Stderr = ytdlWatch
 	// Own process group so a timeout kills the whole tree, not just the parent.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
@@ -159,12 +165,22 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 	// gallery-dl exits non-zero for partial failures too, so a run that still
 	// produced media is worth keeping. Only fail when nothing came back.
 	if len(media) == 0 {
+		if ytdlWatch.Seen() {
+			fmt.Fprintf(logWriter, "%s\n", galleryDlMissingYtdlMessage)
+			return Result{}, fmt.Errorf("%s", galleryDlMissingYtdlMessage)
+		}
 		if runErr != nil {
 			fmt.Fprintf(logWriter, "gallery-dl failed: %v (%s)\n", runErr, describeGalleryDlExit(runErr))
 			return Result{}, fmt.Errorf("gallery-dl failed: %w (%s)", runErr, describeGalleryDlExit(runErr))
 		}
 		fmt.Fprintf(logWriter, "gallery-dl downloaded no files for %s\n", url)
 		return Result{}, fmt.Errorf("gallery-dl downloaded no files for %s", url)
+	}
+	if ytdlWatch.Seen() {
+		// Some media came back, so the archive is worth keeping, but a video
+		// slide is either missing or downgraded. Say so where an operator will
+		// see it rather than letting the capture look complete.
+		fmt.Fprintf(logWriter, "WARNING: %s\n", galleryDlMissingYtdlMessage)
 	}
 	if runErr != nil {
 		fmt.Fprintf(logWriter, "gallery-dl exited with %v (%s) but produced %d file(s); keeping partial archive\n",
@@ -282,6 +298,24 @@ func galleryDlDownloadArgs(destDir string) []string {
 		// the jar. The run gets a private copy so the configured secret is
 		// never touched, but there is no reason to pay for the rewrite.
 		"-o", "cookies-update=false",
+		// Reddit hosts v.redd.it videos as DASH with the audio in a SEPARATE
+		// stream, so whatever downloads them has to mux. gallery-dl always
+		// delegates that to yt-dlp (imported as a Python module, "ytdl:" URLs);
+		// the only question is what it hands over.
+		//
+		// The default, extractor.reddit.videos=dash, passes the DASHPlaylist.mpd
+		// and lets gallery-dl's ytdl downloader parse it. That works only as far
+		// as the manifest goes: when reddit's mpd lists no audio adaptation set,
+		// the archive silently ends up video-only.
+		//
+		// "ytdl" hands yt-dlp the submission permalink instead, so yt-dlp's own
+		// reddit extractor builds the format list — the DASH manifest AND the
+		// HLS ladder AND the video-only fallback_url (yt-dlp 2026.08.04
+		// extractor/reddit.py:396-441). Format selection then merges the best
+		// video with the best audio via ffmpeg. It costs one extra reddit
+		// request per video post and is the only route that reliably stores
+		// audio.
+		"-o", "extractor.reddit.videos=ytdl",
 		"--no-part",
 		"-R", "3",
 		"--http-timeout", "30",
@@ -290,6 +324,62 @@ func galleryDlDownloadArgs(destDir string) []string {
 		// is what the archive log and the failure pane need; verbose adds
 		// urllib3 chatter and a full Python traceback around it.
 	}
+}
+
+// galleryDlYtdlImportError is the line gallery-dl's ytdl downloader logs when
+// yt-dlp is not importable from gallery-dl's own Python interpreter
+// (gallery-dl 1.32.9 downloader/ytdl.py:56-63). Everything routed through a
+// "ytdl:" URL — reddit videos, Instagram DASH manifests, TikTok audio — then
+// downloads nothing, and the only other trace is a generic exit code 4.
+const galleryDlYtdlImportError = "Cannot import yt-dlp or youtube-dl"
+
+// galleryDlMissingYtdlMessage explains that failure in terms of the fix. The
+// two tools must live in the SAME Python environment: gallery-dl imports
+// yt-dlp as a module, so a separate pipx/uv install of yt-dlp is invisible to
+// it no matter what the shell PATH says.
+const galleryDlMissingYtdlMessage = "gallery-dl could not import yt-dlp, so it downloaded no video for this post " +
+	"(reddit videos, Instagram DASH manifests and TikTok audio all go through gallery-dl's ytdl downloader). " +
+	"Install yt-dlp into the same Python environment as gallery-dl."
+
+// phraseWatcher passes writes through unchanged while reporting whether a
+// phrase ever appeared in the stream.
+//
+// Process output arrives in arbitrary chunks, so it carries the tail of each
+// write forward: a phrase split across two reads still matches.
+type phraseWatcher struct {
+	out    io.Writer
+	phrase []byte
+	tail   []byte
+	seen   bool
+	mu     sync.Mutex
+}
+
+func newPhraseWatcher(out io.Writer, phrase string) *phraseWatcher {
+	return &phraseWatcher{out: out, phrase: []byte(phrase)}
+}
+
+func (w *phraseWatcher) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	if !w.seen {
+		window := append(w.tail, p...)
+		if bytes.Contains(window, w.phrase) {
+			w.seen = true
+			w.tail = nil
+		} else if overlap := len(w.phrase) - 1; overlap > 0 && len(window) > overlap {
+			w.tail = append([]byte(nil), window[len(window)-overlap:]...)
+		} else {
+			w.tail = append([]byte(nil), window...)
+		}
+	}
+	w.mu.Unlock()
+
+	return w.out.Write(p)
+}
+
+func (w *phraseWatcher) Seen() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.seen
 }
 
 // galleryDlExitReasons maps gallery-dl's exit bits to human-readable causes.
