@@ -140,6 +140,25 @@ func HealthSummary(db *gorm.DB, cfg Config) Summary {
 // contract forbids.
 func SummarizeHealth(health []SlotHealth, cfg Config) Summary {
 	summary := Summary{Status: HealthUnknown, ScheduleOn: cfg.ScheduleEnabled(), ScheduleSpec: cfg.Schedule}
+	// When the operator has narrowed the fleet with CANARY_PROBES, history rows
+	// from slots outside that set no longer describe the configured fleet. A
+	// deliberately dropped slot (reddit behind an IP-level WAF) must not keep
+	// /health red on its stale last run: that is exactly the alarm-nobody-reads
+	// failure the runbook's "do not activate with a known-red slot" rule exists
+	// to prevent. An empty ProbeKeys means the default fleet; keep everything.
+	if len(cfg.ProbeKeys) > 0 {
+		enabled := make(map[string]bool, len(cfg.ProbeKeys))
+		for _, key := range cfg.ProbeKeys {
+			enabled[key] = true
+		}
+		kept := make([]SlotHealth, 0, len(health))
+		for _, slot := range health {
+			if enabled[slot.ProbeKey] {
+				kept = append(kept, slot)
+			}
+		}
+		health = kept
+	}
 	for _, slot := range health {
 		if slot.LastRunAt != nil && (summary.LastRunAt == nil || slot.LastRunAt.After(*summary.LastRunAt)) {
 			last := *slot.LastRunAt

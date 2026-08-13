@@ -152,3 +152,27 @@ func TestSlotHealthFromRunFillsProbeKey(t *testing.T) {
 		t.Errorf("probe key = %q, want bluesky/post", got.ProbeKey)
 	}
 }
+
+// TestSummarizeHealthScopesToConfiguredProbes: a slot the operator dropped via
+// CANARY_PROBES must not keep the fleet signal red on its stale last run.
+func TestSummarizeHealthScopesToConfiguredProbes(t *testing.T) {
+	now := time.Now()
+	health := []SlotHealth{
+		{ProbeKey: "youtube/video", Status: HealthPassing, LastRunAt: &now},
+		{ProbeKey: "reddit/gallery", Status: HealthFailing, LastRunAt: &now},
+	}
+	cfg := Config{Schedule: "6h", Interval: 6 * time.Hour, ProbeKeys: []string{"youtube/video"}}
+	summary := SummarizeHealth(health, cfg)
+	if summary.Status != HealthPassing {
+		t.Fatalf("status = %q, want passing: the failing slot is not in the configured fleet", summary.Status)
+	}
+	if summary.Failing != 0 || len(summary.FailingKeys) != 0 {
+		t.Fatalf("failing = %d %v, want none", summary.Failing, summary.FailingKeys)
+	}
+
+	// Default fleet (no explicit list) keeps reporting every slot.
+	summary = SummarizeHealth(health, Config{Schedule: "6h", Interval: 6 * time.Hour})
+	if summary.Failing != 1 {
+		t.Fatalf("default fleet failing = %d, want 1", summary.Failing)
+	}
+}
