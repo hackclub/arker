@@ -17,7 +17,7 @@ URL_ORDINARY="${URL_ORDINARY:-https://example.com/}"
 URL_YT_VIDEO="${URL_YT_VIDEO:-https://www.youtube.com/watch?v=jNQXAC9IVRw}"   # "Me at the zoo"
 URL_YT_VIDEO_ALT="${URL_YT_VIDEO_ALT:-https://youtu.be/jNQXAC9IVRw}"          # same video, alt spelling (canonical identity check)
 URL_YT_SHORT="${URL_YT_SHORT:-}"        # set at run time: a stable public Short
-URL_VIMEO="${URL_VIMEO:-https://vimeo.com/76979871}"                          # "The Mountain"
+URL_VIMEO="${URL_VIMEO:-https://vimeo.com/76979871}"                          # Vimeo player demo video (62s)
 URL_REDDIT_GALLERY="${URL_REDDIT_GALLERY:-}"  # set at run time: stable public gallery post
 URL_BLUESKY_IMAGE="${URL_BLUESKY_IMAGE:-}"    # set at run time: stable public image post
 URL_IMGUR_ALBUM="${URL_IMGUR_ALBUM:-}"        # set at run time: stable public album

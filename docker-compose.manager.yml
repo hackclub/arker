@@ -1,0 +1,9 @@
+# Manager-only port overrides so this stack never collides with other local
+# stacks (agents may run their own dev environments). Not for production.
+services:
+  db:
+    ports: !override
+      - "55432:5432"
+  app:
+    ports: !override
+      - "8090:8080"
