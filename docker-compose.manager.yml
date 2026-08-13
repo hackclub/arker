@@ -7,3 +7,7 @@ services:
   app:
     ports: !override
       - "8090:8080"
+    environment:
+      # Interpolated from the manager shell only for fallback verification;
+      # never committed as a value.
+      BRIGHTDATA_API_KEY: ${BRIGHTDATA_API_KEY:-}
