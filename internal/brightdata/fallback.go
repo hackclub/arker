@@ -93,6 +93,14 @@ func WithFallback(primary archivers.Archiver, itemType string, backend Backend) 
 	return &FallbackArchiver{Primary: primary, Type: itemType, Backend: backend}
 }
 
+// PaidFallbackEnabled marks this archiver as able to spend money.
+//
+// Callers that must not bill (the production canaries) assert on this before
+// running: they build their own native-only archiver map, and this method is
+// how they prove at runtime that no paid wrapper leaked into it. Native
+// archivers do not implement the interface, so the check fails closed.
+func (f *FallbackArchiver) PaidFallbackEnabled() bool { return true }
+
 func (f *FallbackArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (archivers.Result, error) {
 	result, nativeErr := f.Primary.Archive(ctx, url, logWriter, db, itemID)
 	if nativeErr == nil {
