@@ -1,0 +1,42 @@
+{
+  "category": "twitter",
+  "subcategory": "status",
+  "tweet_id": 1234567890123456789,
+  "retweet_id": 0,
+  "quote_id": 0,
+  "reply_id": 0,
+  "conversation_id": 1234567890123456789,
+  "date": "2026-08-04 18:12:03",
+  "author": {
+    "id": 987654321,
+    "name": "example_user",
+    "nick": "Example User",
+    "verified": false,
+    "protected": false,
+    "date": "2011-04-01 12:00:00"
+  },
+  "user": {
+    "id": 987654321,
+    "name": "example_user",
+    "nick": "Example User"
+  },
+  "lang": "en",
+  "source": "Twitter for iPhone",
+  "sensitive": false,
+  "favorite_count": 8123,
+  "quote_count": 44,
+  "reply_count": 211,
+  "retweet_count": 1902,
+  "view_count": 512344,
+  "content": "the prototype finally works",
+  "count": 1,
+  "num": 1,
+  "type": "video",
+  "bitrate": 2176000,
+  "duration": 31.04,
+  "width": 1280,
+  "height": 720,
+  "url": "https://video.twimg.com/ext_tw_video/1234567890123456789/pu/vid/1280x720/examplevariant.mp4?tag=12",
+  "filename": "examplevariant",
+  "extension": "mp4"
+}

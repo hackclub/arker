@@ -1,0 +1,43 @@
+{
+  "category": "reddit",
+  "subcategory": "submission",
+  "id": "1abc234",
+  "title": "Otter figures out the tap",
+  "author": "example_user",
+  "author_fullname": "t2_examplefullname",
+  "subreddit": "aww",
+  "subreddit_name_prefixed": "r/aww",
+  "permalink": "/r/aww/comments/1abc234/otter_figures_out_the_tap/",
+  "url": "https://v.redd.it/examplevideoid",
+  "domain": "v.redd.it",
+  "created_utc": 1754323200,
+  "date": "2026-08-04 16:00:00",
+  "score": 41235,
+  "ups": 41235,
+  "num_comments": 812,
+  "over_18": false,
+  "is_video": true,
+  "is_self": false,
+  "media_only": false,
+  "secure_media": {
+    "reddit_video": {
+      "bitrate_kbps": 2400,
+      "fallback_url": "https://v.redd.it/examplevideoid/DASH_720.mp4?source=fallback",
+      "has_audio": true,
+      "height": 1280,
+      "width": 720,
+      "scrubber_media_url": "https://v.redd.it/examplevideoid/DASH_96.mp4",
+      "dash_url": "https://v.redd.it/examplevideoid/DASHPlaylist.mpd",
+      "duration": 27,
+      "hls_url": "https://v.redd.it/examplevideoid/HLSPlaylist.m3u8",
+      "is_gif": false,
+      "transcoding_status": "completed"
+    }
+  },
+  "_ytdl_extra": {
+    "title": "Otter figures out the tap"
+  },
+  "num": 0,
+  "filename": "000",
+  "extension": "mp4"
+}

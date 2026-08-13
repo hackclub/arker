@@ -156,11 +156,16 @@ func ProbeYtDlpDuration(ctx context.Context, url string) (time.Duration, error) 
 	}
 	defer cleanupCookies()
 
+	// Probe whatever the archiver will actually download, or a Vimeo capture
+	// would time-box itself off a probe that cannot succeed.
+	fetchURL := YtDlpFetchURL(url)
+
 	args := []string{"--print", "duration", "--no-playlist", "--skip-download"}
 	args = append(args, YtDlpImpersonateArgsForURL(url)...)
+	args = append(args, YtDlpRefererArgsForURL(fetchURL)...)
 	args = append(args, cookieArgs...)
 	args = append(args, YtDlpProxyArgs()...)
-	args = append(args, url)
+	args = append(args, fetchURL)
 	cmd := exec.CommandContext(probeCtx, "yt-dlp", args...)
 	output, err := cmd.CombinedOutput()
 	if probeCtx.Err() != nil {

@@ -1,0 +1,68 @@
+{
+  "uri": "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.post/3mgdqhzxy7s2u",
+  "cid": "bafyreifz2sxssuky7ylacbedxhoppzccwmts6ttwfgsqndpftevfhmbrz4",
+  "author": {
+    "did": "did:plc:z72i7hdynmk6r22z27h6tvur",
+    "handle": "bsky.app",
+    "displayName": "Bluesky",
+    "labels": [],
+    "createdAt": "2023-04-12T04:53:57.057Z",
+    "instance": "bsky.app"
+  },
+  "embed": {
+    "$type": "app.bsky.embed.video",
+    "alt": "A video demonstrating how you can now rearrange your pinned feeds by dragging and dropping them.",
+    "aspectRatio": {
+      "height": 912,
+      "width": 440
+    },
+    "presentation": "default",
+    "video": {
+      "$type": "blob",
+      "ref": {
+        "$link": "bafkreihvie4ovldygztmfufudbih2v52iyqyuhoxeqbagich5sdxkdbewm"
+      },
+      "mimeType": "video/mp4",
+      "size": 251820
+    }
+  },
+  "bookmarkCount": 113,
+  "replyCount": 134,
+  "repostCount": 334,
+  "likeCount": 2258,
+  "quoteCount": 57,
+  "indexedAt": "2026-03-05T21:27:54.349Z",
+  "labels": [],
+  "$type": "app.bsky.feed.post",
+  "createdAt": "2026-03-05T21:27:53.636Z",
+  "facets": [
+    {
+      "features": [
+        {
+          "$type": "app.bsky.richtext.facet#link",
+          "uri": "https://bsky.app/settings/saved-feeds"
+        }
+      ],
+      "index": {
+        "byteEnd": 177,
+        "byteStart": 153
+      }
+    }
+  ],
+  "langs": [
+    "ja"
+  ],
+  "text": "With today's update, you can now rearrange your pinned feeds by simply dragging and dropping. Much more convenient!\n\nTo edit your pinned feeds, go here: bsky.app/settings/sav...",
+  "instance": "bsky.app",
+  "post_id": "3mgdqhzxy7s2u",
+  "date": "2026-03-05 21:27:53",
+  "count": 1,
+  "category": "bluesky",
+  "subcategory": "post",
+  "num": 1,
+  "description": "A video demonstrating how you can now rearrange your pinned feeds by dragging and dropping them.",
+  "width": 440,
+  "height": 912,
+  "filename": "bafkreihvie4ovldygztmfufudbih2v52iyqyuhoxeqbagich5sdxkdbewm",
+  "extension": "mp4"
+}

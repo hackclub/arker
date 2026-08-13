@@ -130,7 +130,10 @@ func IsInstagramPhotoPostURL(url string) bool {
 	return strings.Contains(lowerURL, "/p/") || strings.Contains(lowerURL, "/tv/")
 }
 
-// Check if URL is a TikTok URL (full video links and vm/vt/t short links)
+// Check if URL is a TikTok video URL (full video links and vm/vt/t short links)
+//
+// Photo posts (/photo/) are deliberately excluded: yt-dlp cannot download them
+// at all. They go to gallery-dl instead — see IsTikTokPhotoPostURL.
 func IsTikTokURL(url string) bool {
 	lowerURL := strings.ToLower(url)
 	if strings.Contains(lowerURL, "vm.tiktok.com/") || strings.Contains(lowerURL, "vt.tiktok.com/") {
@@ -141,6 +144,57 @@ func IsTikTokURL(url string) bool {
 	}
 	return strings.Contains(lowerURL, "/video/") ||
 		strings.Contains(lowerURL, "tiktok.com/t/")
+}
+
+// IsTikTokPhotoPostURL reports whether a TikTok URL is a photo post
+// (tiktok.com/@user/photo/<id> or tiktok.com/share/photo/<id>).
+//
+// A TikTok photo post is a slideshow of stills with a music track, not a
+// video: yt-dlp rejects it, and before this existed the URL matched no media
+// archiver at all, so it silently became an MHTML/screenshot-only capture.
+// gallery-dl's tiktok extractor handles both shapes (gallery-dl 1.32.9
+// extractor/tiktok.py TiktokPostExtractor, pattern
+// "/(?:@([\w_.-]*)|share)/(?:phot|vide)o/(\d+)") and downloads each still from
+// its CDN URL plus the post's audio track, with no yt-dlp module involved.
+//
+// Short links (vm./vt./tiktok.com/t/) are NOT matched here — see
+// IsTikTokShortLinkURL for why they stay on yt-dlp.
+func IsTikTokPhotoPostURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	if !hostMatches(strings.ToLower(parsed.Hostname()), "tiktok.com") {
+		return false
+	}
+	return strings.Contains(strings.ToLower(parsed.Path), "/photo/")
+}
+
+// IsTikTokShortLinkURL reports whether a URL is a TikTok share short link
+// (vm.tiktok.com/X, vt.tiktok.com/X, tiktok.com/t/X).
+//
+// A short link hides its post type behind a redirect, so routing cannot tell a
+// video from a photo post without resolving it. Arker keeps short links on
+// yt-dlp: the overwhelming majority are videos, and resolving the redirect
+// would mean a network call inside GetArchiveTypes, which is a pure function
+// called from request handlers and the queue.
+//
+// The photo-post case therefore fails, but it fails EXPLICITLY: yt-dlp reports
+// that the post has no video, the yt-dlp item goes to failed, and
+// IsSocialMediaPostURL still recognizes the URL, so the API returns a failed
+// social_post rather than a silent MHTML-only success. See
+// docs note in IsSocialMediaPostURL.
+func IsTikTokShortLinkURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	if hostname == "vm.tiktok.com" || hostname == "vt.tiktok.com" {
+		return true
+	}
+	return hostMatches(hostname, "tiktok.com") &&
+		strings.HasPrefix(strings.ToLower(parsed.Path), "/t/")
 }
 
 // Check if URL is a Facebook video URL (reels, watch, and page videos)
@@ -161,9 +215,10 @@ func IsFacebookURL(url string) bool {
 //
 // Instagram feed posts are excluded: they are photo carousels far more often
 // than video, and routing them here is what produced a ~87% yt-dlp failure rate
-// on /p/ URLs. They are handled by IsGalleryDLURL instead.
+// on /p/ URLs. They are handled by IsGalleryDLURL instead. TikTok photo posts
+// are excluded for the same reason: yt-dlp cannot download a slideshow.
 func IsVideoURL(url string) bool {
-	if IsInstagramPhotoPostURL(url) {
+	if IsInstagramPhotoPostURL(url) || IsTikTokPhotoPostURL(url) {
 		return false
 	}
 	return IsYouTubeURL(url) || IsVimeoURL(url) || IsInstagramURL(url) || IsTikTokURL(url) || IsFacebookURL(url)
@@ -194,6 +249,10 @@ var galleryDLSites = []galleryDLSite{
 	// Instagram feed posts. Reels stay on yt-dlp (see IsVideoURL).
 	// Logged out, Instagram redirects every request to its login page.
 	{host: "instagram.com", paths: []string{"/p/", "/tv/"}, requiresCookies: true},
+	// TikTok photo posts (slideshows). Videos and short links stay on yt-dlp
+	// (see IsVideoURL / IsTikTokShortLinkURL); gallery-dl's tiktok extractor
+	// pulls each still straight from its CDN URL and works logged out.
+	{host: "tiktok.com", paths: []string{"/photo/"}},
 	{host: "twitter.com", paths: []string{"/status/"}, requiresCookies: true},
 	{host: "x.com", paths: []string{"/status/"}, requiresCookies: true},
 	{host: "pinterest.com", paths: []string{"/pin/"}, requiresCookies: true},
@@ -299,6 +358,47 @@ func ShouldCreateGalleryDLItem(rawURL string) bool {
 		return false
 	}
 	return true
+}
+
+// IsSocialMediaPostURL reports whether a URL is a social-media post Arker
+// claims to archive as a post, as opposed to an ordinary web page.
+//
+// This is the single source of truth for "recognized social post". Routing
+// (GetArchiveTypes) and the unified archive API must agree on it: a URL that
+// gets a media archive item but is not recognized would be served as a plain
+// page capture, and a URL that is recognized but gets no media item must
+// surface an explicit failure rather than a green MHTML/screenshot-only
+// archive. Deriving both from this one function is what keeps those two
+// answers from drifting apart.
+//
+// Recognized shapes, all of which route to yt-dlp or gallery-dl:
+//
+//	YouTube      /watch, /shorts/, youtu.be           -> yt-dlp
+//	Vimeo        vimeo.com/<id>                       -> yt-dlp (via player URL)
+//	Instagram    /reel/                               -> yt-dlp
+//	Instagram    /p/, /tv/                            -> gallery-dl (cookies)
+//	TikTok       /video/, vm/vt/t short links         -> yt-dlp
+//	TikTok       /photo/                              -> gallery-dl
+//	Facebook     /reel/, /videos/, /watch, fb.watch   -> yt-dlp
+//	X/Twitter    /status/                             -> gallery-dl (cookies)
+//	Reddit       /comments/, redd.it, v.redd.it       -> gallery-dl
+//	Bluesky      /post/                               -> gallery-dl
+//	Pinterest    /pin/                                -> gallery-dl (cookies)
+//	Tumblr, Flickr, Imgur, DeviantArt, ArtStation,
+//	Pixiv, Newgrounds, VSCO post shapes               -> gallery-dl
+//
+// Recognition is deliberately wider than item creation: a login-only site with
+// no cookie jar gets no gallery-dl item (ShouldCreateGalleryDLItem), but the
+// URL is still a recognized post, so the API answers with an explicit
+// authentication_required failure instead of pretending nothing social was
+// asked for.
+//
+// A TikTok short link that turns out to be a photo post is recognized here and
+// routed to yt-dlp, which fails explicitly; resolving the redirect first would
+// require a network call from this pure function. Facebook photo posts and
+// other unclaimed shapes are NOT recognized and keep ordinary URL behavior.
+func IsSocialMediaPostURL(rawURL string) bool {
+	return IsVideoURL(rawURL) || IsGalleryDLURL(rawURL)
 }
 
 // Check if URL is an itch.io URL
