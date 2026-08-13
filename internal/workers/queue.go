@@ -3,6 +3,7 @@ package workers
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -27,24 +28,77 @@ type FindOrCreateResult struct {
 	Status  string
 }
 
-// lockIdentity serializes concurrent capture work on one canonical identity
-// until the calling transaction commits. Two same-second submissions of a post
-// (18.4% of same-day repeats in prod) would otherwise both miss the lookup
-// below and both start a full archive — and because the key is the canonical
-// identity rather than the raw string, that now holds for two *different
-// spellings* of the same post as well.
-//
-// hashtext collisions merely cause harmless extra serialization. Advisory locks
-// are Postgres-only; other dialects (SQLite in tests) have no equivalent, so
-// they get no cross-connection serialization at all.
-//
-// It is a var so tests can substitute a real in-process lock and exercise the
-// concurrency contract on SQLite, where the Postgres path is unreachable.
-var lockIdentity = func(tx *gorm.DB, identity string) error {
-	if tx.Dialector.Name() != "postgres" {
-		return nil
+// captureIdentityLocks serializes capture creation for one canonical identity
+// within this process. It is the in-process half of the pair described on
+// withCaptureIdentityLock.
+var captureIdentityLocks = &identityLockSet{locks: map[string]*identityLock{}}
+
+type identityLockSet struct {
+	mu    sync.Mutex
+	locks map[string]*identityLock
+}
+
+type identityLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// acquire blocks until identity is free and returns its release func. Waiters
+// are counted before blocking so an entry cannot be evicted out from under one.
+func (s *identityLockSet) acquire(identity string) func() {
+	s.mu.Lock()
+	lock := s.locks[identity]
+	if lock == nil {
+		lock = &identityLock{}
+		s.locks[identity] = lock
 	}
-	return tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", identity).Error
+	lock.refs++
+	s.mu.Unlock()
+
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		s.mu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(s.locks, identity)
+		}
+		s.mu.Unlock()
+	}
+}
+
+// withCaptureIdentityLock runs fn inside a transaction serialized on a canonical
+// identity, so concurrent submissions of one post cannot each conclude that no
+// capture exists and each start a full archive. Two same-second POSTs are 18.4%
+// of same-day repeats in prod; keying on the canonical identity rather than the
+// raw string extends that protection to two different *spellings* of one post,
+// which is the whole point of this change.
+//
+// Both halves are needed and neither is redundant:
+//
+//   - pg_advisory_xact_lock is the real lock. It is held until the transaction
+//     commits and it works across app instances, which is the deployed shape.
+//     hashtext collisions merely cause harmless extra serialization.
+//   - The in-process mutex covers dialects that have no advisory locks (SQLite,
+//     which is what the tests run on). It is not cross-process safe and does not
+//     pretend to be — on Postgres it is a cheap fast-path that the advisory lock
+//     would enforce anyway — but it makes the concurrency contract executable
+//     rather than assertable only against a live Postgres.
+//
+// Lock order is fixed (in-process, then advisory) and fn takes no further
+// identity locks, so the pair cannot deadlock.
+func withCaptureIdentityLock(db *gorm.DB, identity string, fn func(tx *gorm.DB) error) error {
+	unlock := captureIdentityLocks.acquire(identity)
+	defer unlock()
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		if tx.Dialector.Name() == "postgres" {
+			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", identity).Error; err != nil {
+				return err
+			}
+		}
+		return fn(tx)
+	})
 }
 
 // loadIdentityRows returns every ArchivedURL row sharing url's canonical
@@ -198,11 +252,7 @@ func FindOrCreateCapture(ctx context.Context, db *gorm.DB, riverClient *river.Cl
 	canonical := utils.CanonicalizeArchiveURL(url)
 
 	var result FindOrCreateResult
-	err := db.Transaction(func(tx *gorm.DB) error {
-		if err := lockIdentity(tx, canonical); err != nil {
-			return err
-		}
-
+	err := withCaptureIdentityLock(db, canonical, func(tx *gorm.DB) error {
 		rows, exact, err := loadIdentityRows(tx, url, canonical)
 		if err != nil {
 			return err
@@ -337,11 +387,7 @@ func createCapture(db *gorm.DB, url string, types []string, apiKeyID *uint, forc
 	var createdItems int
 	var aliasOf *models.Capture
 
-	err := db.Transaction(func(tx *gorm.DB) error {
-		if err := lockIdentity(tx, canonical); err != nil {
-			return err
-		}
-
+	err := withCaptureIdentityLock(db, canonical, func(tx *gorm.DB) error {
 		rows, exact, err := loadIdentityRows(tx, url, canonical)
 		if err != nil {
 			return err

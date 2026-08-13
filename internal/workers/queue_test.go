@@ -1,6 +1,8 @@
 package workers
 
 import (
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,9 +13,18 @@ import (
 	"arker/internal/utils"
 )
 
+// testDBSeq gives every call its own database. The DSN *is* the identity of a
+// shared-cache in-memory SQLite database, so keying it on the test name alone
+// makes `go test -count=2` re-run each test against the rows its previous run
+// left behind — which reads as a mysterious UNIQUE constraint failure rather
+// than as state leakage. Concurrency tests in particular get run with -count=N
+// by anyone checking for flakes.
+var testDBSeq atomic.Uint64
+
 func newQueueTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	dsn := fmt.Sprintf("file:%s-%d?mode=memory&cache=shared", t.Name(), testDBSeq.Add(1))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
