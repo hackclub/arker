@@ -164,10 +164,15 @@ func (c *Client) fetchThroughBrowser(ctx context.Context, req browserFetchReques
 			fmt.Fprintf(req.LogWriter, "Retrying with a different session geography (%s) after: %v\n",
 				countryLabel(country), lastErr)
 		}
-		out.Sessions++
 
-		path, size, mediaURL, err := c.browserFetchSession(ctx, country, req)
+		path, size, mediaURL, opened, err := c.browserFetchSession(ctx, country, req)
 		out.Size += size
+		// Only a session that actually opened is billable: a connect that
+		// never established one transferred nothing, and counting it would
+		// invent page-load overhead in the spend estimate.
+		if opened {
+			out.Sessions++
+		}
 		if err == nil {
 			out.Path, out.MediaURL = path, mediaURL
 			return out, nil
@@ -181,11 +186,12 @@ func (c *Client) fetchThroughBrowser(ctx context.Context, req browserFetchReques
 }
 
 // browserFetchSession runs one session: connect, navigate, then try each
-// candidate URL until one yields bytes.
-func (c *Client) browserFetchSession(ctx context.Context, country string, req browserFetchRequest) (string, int64, string, error) {
+// candidate URL until one yields bytes. The opened return reports whether a
+// remote session was actually established, which is what makes it billable.
+func (c *Client) browserFetchSession(ctx context.Context, country string, req browserFetchRequest) (string, int64, string, bool, error) {
 	session, err := c.openBrowserSession(ctx, country, req.PageURL, req.LogWriter)
 	if err != nil {
-		return "", 0, "", err
+		return "", 0, "", false, err
 	}
 	defer session.Close()
 
@@ -195,7 +201,7 @@ func (c *Client) browserFetchSession(ctx context.Context, country string, req br
 		path, size, err := fetchURLThroughPage(ctx, session, mediaURL, req.TotalHint, req.TempPattern, req.LogWriter)
 		fetched += size
 		if err == nil {
-			return path, fetched, mediaURL, nil
+			return path, fetched, mediaURL, true, nil
 		}
 		lastErr = err
 		if ctx.Err() != nil {
@@ -203,7 +209,7 @@ func (c *Client) browserFetchSession(ctx context.Context, country string, req br
 		}
 		fmt.Fprintf(req.LogWriter, "In-page fetch failed for one candidate URL: %v\n", err)
 	}
-	return "", fetched, "", lastErr
+	return "", fetched, "", true, lastErr
 }
 
 // fetchMediaChunkJS fetches one Range of the media URL inside the page and

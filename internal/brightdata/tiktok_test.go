@@ -2,6 +2,7 @@ package brightdata
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -377,5 +378,41 @@ func TestTikTokSessionCountries(t *testing.T) {
 				t.Errorf("region %q -> %v; want %v", c.region, got, c.want)
 			}
 		}
+	}
+}
+
+// Without browser credentials a refused still cannot be rescued, and the
+// archive must not be billed for the session that could not be opened.
+func TestArchiveTikTokPhotoPostWithoutBrowserCredentials(t *testing.T) {
+	image := fakePNG(t)
+	record := map[string]any{
+		"post_id":   "1",
+		"url":       "https://www.tiktok.com/@someone/photo/1",
+		"post_type": "photo",
+		"carousel_images": []any{
+			"https://p16-sign.tiktokcdn-us.com/one.image",
+			"https://p16-sign.tiktokcdn-us.com/two.image",
+		},
+	}
+	network := newFakeNetwork(record)
+	network.serve("https://p16-sign.tiktokcdn-us.com/one.image", image)
+
+	client, db := newTestClient(t, network)
+	client.openBrowser = func(ctx context.Context, country, pageURL string, logWriter io.Writer) (browserSession, error) {
+		return nil, errors.New("Bright Data browser credentials are not configured")
+	}
+
+	result, err := client.archiveTikTok(context.Background(), "https://www.tiktok.com/@someone/photo/1", utils.ArchiveTypeGalleryDl, io.Discard, db, 27, "tt007")
+	if err != nil {
+		t.Fatalf("archiveTikTok: %v", err)
+	}
+	readResult(t, result)
+	// One of two stills is a partial archive, and partial never reads green.
+	if result.Completeness != archivers.CompletenessPartial {
+		t.Errorf("completeness = %q; want partial", result.Completeness)
+	}
+	rows := usageRows(t, db)
+	if len(rows) != 1 || rows[0].Product != "web_scraper" {
+		t.Fatalf("usage rows = %+v; want only the dataset record", rows)
 	}
 }

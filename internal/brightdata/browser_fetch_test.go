@@ -243,3 +243,36 @@ func TestDeterministicChunkFailure(t *testing.T) {
 		t.Error("nil error classified as deterministic")
 	}
 }
+
+// A session that never connected transferred nothing, so it must not appear in
+// the spend estimate: the usage row would otherwise invent a page load per
+// failed connect.
+func TestFetchThroughBrowserDoesNotBillSessionsThatNeverOpened(t *testing.T) {
+	client := &Client{}
+	attempts := 0
+	client.openBrowser = func(ctx context.Context, country, pageURL string, logWriter io.Writer) (browserSession, error) {
+		attempts++
+		return nil, errors.New("connection failed (no_peers)")
+	}
+
+	result, err := client.fetchThroughBrowser(context.Background(), browserFetchRequest{
+		PageURL:     "https://example.com/post",
+		MediaURLs:   []string{testMediaURL},
+		Countries:   []string{"us", ""},
+		TempPattern: "arker-test-*.bin",
+		LogWriter:   io.Discard,
+		Retryable:   func(error) bool { return true },
+	})
+	if err == nil {
+		t.Fatal("expected the fetch to fail")
+	}
+	if attempts != 2 {
+		t.Errorf("attempted %d connects; want one per geography", attempts)
+	}
+	if result.Sessions != 0 {
+		t.Errorf("billed %d sessions that never opened", result.Sessions)
+	}
+	if bytesTransferred, cost := client.browserSessionCost(result.Size, result.Sessions); bytesTransferred != 0 || cost != 0 {
+		t.Errorf("charged %d bytes / $%v for sessions that never opened", bytesTransferred, cost)
+	}
+}

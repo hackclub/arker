@@ -72,13 +72,17 @@ func (c *Client) archiveYouTube(ctx context.Context, targetURL string, logWriter
 			fmt.Fprintf(logWriter, "Retrying with a different session geography (%s) after: %v\n",
 				countryLabel(country), lastErr)
 		}
-		sessions++
-
 		var info *youtubeMediaInfo
 		var videoPath string
 		var size int64
-		info, videoPath, size, lastErr = c.youtubeSession(ctx, country, watchURL, videoID, logWriter)
+		var opened bool
+		info, videoPath, size, opened, lastErr = c.youtubeSession(ctx, country, watchURL, videoID, logWriter)
 		totalBytes += size
+		// A session that never connected transferred nothing, so it is not
+		// billed: counting it would invent page-load overhead in the estimate.
+		if opened {
+			sessions++
+		}
 		if lastErr == nil {
 			fmt.Fprintf(logWriter, "Downloaded %d bytes through Bright Data browser session\n", size)
 
@@ -126,18 +130,19 @@ func (c *Client) archiveYouTube(ctx context.Context, targetURL string, logWriter
 }
 
 // youtubeSession runs one complete browser session attempt: connect, navigate,
-// resolve, download. Returns the media info, temp file path, and bytes
-// fetched (bytes are reported even on failure, for usage accounting).
-func (c *Client) youtubeSession(ctx context.Context, country, watchURL, videoID string, logWriter io.Writer) (*youtubeMediaInfo, string, int64, error) {
+// resolve, download. Returns the media info, temp file path, the bytes fetched
+// and whether a remote session actually opened — the last two are reported
+// even on failure, because that is what the usage row has to bill.
+func (c *Client) youtubeSession(ctx context.Context, country, watchURL, videoID string, logWriter io.Writer) (*youtubeMediaInfo, string, int64, bool, error) {
 	session, err := c.openBrowserSession(ctx, country, watchURL, logWriter)
 	if err != nil {
-		return nil, "", 0, err
+		return nil, "", 0, false, err
 	}
 	defer session.Close()
 
 	info, err := resolveYouTubeMedia(session, videoID, c.cfg)
 	if err != nil {
-		return nil, "", 0, err
+		return nil, "", 0, true, err
 	}
 	fmt.Fprintf(logWriter, "Resolved %s (%s) by %s: %s, %d bytes\n",
 		info.Title, info.QualityLabel, info.Author, info.MimeType, info.ContentLength)
@@ -150,13 +155,13 @@ func (c *Client) youtubeSession(ctx context.Context, country, watchURL, videoID 
 
 	videoPath, size, err := fetchURLThroughPage(ctx, session, info.URL, info.ContentLength, "arker-bd-yt-*.mp4", logWriter)
 	if err != nil {
-		return nil, "", size, err
+		return nil, "", size, true, err
 	}
 	if err := verifyMP4(videoPath); err != nil {
 		removeFile(videoPath)
-		return nil, "", size, err
+		return nil, "", size, true, err
 	}
-	return info, videoPath, size, nil
+	return info, videoPath, size, true, nil
 }
 
 // retryableInAnotherCountry classifies failures a fresh session elsewhere
