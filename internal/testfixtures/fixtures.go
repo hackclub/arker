@@ -17,6 +17,7 @@
 package testfixtures
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -234,6 +235,105 @@ func (c Case) InfoJSON(t *testing.T) []byte {
 	}
 	return data
 }
+
+// SubtitleTrack is one subtitle file a yt-dlp run writes beside the video when
+// Arker passes --write-subs/--write-auto-subs.
+//
+// The distinction between an auto-generated and an uploader-supplied track
+// matters to the transcript contract: YouTube's auto-captions roll, repeating
+// the previous line in each new cue, so a transcript built by concatenating
+// cues naively comes out roughly twice as long as the video's actual speech.
+type SubtitleTrack struct {
+	// Lang is the BCP-47 tag, e.g. "en".
+	Lang string
+	// Suffix is what yt-dlp appends to the output base, e.g. ".en.vtt".
+	Suffix string
+	// Data is the WebVTT payload.
+	Data []byte
+	// Auto reports an auto-generated track (YouTube's rolling captions).
+	Auto bool
+}
+
+// SubtitleTracks returns the subtitle fixtures for a yt-dlp case, or nil when
+// the case deliberately has none. A case with no tracks is not an error: it is
+// the "no subtitles available" arm of the contract, which must still fulfill.
+func (c Case) SubtitleTracks(t *testing.T) []SubtitleTrack {
+	t.Helper()
+	if c.Tool != ToolYtDlp {
+		return nil
+	}
+	matches, err := filepath.Glob(filepath.Join(root(t), "ytdlp", c.Name+".*.vtt"))
+	if err != nil {
+		t.Fatalf("glob subtitle fixtures for %s: %v", c.Name, err)
+	}
+	sort.Strings(matches)
+	var out []SubtitleTrack
+	for _, path := range matches {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read subtitle fixture %s: %v", path, err)
+		}
+		suffix := strings.TrimPrefix(filepath.Base(path), c.Name)
+		lang := strings.TrimSuffix(strings.TrimPrefix(suffix, "."), ".vtt")
+		out = append(out, SubtitleTrack{
+			Lang:   lang,
+			Suffix: suffix,
+			Data:   data,
+			// YouTube's auto-caption cues carry this positioning directive;
+			// uploader-supplied tracks do not.
+			Auto: strings.Contains(string(data), "align:start position:0%"),
+		})
+	}
+	return out
+}
+
+// CaptionLines returns the track's distinct caption lines in order, with the
+// rolling duplication of auto-captions collapsed.
+//
+// This is what a transcript has to look like: every spoken line once, in the
+// order it was said. Tests assert the production transcript against this
+// rather than against a golden string, so a fixture edit cannot silently
+// invalidate the expectation.
+func (s SubtitleTrack) CaptionLines() []string {
+	var lines []string
+	seen := map[string]bool{}
+	for _, raw := range strings.Split(string(s.Data), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || line == "WEBVTT" ||
+			strings.HasPrefix(line, "Kind:") || strings.HasPrefix(line, "Language:") ||
+			strings.Contains(line, "-->") {
+			continue
+		}
+		// Cue sequence numbers in uploader-supplied tracks.
+		if _, err := strconvAtoi(line); err == nil {
+			continue
+		}
+		if seen[line] {
+			continue
+		}
+		seen[line] = true
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+// strconvAtoi is a tiny local integer parse, kept here so this package does
+// not pull in strconv for one call.
+func strconvAtoi(s string) (int, error) {
+	n := 0
+	if s == "" {
+		return 0, errNotAnInt
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return 0, errNotAnInt
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n, nil
+}
+
+var errNotAnInt = fmt.Errorf("not an integer")
 
 // Sidecar is one gallery-dl output pair: the media file gallery-dl would have
 // written and the JSON metadata sidecar it writes beside it.

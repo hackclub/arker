@@ -168,3 +168,67 @@ func TestPlaceholderJPEGIsDecodable(t *testing.T) {
 		t.Fatalf("fixture corpus is missing: %v", err)
 	}
 }
+
+func TestFakeYtDlpWritesSubtitleTracks(t *testing.T) {
+	InstallFakeYtDlp(t, YtDlpFake{Fixture: "youtube_regular"})
+
+	base := filepath.Join(t.TempDir(), "video")
+	cmd := exec.Command("yt-dlp", "--write-info-json", "--write-subs", "--write-auto-subs",
+		"-o", base+".%(ext)s", "https://www.youtube.com/watch?v=aqz-KE-bpKQ")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("download run: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(base + ".en.vtt"); err != nil {
+		t.Fatalf("fake yt-dlp did not write the subtitle track: %v", err)
+	}
+}
+
+// The rolling duplication in YouTube's auto-captions is the whole reason the
+// transcript contract needs a dedupe step, so the fixture has to actually
+// contain it.
+func TestYouTubeSubtitleFixtureRollsLikeARealAutoCaption(t *testing.T) {
+	tracks := Lookup(t, "youtube_regular").SubtitleTracks(t)
+	if len(tracks) != 1 {
+		t.Fatalf("got %d tracks, want 1", len(tracks))
+	}
+	if !tracks[0].Auto {
+		t.Error("the YouTube fixture should be an auto-caption track")
+	}
+
+	raw := strings.Count(string(tracks[0].Data), "big buck bunny is a short")
+	if raw < 3 {
+		t.Errorf("fixture repeats the first line %d times, want the rolling duplication a real auto-caption has", raw)
+	}
+	lines := tracks[0].CaptionLines()
+	for _, line := range lines {
+		if strings.Count(strings.Join(lines, "\n"), line) != 1 {
+			t.Errorf("CaptionLines still contains %q more than once", line)
+		}
+	}
+	if len(lines) != 4 {
+		t.Errorf("CaptionLines = %v, want the 4 distinct spoken lines", lines)
+	}
+}
+
+func TestTikTokSubtitleFixtureIsAnUploaderTrack(t *testing.T) {
+	tracks := Lookup(t, "tiktok_video").SubtitleTracks(t)
+	if len(tracks) != 1 {
+		t.Fatalf("got %d tracks, want 1", len(tracks))
+	}
+	if tracks[0].Auto {
+		t.Error("the TikTok fixture is an uploader-supplied caption track, not auto-generated")
+	}
+	if got := len(tracks[0].CaptionLines()); got != 3 {
+		t.Errorf("CaptionLines = %d, want 3", got)
+	}
+}
+
+// Most videos have no captions. These cases pin that the corpus keeps a
+// no-subtitles arm, which the fulfillment contract depends on.
+func TestSomeFixturesDeliberatelyHaveNoSubtitles(t *testing.T) {
+	for _, name := range []string{"vimeo_video", "instagram_reel", "facebook_video"} {
+		if tracks := Lookup(t, name).SubtitleTracks(t); len(tracks) != 0 {
+			t.Errorf("%s has %d subtitle tracks, want none", name, len(tracks))
+		}
+	}
+}

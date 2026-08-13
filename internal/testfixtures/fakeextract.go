@@ -59,6 +59,11 @@ type YtDlpFake struct {
 	// and must not fail the archive.
 	NoThumbnail bool
 
+	// NoSubtitles suppresses the subtitle tracks even when the fixture has
+	// them. Most videos on most platforms have no captions at all, so this
+	// is the common case, not an edge case — and it must still fulfill.
+	NoSubtitles bool
+
 	// FailProbe makes the "--print title,duration,uploader" accessibility
 	// check exit non-zero, the shape of a login wall or a geo-block.
 	FailProbe bool
@@ -143,6 +148,13 @@ func InstallFakeYtDlp(t *testing.T, cfg YtDlpFake) string {
 		duration = jsonNumberField(t, info, "duration")
 		if !cfg.NoInfoJSON {
 			writeStageFile(t, outDir, "payload.info.json", info)
+		}
+		// yt-dlp writes "<output base><suffix>" for each subtitle track, e.g.
+		// video.en.vtt, exactly like the info JSON and the poster.
+		if !cfg.NoSubtitles {
+			for _, track := range c.SubtitleTracks(t) {
+				writeStageFile(t, outDir, "payload"+track.Suffix, track.Data)
+			}
 		}
 	}
 	writeStageFile(t, stage, "print.txt",
