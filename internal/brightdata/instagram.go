@@ -428,14 +428,22 @@ func galleryMetadataFromRecord(record map[string]any, sourceURL string) *archive
 
 // buildGalleryZip writes metadata.json, the raw record, and the media files
 // into a ZIP laid out exactly like the native gallery-dl artifact.
+//
+// The raw record is sanitized on the way in, not on the way out. The bundle is
+// downloadable, so a signed CDN URL written into it is a credential stored at
+// rest — serve-time redaction would not reach it.
 func buildGalleryZip(dir string, meta *archivers.GalleryMetadata, record map[string]any) (string, error) {
 	metadataJSON, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return "", err
 	}
-	rawJSON, err := json.MarshalIndent(record, "", "  ")
+	recordJSON, err := json.Marshal(record)
 	if err != nil {
 		return "", err
+	}
+	rawJSON, err := archivers.SanitizeJSON(recordJSON, nil)
+	if err != nil {
+		return "", fmt.Errorf("sanitize Bright Data record: %w", err)
 	}
 
 	zipFile, err := createTempFile("arker-bd-gallery-*.zip")
