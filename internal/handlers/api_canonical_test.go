@@ -95,3 +95,45 @@ func TestApiFindOrCreateOrdinaryURLCompatibility(t *testing.T) {
 		t.Fatalf("ordinary URL was rewritten: original %q, canonical %q", row.Original, row.CanonicalURL)
 	}
 }
+
+// TestRedirectIfAliasResolvesAcrossIdentityRows: keying capture reuse on the
+// canonical identity newly allows an alias whose ArchivedURL row differs from
+// the canonical capture's — someone submits the watch URL and gets aliased to
+// an archive stored under the youtu.be spelling. Alias resolution keys purely
+// on capture ID, so this works; the test exists to keep it that way.
+func TestRedirectIfAliasResolvesAcrossIdentityRows(t *testing.T) {
+	db := newAliasTestDB(t)
+
+	canonicalRow := models.ArchivedURL{
+		Original:     "https://youtu.be/dQw4w9WgXcQ?si=abc",
+		CanonicalURL: utils.CanonicalizeArchiveURL("https://youtu.be/dQw4w9WgXcQ?si=abc"),
+	}
+	if err := db.Create(&canonicalRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	canonicalCapture := models.Capture{ArchivedURLID: canonicalRow.ID, Timestamp: time.Now(), ShortID: "ytreal"}
+	if err := db.Create(&canonicalCapture).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// The alias hangs off a *different* row: the spelling the caller submitted.
+	aliasRow := models.ArchivedURL{
+		Original:     "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+		CanonicalURL: canonicalRow.CanonicalURL,
+	}
+	if err := db.Create(&aliasRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	alias := models.Capture{ArchivedURLID: aliasRow.ID, Timestamp: time.Now(), ShortID: "ytalia", AliasOfID: &canonicalCapture.ID}
+	if err := db.Create(&alias).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	w := performAliasRequest(db, "/ytalia/screenshot")
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want a redirect", w.Code)
+	}
+	if got := w.Header().Get("Location"); got != "/ytreal/screenshot" {
+		t.Fatalf("Location = %q, want /ytreal/screenshot", got)
+	}
+}
