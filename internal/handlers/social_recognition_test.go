@@ -36,6 +36,13 @@ func TestApiArchiveResultRecognizesClaimedSocialShapes(t *testing.T) {
 		{"xstt1", "https://x.com/someone/status/1234567890123456789"},
 		{"ytsh1", "https://www.youtube.com/shorts/abc123"},
 		{"fbrl1", "https://www.facebook.com/reel/1234567890"},
+		// Facebook photo posts and post permalinks: unclaimed until the Bright
+		// Data per-post pathway made them archivable, so a photo post used to
+		// read as a plain successful web capture.
+		{"fbph1", "https://www.facebook.com/photo/?fbid=123"},
+		{"fbpp1", "https://www.facebook.com/NASA/photos/1496429658519072/"},
+		{"fbpk1", "https://www.facebook.com/NASA/posts/pfbid02abcDEF/"},
+		{"pint1", "https://www.pinterest.com/pin/1123648175807513296/"},
 	}
 	for _, tc := range social {
 		createVideoCapture(t, db, tc.shortID, tc.url, pageOnly)
@@ -67,7 +74,11 @@ func TestApiArchiveResultRecognizesClaimedSocialShapes(t *testing.T) {
 	}{
 		{"page1", "https://example.com/article"},
 		{"gith1", "https://github.com/hackclub/arker"},
-		{"fbph1", "https://www.facebook.com/photo/?fbid=123"},
+		// Facebook containers stay ordinary URLs: a page, its photo tab and its
+		// feed are not posts, and claiming one would promise a post capture of
+		// an entire account.
+		{"fbpg1", "https://www.facebook.com/zuck"},
+		{"fbpt1", "https://www.facebook.com/NASA/photos"},
 		{"tkpr1", "https://www.tiktok.com/@someone"},
 	} {
 		createVideoCapture(t, db, tc.shortID, tc.url, pageOnly)

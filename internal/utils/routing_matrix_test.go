@@ -112,6 +112,10 @@ func TestArchiveTypeMatrixWithoutCookies(t *testing.T) {
 		{"x status", "https://x.com/someone/status/1234567890123456789", base},
 		{"twitter status", "https://twitter.com/someone/status/1234567890123456789", base},
 		{"pinterest pin", "https://www.pinterest.com/pin/1234567890/", base},
+		{"facebook photo post", "https://www.facebook.com/photo/?fbid=123", base},
+		{"facebook photo.php", "https://www.facebook.com/photo.php?fbid=123", base},
+		{"facebook page photo", "https://www.facebook.com/NASA/photos/1234567890/", base},
+		{"facebook post permalink", "https://www.facebook.com/NASA/posts/pfbid02abcDEF/", base},
 
 		// --- ordinary URL behavior must not change ---
 		{"github repo", "https://github.com/hackclub/arker", append(append([]string{}, base...), ArchiveTypeGit)},
@@ -120,9 +124,13 @@ func TestArchiveTypeMatrixWithoutCookies(t *testing.T) {
 		{"itch game", "https://someone.itch.io/some-game", append(append([]string{}, base...), ArchiveTypeItch)},
 		{"plain page", "https://example.com/article", base},
 		{"plain page with /p/ path", "https://example.com/p/whatever", base},
-		{"facebook photo post (unclaimed)", "https://www.facebook.com/photo/?fbid=123", base},
 		{"tiktok profile", "https://www.tiktok.com/@someone", base},
 		{"reddit subreddit", "https://www.reddit.com/r/aww/", base},
+		// Facebook containers are not posts: claiming one would point an
+		// extractor at a whole account.
+		{"facebook page", "https://www.facebook.com/NASA", base},
+		{"facebook photo tab", "https://www.facebook.com/NASA/photos", base},
+		{"facebook photo viewer without an id", "https://www.facebook.com/photo/", base},
 	}
 
 	for _, tt := range tests {
@@ -150,9 +158,18 @@ func TestArchiveTypeMatrixWithCookies(t *testing.T) {
 		{"x status", "https://x.com/someone/status/1234567890123456789", withGallery},
 		{"twitter status", "https://twitter.com/someone/status/1234567890123456789", withGallery},
 		{"pinterest pin", "https://www.pinterest.com/pin/1234567890/", withGallery},
+		{"facebook photo post", "https://www.facebook.com/photo/?fbid=123", withGallery},
+		{"facebook page photo", "https://www.facebook.com/NASA/photos/a.416660999829282/1496429658519072/", withGallery},
+		{"facebook post permalink", "https://www.facebook.com/NASA/posts/pfbid02abcDEF/", withGallery},
 
 		// Unchanged by cookies.
 		{"instagram reel", "https://www.instagram.com/reel/DPAid-WDi67/", append(append([]string{}, base...), ArchiveTypeYtDlp)},
+		// Facebook video shapes keep their yt-dlp route and gain no second item:
+		// pairing a video with a gallery item would archive it twice and give
+		// the API two answers to one question.
+		{"facebook reel", "https://www.facebook.com/reel/1234567890", append(append([]string{}, base...), ArchiveTypeYtDlp)},
+		{"facebook page video", "https://www.facebook.com/NASA/videos/1234567890/", append(append([]string{}, base...), ArchiveTypeYtDlp)},
+		{"facebook watch", "https://www.facebook.com/watch/?v=1234567890", append(append([]string{}, base...), ArchiveTypeYtDlp)},
 		{"tiktok photo post", "https://www.tiktok.com/@someone/photo/7412345678901234567", withGallery},
 		{"plain page", "https://example.com/article", base},
 	}
@@ -233,6 +250,72 @@ func TestArchiveTypeMatrixPinterestWithBrightDataFallback(t *testing.T) {
 	assertArchiveTypes(t, "https://example.com/article", base...)
 }
 
+// Facebook is the one host whose photo and video shapes both route, so the two
+// claims have to stay disjoint: a shape matching both would get two media items
+// for one post, and a video shape drifting into the gallery route would send a
+// video to an extractor that cannot download it.
+func TestFacebookPhotoAndVideoRoutesStayDisjoint(t *testing.T) {
+	postShapes := []string{
+		"https://www.facebook.com/photo/?fbid=1496429658519072&set=a.416660999829282",
+		"https://www.facebook.com/photo.php?fbid=1496429658519072",
+		"https://m.facebook.com/photo?fbid=1496429658519072",
+		"https://www.facebook.com/NASA/photos/1496429658519072/",
+		"https://www.facebook.com/NASA/photos/a.416660999829282/1496429658519072/",
+		"https://www.facebook.com/NASA/posts/1601537198008317",
+		"https://www.facebook.com/NASA/posts/pfbid033furroPkwEFrNhdWS7VKSNftcbGk6Wbn7vhidXxaunUP2UMj9ei1ALRLpcobG4Q2l",
+		"https://web.facebook.com/NASA/posts/pfbid033furro/",
+	}
+	for _, rawURL := range postShapes {
+		if !IsFacebookPostURL(rawURL) {
+			t.Errorf("IsFacebookPostURL(%q) = false, want true", rawURL)
+		}
+		if !IsGalleryDLURL(rawURL) {
+			t.Errorf("IsGalleryDLURL(%q) = false, want true", rawURL)
+		}
+		if IsVideoURL(rawURL) {
+			t.Errorf("IsVideoURL(%q) = true, want false (a post permalink is not a yt-dlp shape)", rawURL)
+		}
+		if !IsSocialMediaPostURL(rawURL) {
+			t.Errorf("IsSocialMediaPostURL(%q) = false, want true", rawURL)
+		}
+	}
+
+	videoShapes := []string{
+		"https://www.facebook.com/reel/1697235068172729/",
+		"https://www.facebook.com/NASA/videos/1617067833466601/",
+		"https://www.facebook.com/watch/?v=1004422781373452",
+		"https://fb.watch/abcDEF123/",
+	}
+	for _, rawURL := range videoShapes {
+		if !IsVideoURL(rawURL) {
+			t.Errorf("IsVideoURL(%q) = false, want true", rawURL)
+		}
+		if IsFacebookPostURL(rawURL) || IsGalleryDLURL(rawURL) {
+			t.Errorf("%q is claimed by both routes; it would get two media items", rawURL)
+		}
+	}
+
+	// Containers, and hosts that merely end in something Facebook-shaped.
+	for _, rawURL := range []string{
+		"https://www.facebook.com/",
+		"https://www.facebook.com/zuck",
+		"https://www.facebook.com/NASA/photos",
+		"https://www.facebook.com/NASA/posts",
+		"https://www.facebook.com/photo/",
+		"https://www.facebook.com/photo.php",
+		"https://www.facebook.com/groups/12345",
+		"https://www.facebook.com/marketplace/item/123/",
+		"https://notfacebook.com/NASA/posts/123",
+	} {
+		if IsFacebookPostURL(rawURL) {
+			t.Errorf("IsFacebookPostURL(%q) = true, want false", rawURL)
+		}
+		if IsGalleryDLURL(rawURL) {
+			t.Errorf("IsGalleryDLURL(%q) = true, want false", rawURL)
+		}
+	}
+}
+
 // Recognition must cover every shape the routing table claims. A recognized
 // post that produced no media item gets an explicit failure from the API; an
 // unrecognized one silently reads as an ordinary page capture, which is
@@ -266,6 +349,10 @@ func TestIsSocialMediaPostURLCoversEveryClaimedShape(t *testing.T) {
 		"https://v.redd.it/abc123xyz",
 		"https://bsky.app/profile/bsky.app/post/3mgdqhzxy7s2u",
 		"https://www.pinterest.com/pin/1234567890/",
+		"https://www.facebook.com/photo/?fbid=123",
+		"https://www.facebook.com/photo.php?fbid=123",
+		"https://www.facebook.com/NASA/photos/1234567890/",
+		"https://www.facebook.com/NASA/posts/pfbid02abcDEF/",
 		"https://staff.tumblr.com/post/1234567890",
 		"https://www.flickr.com/photos/someone/1234567890/",
 		"https://imgur.com/a/Kn9lB",
@@ -287,7 +374,9 @@ func TestIsSocialMediaPostURLCoversEveryClaimedShape(t *testing.T) {
 		"https://example.com/article",
 		"https://github.com/hackclub/arker",
 		"https://someone.itch.io/some-game",
-		"https://www.facebook.com/photo/?fbid=123",
+		"https://www.facebook.com/zuck",
+		"https://www.facebook.com/NASA/photos",
+		"https://www.facebook.com/photo/",
 		"https://www.tiktok.com/@someone",
 		"https://www.reddit.com/r/aww/",
 		"https://www.instagram.com/someone/",

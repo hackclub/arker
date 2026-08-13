@@ -245,6 +245,57 @@ func IsPinterestPinURL(rawURL string) bool {
 		strings.Contains(strings.ToLower(parsed.Path), "/pin/")
 }
 
+// IsFacebookPostURL reports whether a URL is a Facebook photo post or post
+// permalink — the shapes that carry photos (and sometimes a video) and route to
+// gallery-dl rather than yt-dlp.
+//
+// Until this existed a Facebook photo post was an unclaimed shape: it got no
+// media item, was not recognized as a social post, and so was archived as an
+// ordinary web page that happened to be a photo behind a login wall.
+//
+// The claim is deliberately narrow. Facebook's URL space is mostly containers —
+// a page's photo tab, its feed, its profile — and claiming one of those would
+// point an extractor at an entire account. Only shapes that identify a single
+// item match:
+//
+//	/photo/?fbid=<id>          the share-sheet spelling of one photo
+//	/photo.php?fbid=<id>       its older spelling
+//	/<page>/photos/<id>        including /photos/a.<album>/<id>
+//	/<page>/posts/<id>         including pfbid… permalinks
+//
+// story.php and permalink.php are left unclaimed: they are visibility-gated
+// shapes whose dataset coverage has not been verified, and an unclaimed URL
+// keeps ordinary page behavior rather than promising a post capture.
+func IsFacebookPostURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return hostMatches(strings.ToLower(parsed.Hostname()), "facebook.com") && facebookPostShape(parsed)
+}
+
+// facebookPostShape answers IsFacebookPostURL for an already-parsed URL, and is
+// the matcher the gallery-dl routing table holds for facebook.com.
+func facebookPostShape(parsed *url.URL) bool {
+	segments := strings.Split(strings.Trim(strings.ToLower(parsed.Path), "/"), "/")
+	if len(segments) == 0 || segments[0] == "" {
+		return false
+	}
+	switch {
+	case segments[0] == "photo" || segments[0] == "photo.php":
+		// The photo's id lives in the query string here, so a bare /photo/ is a
+		// viewer with nothing in it to archive.
+		return parsed.Query().Get("fbid") != ""
+	case len(segments) >= 3 && segments[1] == "photos":
+		// /<page>/photos/<id> and /<page>/photos/a.<album>/<id>. The trailing id
+		// is what separates one photo from the page's whole photo tab.
+		return true
+	case len(segments) >= 3 && segments[1] == "posts":
+		return true
+	}
+	return false
+}
+
 // Check if URL is a Facebook video URL (reels, watch, and page videos)
 func IsFacebookURL(url string) bool {
 	lowerURL := strings.ToLower(url)
@@ -284,6 +335,11 @@ type galleryDLSite struct {
 	// paths are path prefixes/segments; an empty list means the host alone is
 	// enough. Matched against the URL path only, never the query string.
 	paths []string
+	// match, when set, replaces paths for a host whose single-item shapes
+	// cannot be told from its containers by a path prefix. Facebook is the
+	// case: /<page>/photos/<id> is one photo but /<page>/photos is the page's
+	// entire photo tab, and /photo/ carries its id in the query string.
+	match func(parsed *url.URL) bool
 	// requiresCookies marks sites that serve nothing at all to logged-out
 	// clients, so a capture without a cookie jar is guaranteed to fail.
 	requiresCookies bool
@@ -304,6 +360,11 @@ var galleryDLSites = []galleryDLSite{
 	{host: "twitter.com", paths: []string{"/status/"}, requiresCookies: true},
 	{host: "x.com", paths: []string{"/status/"}, requiresCookies: true},
 	{host: "pinterest.com", paths: []string{"/pin/"}, requiresCookies: true},
+	// Facebook photo posts and post permalinks. Video shapes (/reel/,
+	// /videos/, /watch, fb.watch) stay on yt-dlp — see IsFacebookURL — so a
+	// Facebook URL still gets exactly one media item. Logged out, Facebook
+	// serves a login wall in place of the post.
+	{host: "facebook.com", match: facebookPostShape, requiresCookies: true},
 	{host: "reddit.com", paths: []string{"/comments/"}},
 	{host: "redd.it"},
 	{host: "tumblr.com", paths: []string{"/post/"}},
@@ -340,6 +401,12 @@ func IsGalleryDLURL(rawURL string) bool {
 
 	for _, site := range galleryDLSites {
 		if !hostMatches(hostname, site.host) {
+			continue
+		}
+		if site.match != nil {
+			if site.match(parsed) {
+				return true
+			}
 			continue
 		}
 		if len(site.paths) == 0 {
@@ -399,8 +466,9 @@ func ShouldCreateGalleryDLItem(rawURL string) bool {
 		// configured Bright Data fallback gives the item a real path to
 		// success, so it is worth creating (and paying for) after the native
 		// attempt fails. The fallback client answers for itself which sites it
-		// covers — Instagram and X today — so a login-only site it cannot
-		// rescue stays excluded rather than queueing a certain failure.
+		// covers — Instagram, X, Pinterest and Facebook posts today — so a
+		// login-only site it cannot rescue stays excluded rather than queueing
+		// a certain failure.
 		return BrightDataCanRescue(rawURL, ArchiveTypeGalleryDl)
 	}
 	return true
@@ -426,6 +494,8 @@ func ShouldCreateGalleryDLItem(rawURL string) bool {
 //	TikTok       /video/, vm/vt/t short links         -> yt-dlp
 //	TikTok       /photo/                              -> gallery-dl
 //	Facebook     /reel/, /videos/, /watch, fb.watch   -> yt-dlp
+//	Facebook     /photo/, /photo.php, /<page>/photos/<id>,
+//	             /<page>/posts/<id>                   -> gallery-dl (cookies)
 //	X/Twitter    /status/                             -> gallery-dl (cookies)
 //	Reddit       /comments/, redd.it, v.redd.it       -> gallery-dl
 //	Bluesky      /post/                               -> gallery-dl
@@ -441,8 +511,9 @@ func ShouldCreateGalleryDLItem(rawURL string) bool {
 //
 // A TikTok short link that turns out to be a photo post is recognized here and
 // routed to yt-dlp, which fails explicitly; resolving the redirect first would
-// require a network call from this pure function. Facebook photo posts and
-// other unclaimed shapes are NOT recognized and keep ordinary URL behavior.
+// require a network call from this pure function. Facebook container shapes (a
+// page, its photo tab, its feed) and other unclaimed shapes are NOT recognized
+// and keep ordinary URL behavior.
 func IsSocialMediaPostURL(rawURL string) bool {
 	return IsVideoURL(rawURL) || IsGalleryDLURL(rawURL)
 }

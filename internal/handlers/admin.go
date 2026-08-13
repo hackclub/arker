@@ -217,15 +217,19 @@ var mediaBackfillURLPattern = map[string]struct {
 		matches: utils.IsVideoURL,
 	},
 	utils.ArchiveTypeGalleryDl: {
-		sqlLike: "(LOWER(archived_urls.original) LIKE '%instagram.com%' OR LOWER(archived_urls.original) LIKE '%twitter.com%' OR LOWER(archived_urls.original) LIKE '%x.com%' OR LOWER(archived_urls.original) LIKE '%reddit.com%' OR LOWER(archived_urls.original) LIKE '%redd.it%' OR LOWER(archived_urls.original) LIKE '%tumblr.com%' OR LOWER(archived_urls.original) LIKE '%bsky.app%' OR LOWER(archived_urls.original) LIKE '%flickr.com%' OR LOWER(archived_urls.original) LIKE '%imgur.com%' OR LOWER(archived_urls.original) LIKE '%deviantart.com%' OR LOWER(archived_urls.original) LIKE '%artstation.com%' OR LOWER(archived_urls.original) LIKE '%pixiv.net%' OR LOWER(archived_urls.original) LIKE '%pinterest.com%' OR LOWER(archived_urls.original) LIKE '%newgrounds.com%' OR LOWER(archived_urls.original) LIKE '%vsco.co%')",
+		sqlLike: "(LOWER(archived_urls.original) LIKE '%instagram.com%' OR LOWER(archived_urls.original) LIKE '%twitter.com%' OR LOWER(archived_urls.original) LIKE '%x.com%' OR LOWER(archived_urls.original) LIKE '%reddit.com%' OR LOWER(archived_urls.original) LIKE '%redd.it%' OR LOWER(archived_urls.original) LIKE '%tumblr.com%' OR LOWER(archived_urls.original) LIKE '%bsky.app%' OR LOWER(archived_urls.original) LIKE '%flickr.com%' OR LOWER(archived_urls.original) LIKE '%imgur.com%' OR LOWER(archived_urls.original) LIKE '%deviantart.com%' OR LOWER(archived_urls.original) LIKE '%artstation.com%' OR LOWER(archived_urls.original) LIKE '%pixiv.net%' OR LOWER(archived_urls.original) LIKE '%pinterest.com%' OR LOWER(archived_urls.original) LIKE '%newgrounds.com%' OR LOWER(archived_urls.original) LIKE '%vsco.co%' OR LOWER(archived_urls.original) LIKE '%facebook.com%')",
 		// Same gate as live capture: without cookies, backfilling a login-only
 		// site would queue thousands of guaranteed failures.
 		//
 		// With the Bright Data fallback configured, a login-only site it covers
-		// (Instagram, X) passes this gate instead — so those rows are no longer
-		// guaranteed failures, they are guaranteed *spend*: one dataset record
-		// each, after the native attempt fails. Use ?limit and ?dry_run before
-		// a bulk run against those platforms.
+		// (Instagram, X, Pinterest, Facebook posts) passes this gate instead —
+		// so those rows are no longer guaranteed failures, they are guaranteed
+		// *spend*: one dataset record each, after the native attempt fails. Use
+		// ?limit and ?dry_run before a bulk run against those platforms.
+		//
+		// facebook.com is in both patterns because the host splits by shape:
+		// video permalinks take the yt-dlp row, photo posts take this one. The
+		// Go predicate is what actually decides.
 		matches: utils.ShouldCreateGalleryDLItem,
 	},
 }
