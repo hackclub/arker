@@ -287,19 +287,52 @@ func TestCarouselAltTextIsPerSlide(t *testing.T) {
 	}
 }
 
-// TestSubtitleArtifactsAreStoredUnderTheItemKeyBase pins where the VTT lands.
-// Storage keys are nonce-suffixed under one keyBase per item so the bucket
-// never needs an overwrite; a subtitle artifact has to follow that rule.
-func TestSubtitleArtifactsAreStoredUnderTheItemKeyBase(t *testing.T) {
+// TestSubtitleArtifactsAreEmittedForStorage pins the archiver half of the
+// storage rule: the yt-dlp result must carry the VTT as an ExtraArtifact whose
+// suffix matches what the normalized metadata records. The worker half —
+// saveArchiveResult writing keyBase+suffix before flipping completed — is
+// asserted in internal/workers/archive_worker_test.go.
+func TestSubtitleArtifactsAreEmittedForStorage(t *testing.T) {
 	c := testfixtures.Lookup(t, "youtube_regular")
 	testfixtures.InstallFakeYtDlp(t, testfixtures.YtDlpFake{Fixture: c.Name})
-	artifact, _, _, _ := runYtDlpArchive(t, c.URL)
-	if len(artifact) == 0 {
-		t.Fatal("no artifact")
+	var log strings.Builder
+	archiver := &YtDlpArchiver{}
+	result, err := archiver.Archive(context.Background(), c.URL, &log, nil, 1)
+	if err != nil {
+		t.Fatalf("yt-dlp archive failed: %v\nlog:\n%s", err, log.String())
 	}
-
-	t.Skip("contract-pending: G13 — subtitle artifacts are not stored yet; enable at integration " +
-		"(worker-level assertion: saveArchiveResult should write keyBase + \".en.vtt\" and record it on the item)")
+	if closer, ok := result.Data.(io.Closer); ok {
+		_, _ = io.Copy(io.Discard, result.Data)
+		_ = closer.Close()
+	}
+	var vtt *ExtraArtifact
+	for i := range result.Extras {
+		if strings.HasSuffix(result.Extras[i].NameSuffix, ".vtt") {
+			vtt = &result.Extras[i]
+		}
+	}
+	if vtt == nil {
+		t.Fatalf("G13: no subtitle ExtraArtifact in the result; extras = %v", result.Extras)
+	}
+	if !strings.HasPrefix(vtt.NameSuffix, ".sub.") {
+		t.Errorf("subtitle suffix = %q, want .sub.<lang>.vtt so storage keys stay self-describing", vtt.NameSuffix)
+	}
+	if len(vtt.Data) == 0 {
+		t.Error("subtitle ExtraArtifact is empty")
+	}
+	var meta VideoMetadata
+	if err := json.Unmarshal(result.Metadata.Data, &meta); err != nil {
+		t.Fatalf("decode metadata: %v", err)
+	}
+	found := false
+	for _, track := range meta.Subtitles {
+		if track.ArtifactSuffix == vtt.NameSuffix {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("normalized metadata subtitles %v do not reference stored suffix %q", meta.Subtitles, vtt.NameSuffix)
+	}
 }
 
 // TestGalleryZipIsUnchangedByAltText guards compatibility: adding alt text to
