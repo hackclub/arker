@@ -11,6 +11,7 @@ but is monitored via GET /admin/brightdata-usage during the window.
 
 | 2 | 2026-08-13 ~04:35 | Local E2E: IG /p/ carousel fallback verification (no cookies => native fails => BD posts dataset rescue) | web_scraper (posts dataset) | gd_lk5ns7kz21pck8jpis | sd_msr0mayeg7u9dzzaq | $0.0015 actual (1 op, 1 record, success) | $0.0015 |
 | 3 | 2026-08-13 ~05:50 | Prod matrix probes: IG reel DPAid-WDi67 + IG carousel DYZavjKE9i- (prod has cookies; BD triggers only if native fails) | web_scraper (if triggered) | reels/posts datasets | reel: native (no BD); carousel 7LRGk: 1 op, snapshot in prod bright_data_usages | $0.0015 actual | $0.0030 |
+| 4 | 2026-08-13 ~05:10 | Phase-2 discovery: 1 trigger each on TikTok Posts (gd_lu702nij2f790tmv9h), Reddit Posts (gd_lvz8ah06191smkebj4), X Posts (gd_lwxkxvnf1cynvib9co) to learn schemas + CDN URL properties | web_scraper x3 | see purpose | (snapshots recorded post-run) | est $0.0045-0.01 | tbd |
 
 Planned spend (subject to remaining budget):
 - End-of-run fallback-path verification: 1-2 deliberate rescues (dataset trigger
