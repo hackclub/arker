@@ -45,6 +45,9 @@ const apiBase = "https://api.brightdata.com"
 const (
 	DatasetInstagramReels = "gd_lyclm20il4r5helnj"
 	DatasetInstagramPosts = "gd_lk5ns7kz21pck8jpis"
+	DatasetTikTokPosts    = "gd_lu702nij2f790tmv9h"
+	DatasetRedditPosts    = "gd_lvz8ah06191smkebj4"
+	DatasetXPosts         = "gd_lwxkxvnf1cynvib9co"
 )
 
 // Config carries everything the fallback needs. Only APIKey is required:
@@ -74,6 +77,12 @@ type Config struct {
 type Client struct {
 	cfg  Config
 	http *http.Client
+	// openBrowser opens one page in a Bright Data Browser API session. It is a
+	// field rather than a plain method so tests can drive the whole in-page
+	// fetch path — chunk loop, retries, EOF handling — against a fake page
+	// without a remote browser or a live signed URL. Nil means the real
+	// Browser API (see openBrowserSession).
+	openBrowser func(ctx context.Context, country, pageURL string, logWriter io.Writer) (browserSession, error)
 }
 
 // New builds a client and resolves the missing credentials it can. It never
