@@ -10,6 +10,7 @@ import (
 	"github.com/riverqueue/river"
 	"gorm.io/gorm"
 
+	"arker/internal/archivers"
 	"arker/internal/models"
 	"arker/internal/utils"
 )
@@ -237,17 +238,20 @@ func enqueueCaptureJobs(ctx context.Context, riverClient *river.Client[pgx.Tx], 
 	return jobsEnqueued
 }
 
-// FindOrCreateCapture returns the newest completed canonical capture that
-// covers types, joins a canonical in-flight capture when possible, or creates
-// and queues a new canonical capture. Unlike QueueCapture's compatibility
-// aliasing behavior, this operation has no freshness window and never creates
-// an alias.
+// FindOrCreateCapture returns the newest reusable canonical capture, joins a
+// canonical in-flight capture when possible, or creates and queues a new one.
+// Explicit types are all required; an auto-detected social request is settled
+// by its complete media product while its browser artifacts remain best-effort.
+// Unlike QueueCapture's compatibility aliasing behavior, this operation has no
+// freshness window and never creates an alias.
 func FindOrCreateCapture(ctx context.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx], url string, types []string, apiKeyID *uint) (FindOrCreateResult, error) {
+	defaultTypes := len(types) == 0
 	if len(types) == 0 {
 		types = utils.GetArchiveTypes(url)
 	} else {
 		types = utils.NormalizeArchiveTypes(types)
 	}
+	criteria := findOrCreateCriteriaFor(url, types, defaultTypes)
 
 	canonical := utils.CanonicalizeArchiveURL(url)
 
@@ -262,7 +266,7 @@ func FindOrCreateCapture(ctx context.Context, db *gorm.DB, riverClient *river.Cl
 			// after the backfill several spellings of one post each have their
 			// own row, and the newest completed capture of the post can hang off
 			// any of them.
-			capture, status, findErr := findFindOrCreateCandidate(tx, archivedURLIDs(rows), types)
+			capture, status, findErr := findFindOrCreateCandidate(tx, archivedURLIDs(rows), criteria)
 			if findErr != nil {
 				return findErr
 			}
@@ -303,13 +307,50 @@ func FindOrCreateCapture(ctx context.Context, db *gorm.DB, riverClient *river.Cl
 	return result, nil
 }
 
+type findOrCreateCriteria struct {
+	types                 []string
+	requireCompleteSocial bool
+}
+
+// findOrCreateCriteriaFor separates what a default request attempts from what
+// makes its result reusable. Explicit type lists stay strict. For an
+// auto-detected social post, the media extractor is the primary product and
+// MHTML/screenshot are best-effort ancillary artifacts: a complete media item
+// settles find-or-create even if either browser item honestly failed.
+//
+// Completeness is required on this relaxed path. A gallery item can be marked
+// completed after salvaging only part of a carousel; treating that as settled
+// would stop retry churn by creating a false green instead.
+func findOrCreateCriteriaFor(url string, types []string, defaultTypes bool) findOrCreateCriteria {
+	criteria := findOrCreateCriteria{types: types}
+	if !defaultTypes || !utils.IsSocialMediaPostURL(url) {
+		return criteria
+	}
+
+	mediaTypes := make([]string, 0, 1)
+	for _, typ := range types {
+		if utils.ArchiveTypesEqual(typ, utils.ArchiveTypeGalleryDl) || utils.ArchiveTypesEqual(typ, utils.ArchiveTypeYtDlp) {
+			mediaTypes = append(mediaTypes, typ)
+		}
+	}
+	if len(mediaTypes) == 0 {
+		// Some recognized login-only URLs deliberately get no media item when
+		// neither credentials nor a fallback are configured. Do not weaken
+		// those requests into an empty requirement set.
+		return criteria
+	}
+	criteria.types = mediaTypes
+	criteria.requireCompleteSocial = true
+	return criteria
+}
+
 // findFindOrCreateCandidate deliberately has no age or row limit. Completion
 // time is the latest UpdatedAt among the required items; this is when the
 // requested set became usable, and is distinct from capture creation time.
 //
 // archivedURLIDs is every row sharing one canonical identity, so a capture made
 // under one spelling of a post answers a request made under another.
-func findFindOrCreateCandidate(tx *gorm.DB, archivedURLIDs []uint, types []string) (*models.Capture, string, error) {
+func findFindOrCreateCandidate(tx *gorm.DB, archivedURLIDs []uint, criteria findOrCreateCriteria) (*models.Capture, string, error) {
 	if len(archivedURLIDs) == 0 {
 		return nil, "", nil
 	}
@@ -323,7 +364,7 @@ func findFindOrCreateCandidate(tx *gorm.DB, archivedURLIDs []uint, types []strin
 	var newestCompletedAt time.Time
 	var newestInProgress *models.Capture
 	for i := range candidates {
-		status, completedAt, ok := captureStatusForTypes(&candidates[i], types)
+		status, completedAt, ok := captureStatusForTypes(&candidates[i], criteria)
 		if !ok {
 			continue
 		}
@@ -339,26 +380,29 @@ func findFindOrCreateCandidate(tx *gorm.DB, archivedURLIDs []uint, types []strin
 		return newestCompleted, "completed", nil
 	}
 	if newestInProgress != nil {
-		status, _, _ := captureStatusForTypes(newestInProgress, types)
+		status, _, _ := captureStatusForTypes(newestInProgress, criteria)
 		return newestInProgress, status, nil
 	}
 	return nil, "", nil
 }
 
-func captureStatusForTypes(c *models.Capture, types []string) (string, time.Time, bool) {
+func captureStatusForTypes(c *models.Capture, criteria findOrCreateCriteria) (string, time.Time, bool) {
 	byType := make(map[string]models.ArchiveItem, len(c.ArchiveItems))
 	for _, item := range c.ArchiveItems {
 		byType[utils.NormalizeArchiveType(item.Type)] = item
 	}
 	status := "completed"
 	var completedAt time.Time
-	for _, typ := range types {
+	for _, typ := range criteria.types {
 		item, ok := byType[utils.NormalizeArchiveType(typ)]
 		if !ok {
 			return "", time.Time{}, false
 		}
 		switch item.Status {
 		case "completed":
+			if criteria.requireCompleteSocial && !completedSocialItemIsReusable(item) {
+				return "", time.Time{}, false
+			}
 			if item.UpdatedAt.After(completedAt) {
 				completedAt = item.UpdatedAt
 			}
@@ -373,6 +417,20 @@ func captureStatusForTypes(c *models.Capture, types []string) (string, time.Time
 		}
 	}
 	return status, completedAt, true
+}
+
+func completedSocialItemIsReusable(item models.ArchiveItem) bool {
+	if archivers.NormalizeCompletenessState(item.Completeness) != archivers.CompletenessComplete || item.StorageKey == "" {
+		return false
+	}
+	if utils.ArchiveTypesEqual(item.Type, utils.ArchiveTypeYtDlp) {
+		// The unified video result cannot be fulfilled without both normalized
+		// and raw provider records. Modern workers store both sidecars before
+		// marking the item completed; empty keys identify a legacy/non-fulfilled
+		// row and must not become green merely because its media file exists.
+		return item.MetadataKey != "" && item.RawMetadataKey != ""
+	}
+	return utils.ArchiveTypesEqual(item.Type, utils.ArchiveTypeGalleryDl)
 }
 
 // createCapture runs the capture-creation transaction: find-or-create the

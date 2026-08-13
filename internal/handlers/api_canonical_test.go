@@ -40,7 +40,16 @@ func seedCompletedCapture(t *testing.T, db *gorm.DB, url, shortID string, age ti
 		t.Fatal(err)
 	}
 	for _, typ := range types {
-		if err := db.Create(&models.ArchiveItem{CaptureID: capture.ID, Type: typ, Status: "completed"}).Error; err != nil {
+		item := models.ArchiveItem{CaptureID: capture.ID, Type: typ, Status: "completed"}
+		if utils.ArchiveTypesEqual(typ, utils.ArchiveTypeYtDlp) || utils.ArchiveTypesEqual(typ, utils.ArchiveTypeGalleryDl) {
+			item.Completeness = "complete"
+			item.StorageKey = shortID + "/" + typ
+		}
+		if utils.ArchiveTypesEqual(typ, utils.ArchiveTypeYtDlp) {
+			item.MetadataKey = shortID + "/metadata.json"
+			item.RawMetadataKey = shortID + "/raw-metadata.json"
+		}
+		if err := db.Create(&item).Error; err != nil {
 			t.Fatal(err)
 		}
 	}

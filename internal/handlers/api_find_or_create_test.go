@@ -12,6 +12,7 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	"arker/internal/archivers"
 	"arker/internal/models"
 )
 
@@ -87,5 +88,56 @@ func TestApiFindOrCreateValidation(t *testing.T) {
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("body %s: status = %d, response = %s", body, w.Code, w.Body.String())
 		}
+	}
+}
+
+// This is the production QNsmD shape driven through the authenticated HTTP
+// route: the complete two-file Imgur gallery is fulfilled, while MHTML and the
+// screenshot honestly remain failed. Repeating the omitted-types request must
+// reuse that capture rather than queue another three jobs.
+func TestApiFindOrCreateDefaultImgurReusesFulfilledGalleryWithFailedBrowserItems(t *testing.T) {
+	r, db, key := newFindOrCreateHandlerTest(t)
+	url := "https://imgur.com/a/RhJXhVT"
+	u := models.ArchivedURL{Original: url}
+	if err := db.Create(&u).Error; err != nil {
+		t.Fatal(err)
+	}
+	capture := models.Capture{ArchivedURLID: u.ID, Timestamp: time.Now().Add(-time.Hour), ShortID: "QNsmD"}
+	if err := db.Create(&capture).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []models.ArchiveItem{
+		{CaptureID: capture.ID, Type: "mhtml", Status: "failed", RetryCount: 3},
+		{CaptureID: capture.ID, Type: "screenshot", Status: "failed", RetryCount: 3},
+		{CaptureID: capture.ID, Type: "gallery-dl", Status: "completed", RetryCount: 1, Completeness: archivers.CompletenessComplete, StorageKey: "QNsmD/gallery-dl.zip"},
+	} {
+		if err := db.Create(&item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/archive/find-or-create", strings.NewReader(`{"url":"https://imgur.com/a/RhJXhVT"}`))
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["action"] != "found" || body["short_id"] != "QNsmD" || body["status"] != "completed" {
+		t.Fatalf("body = %#v", body)
+	}
+
+	var captures int64
+	if err := db.Model(&models.Capture{}).Count(&captures).Error; err != nil {
+		t.Fatal(err)
+	}
+	if captures != 1 {
+		t.Fatalf("capture count = %d, want 1", captures)
 	}
 }

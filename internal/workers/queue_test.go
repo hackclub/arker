@@ -9,6 +9,7 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	"arker/internal/archivers"
 	"arker/internal/models"
 	"arker/internal/utils"
 )
@@ -284,6 +285,105 @@ func TestFindOrCreateRejectsIncompleteAndFailedSuccesses(t *testing.T) {
 	}
 	if got.Action != FindOrCreateCreated || got.Status != "pending" {
 		t.Fatalf("result = %+v", got)
+	}
+}
+
+// A default social capture asks the browser archivers to make useful ancillary
+// artifacts, but the post media is the primary product. Once gallery-dl has
+// durably stored the complete post, permanently failed page snapshots must not
+// make every later default request create the same media capture again.
+func TestFindOrCreateDefaultSocialReusesCompleteMediaWithFailedAncillaryItems(t *testing.T) {
+	db := newQueueTestDB(t)
+	url := "https://imgur.com/a/RhJXhVT"
+	capture := seedCapture(t, db, url, "QNsmD", time.Hour, map[string]string{
+		"gallery-dl": "completed",
+		"mhtml":      "failed",
+		"screenshot": "failed",
+	})
+	if err := db.Model(&models.ArchiveItem{}).
+		Where("capture_id = ? AND type = ?", capture.ID, "gallery-dl").
+		Updates(map[string]interface{}{
+			"completeness": archivers.CompletenessComplete,
+			"storage_key":  "QNsmD/gallery-dl.zip",
+		}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := FindOrCreateCapture(t.Context(), db, nil, url, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != FindOrCreateFound || got.ShortID != "QNsmD" || got.Status != "completed" {
+		t.Fatalf("result = %+v, want the fulfilled media capture", got)
+	}
+
+	var captures int64
+	if err := db.Model(&models.Capture{}).Count(&captures).Error; err != nil {
+		t.Fatal(err)
+	}
+	if captures != 1 {
+		t.Fatalf("default lookup created retry churn; capture count = %d, want 1", captures)
+	}
+}
+
+// Explicit type lists retain their strict meaning. A caller that names the
+// failed browser artifacts is asking for those artifacts, not merely the
+// fulfilled social post.
+func TestFindOrCreateExplicitTypesStillRequireFailedAncillaryItems(t *testing.T) {
+	db := newQueueTestDB(t)
+	url := "https://imgur.com/a/RhJXhVT"
+	seedCapture(t, db, url, "QNsmD", time.Hour, map[string]string{
+		"gallery-dl": "completed",
+		"mhtml":      "failed",
+		"screenshot": "failed",
+	})
+
+	got, err := FindOrCreateCapture(t.Context(), db, nil, url, []string{"mhtml", "screenshot", "gallery-dl"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != FindOrCreateCreated {
+		t.Fatalf("result = %+v, want an explicit all-type request to remain strict", got)
+	}
+}
+
+func TestFindOrCreateDefaultSocialDoesNotFalseGreenIncompleteMedia(t *testing.T) {
+	for name, updates := range map[string]map[string]interface{}{
+		"partial gallery": {
+			"completeness": archivers.CompletenessPartial,
+			"storage_key":  "partial/gallery-dl.zip",
+		},
+		"unknown gallery": {
+			"completeness": archivers.CompletenessUnknown,
+			"storage_key":  "unknown/gallery-dl.zip",
+		},
+		"missing artifact": {
+			"completeness": archivers.CompletenessComplete,
+			"storage_key":  "",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := newQueueTestDB(t)
+			url := "https://imgur.com/a/RhJXhVT"
+			capture := seedCapture(t, db, url, "oldbad", time.Hour, map[string]string{
+				"gallery-dl": "completed",
+				"mhtml":      "failed",
+				"screenshot": "failed",
+			})
+			if err := db.Model(&models.ArchiveItem{}).
+				Where("capture_id = ? AND type = ?", capture.ID, "gallery-dl").
+				Updates(updates).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := FindOrCreateCapture(t.Context(), db, nil, url, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Action != FindOrCreateCreated {
+				t.Fatalf("result = %+v, want non-fulfilled media to remain ineligible", got)
+			}
+		})
 	}
 }
 

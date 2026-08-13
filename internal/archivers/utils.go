@@ -176,50 +176,49 @@ func scrollToBottomAndWait(page playwright.Page, logWriter io.Writer) error {
 
 	fmt.Fprintf(logWriter, "Initial page height: %v\n", initialHeight)
 
-	// Scroll in chunks with pauses to allow content to load
-	_, err = page.Evaluate(`
+	// Scroll in chunks with pauses to allow content to load. The height at the
+	// start of the operation is the content boundary: infinite feeds and ad
+	// slots can append more page on every scroll, and chasing each new
+	// scrollHeight made this loop literally unbounded. Imgur album pages did
+	// exactly that until the two-minute archive context killed every attempt.
+	result, err := page.Evaluate(`
 		async (initialHeight) => {
 			const scrollStep = window.innerHeight * 0.8; // Scroll 80% of viewport height at a time
 			const scrollDelay = 500; // Wait 500ms between scrolls
-			
+			const maxSteps = 40;
+			const maxDuration = 20000;
+			const startedAt = Date.now();
+
 			let currentPos = 0;
-			let lastHeight = document.body.scrollHeight;
-			let stableCount = 0;
-			const maxStableChecks = 5; // Stop if height is stable for 5 checks
-			
-			while (stableCount < maxStableChecks) {
-				// Scroll down
-				currentPos += scrollStep;
-				window.scrollTo(0, currentPos);
-				
-				// Wait for content to potentially load
-				await new Promise(resolve => setTimeout(resolve, scrollDelay));
-				
-				const newHeight = document.body.scrollHeight;
-				
-				// If we've reached the bottom or height hasn't changed
-				if (currentPos >= newHeight) {
-					if (newHeight === lastHeight) {
-						stableCount++;
-					} else {
-						stableCount = 0; // Reset if height changed
-					}
-					lastHeight = newHeight;
-					currentPos = newHeight; // Ensure we're at the bottom
-				} else {
-					stableCount = 0; // Reset stable count if we're still scrolling
+			let steps = 0;
+			let stopReason = 'initial-content-covered';
+			while (currentPos < initialHeight) {
+				if (steps >= maxSteps) {
+					stopReason = 'step-cap';
+					break;
 				}
+				if (Date.now() - startedAt >= maxDuration) {
+					stopReason = 'time-cap';
+					break;
+				}
+
+				currentPos = Math.min(currentPos + scrollStep, initialHeight);
+				window.scrollTo(0, currentPos);
+				await new Promise(resolve => setTimeout(resolve, scrollDelay));
+				steps++;
 			}
-			
-			// Final scroll to absolute bottom
-			window.scrollTo(0, document.body.scrollHeight);
-			
+
+			// Revisit the original boundary, never the bottom of content that the
+			// act of scrolling appended.
+			window.scrollTo(0, Math.min(initialHeight, document.body.scrollHeight));
 			// Wait a bit more for any final loading
 			await new Promise(resolve => setTimeout(resolve, 1000));
-			
+
 			return {
 				finalHeight: document.body.scrollHeight,
-				initialHeight: initialHeight
+				initialHeight: initialHeight,
+				steps: steps,
+				stopReason: stopReason
 			};
 		}
 	`, initialHeight)
@@ -228,6 +227,7 @@ func scrollToBottomAndWait(page playwright.Page, logWriter io.Writer) error {
 		fmt.Fprintf(logWriter, "Warning: Scrolling failed: %v\n", err)
 		return nil // Don't fail the entire process
 	}
+	fmt.Fprintf(logWriter, "Bounded scrolling result: %v\n", result)
 
 	// Get final height for logging
 	finalHeight, err := page.Evaluate(`() => document.body.scrollHeight`)

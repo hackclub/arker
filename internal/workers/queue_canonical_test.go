@@ -7,6 +7,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"arker/internal/archivers"
 	"arker/internal/models"
 	"arker/internal/utils"
 )
@@ -202,8 +203,18 @@ func TestFindOrCreateIgnoresAliasesAcrossSpellings(t *testing.T) {
 // request for "yt-dlp", including across spellings.
 func TestFindOrCreateLegacyTypeNameStillQualifies(t *testing.T) {
 	db := newQueueTestDB(t)
-	seedCanonicalCapture(t, db, spellingShort, "legacyyt", 200*24*time.Hour,
+	capture := seedCanonicalCapture(t, db, spellingShort, "legacyyt", 200*24*time.Hour,
 		map[string]string{"mhtml": "completed", "screenshot": "completed", "youtube": "completed"})
+	if err := db.Model(&models.ArchiveItem{}).
+		Where("capture_id = ? AND type = ?", capture.ID, "youtube").
+		Updates(map[string]interface{}{
+			"completeness":     archivers.CompletenessComplete,
+			"storage_key":      "legacyyt/youtube.mp4",
+			"metadata_key":     "legacyyt/metadata.json",
+			"raw_metadata_key": "legacyyt/raw-metadata.json",
+		}).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	// Empty types means "derive from the URL", which for a YouTube link is
 	// mhtml + screenshot + yt-dlp.
