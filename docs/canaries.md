@@ -133,7 +133,11 @@ Do this **before** setting `CANARY_SCHEDULE`. Manual runs work whether or not
 the schedule is on, and cost nothing.
 
 ```bash
-# Authenticated as admin (session cookie), against production:
+# 1. Log in once and keep the session cookie.
+curl -sS -c cookies.txt -X POST https://archive.hackclub.com/login \
+  -d "username=$ADMIN_USERNAME" -d "password=$ADMIN_PASSWORD" -o /dev/null
+
+# 2. Run every probe and wait for the verdicts.
 curl -sS -b cookies.txt -X POST 'https://archive.hackclub.com/admin/canaries/run?wait=1' | jq
 ```
 
