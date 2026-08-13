@@ -215,6 +215,27 @@ func TestSetSubtitleStorageKeys(t *testing.T) {
 	if err != nil || string(same) != string(plain) {
 		t.Fatalf("metadata without subtitles was rewritten: %v / %s", err, same)
 	}
+
+	// A track that failed to store is dropped rather than left advertising an
+	// object that is not there. The video is untouched: captions never fail an
+	// archive.
+	dropped, err := SetSubtitleStorageKeys(encoded, map[string]string{})
+	if err != nil {
+		t.Fatalf("SetSubtitleStorageKeys with no stored extras: %v", err)
+	}
+	var withoutTracks VideoMetadata
+	if err := json.Unmarshal(dropped, &withoutTracks); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(withoutTracks.Subtitles) != 0 {
+		t.Fatalf("subtitles = %+v, want none once nothing was stored", withoutTracks.Subtitles)
+	}
+	if withoutTracks.Transcript != nil {
+		t.Fatalf("transcript = %+v, want none without a track to check it against", withoutTracks.Transcript)
+	}
+	if withoutTracks.Title != "Fixture" {
+		t.Fatalf("the rest of the record was disturbed: %+v", withoutTracks)
+	}
 }
 
 // The real thing: the English caption track YouTube serves for jNQXAC9IVRw,

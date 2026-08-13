@@ -190,6 +190,10 @@ func saveArchiveResult(result archivers.Result, keyBase string, store storage.St
 	// Extras go down before the normalized metadata, because the metadata
 	// records where they landed — and before the item is marked completed, so a
 	// completed item never advertises an artifact that is not there.
+	// An extra is a bonus, never the product: a caption track that will not
+	// store must not fail a video that downloaded perfectly. The track is
+	// dropped from the metadata instead, so the archive describes exactly what
+	// it holds rather than advertising a file that is not there.
 	extraKeys := make(map[string]string, len(result.Extras))
 	for _, extra := range result.Extras {
 		if extra.NameSuffix == "" || len(extra.Data) == 0 {
@@ -197,7 +201,9 @@ func saveArchiveResult(result archivers.Result, keyBase string, store storage.St
 		}
 		extraKey := keyBase + extra.NameSuffix
 		if err := writeExtraArtifact(store, extraKey, extra.Data); err != nil {
-			return fmt.Errorf("failed to store %s: %w", extra.NameSuffix, err)
+			slog.Warn("Failed to store extra archive artifact",
+				"key", extraKey, "suffix", extra.NameSuffix, "error", err)
+			continue
 		}
 		extraKeys[extra.NameSuffix] = extraKey
 	}

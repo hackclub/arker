@@ -397,3 +397,66 @@ func TestProcessArchiveJobWithoutSubtitlesIsUnchanged(t *testing.T) {
 		t.Fatalf("item without captions was not finalized: %+v", got)
 	}
 }
+
+// selectiveFailStorage refuses to write objects whose key contains a marker,
+// so one artifact can fail while the rest of the capture succeeds.
+type selectiveFailStorage struct {
+	storage.Storage
+	failSubstring string
+}
+
+func (s selectiveFailStorage) Writer(key string) (io.WriteCloser, error) {
+	if strings.Contains(key, s.failSubstring) {
+		return nil, errors.New("storage unavailable")
+	}
+	return s.Storage.Writer(key)
+}
+
+// A caption track that will not store must not fail a video that downloaded
+// perfectly. The archive keeps the video and simply stops claiming the track.
+func TestSubtitleStorageFailureDoesNotFailTheArchive(t *testing.T) {
+	db := newWorkerTestDB(t)
+	url := models.ArchivedURL{Original: "https://www.youtube.com/watch?v=subfail"}
+	db.Create(&url)
+	capture := models.Capture{ArchivedURLID: url.ID, Timestamp: time.Now(), ShortID: "sbf01"}
+	db.Create(&capture)
+	item := models.ArchiveItem{CaptureID: capture.ID, Type: "yt-dlp", Status: "processing"}
+	db.Create(&item)
+
+	inner := storage.NewMemoryStorage()
+	store := selectiveFailStorage{Storage: inner, failSubstring: ".sub."}
+	m := map[string]archivers.Archiver{"yt-dlp": subtitleArchiver{}}
+	args := ArchiveJobArgs{ShortID: "sbf01", Type: "yt-dlp", URL: url.Original}
+	if err := processArchiveJob(context.Background(), args, &item, store, db, m); err != nil {
+		t.Fatalf("a failed subtitle write failed the whole archive: %v", err)
+	}
+
+	var got models.ArchiveItem
+	db.First(&got, item.ID)
+	if got.Status != "completed" || got.StorageKey == "" {
+		t.Fatalf("video was not archived: %+v", got)
+	}
+	if got.Completeness != archivers.CompletenessComplete {
+		t.Errorf("completeness = %q, want complete: captions do not affect it", got.Completeness)
+	}
+
+	reader, err := inner.Reader(got.MetadataKey)
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	raw, _ := io.ReadAll(reader)
+	reader.Close()
+	var metadata archivers.VideoMetadata
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		t.Fatalf("decode metadata: %v", err)
+	}
+	if len(metadata.Subtitles) != 0 {
+		t.Fatalf("metadata still advertises %d unstored track(s): %+v", len(metadata.Subtitles), metadata.Subtitles)
+	}
+	if metadata.Transcript != nil {
+		t.Errorf("transcript survived without its track: %+v", metadata.Transcript)
+	}
+	if metadata.Title != "Fixture video" {
+		t.Errorf("the rest of the record was disturbed: %+v", metadata)
+	}
+}

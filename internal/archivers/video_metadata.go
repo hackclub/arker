@@ -180,21 +180,36 @@ func MarshalVideoMetadata(metadata *VideoMetadata) ([]byte, error) {
 // knows the item's key base, so the sidecar is finished after the extras are
 // written. Tracks are matched by suffix; a metadata record with no subtitles is
 // returned untouched.
+// A track whose artifact did not make it into storage is dropped rather than
+// left pointing at nothing: the metadata has to describe what the archive
+// actually holds, and a listed-but-absent track is exactly the kind of quiet
+// lie this work exists to remove.
 func SetSubtitleStorageKeys(metadataJSON []byte, keysBySuffix map[string]string) ([]byte, error) {
-	if len(keysBySuffix) == 0 {
-		return metadataJSON, nil
-	}
 	var metadata VideoMetadata
 	if err := json.Unmarshal(metadataJSON, &metadata); err != nil {
-		return nil, fmt.Errorf("decode normalized metadata: %w", err)
+		// Not a video record (a gallery bundle has no subtitles), so there is
+		// nothing to reconcile.
+		return metadataJSON, nil
 	}
 	if len(metadata.Subtitles) == 0 {
 		return metadataJSON, nil
 	}
-	for i := range metadata.Subtitles {
-		if key, ok := keysBySuffix[metadata.Subtitles[i].ArtifactSuffix]; ok {
-			metadata.Subtitles[i].StorageKey = key
+
+	stored := metadata.Subtitles[:0]
+	for _, track := range metadata.Subtitles {
+		key, ok := keysBySuffix[track.ArtifactSuffix]
+		if !ok {
+			continue
 		}
+		track.StorageKey = key
+		stored = append(stored, track)
+	}
+	metadata.Subtitles = stored
+	// The transcript is derived from a track; without any stored track there is
+	// nothing left for a reader to check it against.
+	if len(metadata.Subtitles) == 0 {
+		metadata.Subtitles = nil
+		metadata.Transcript = nil
 	}
 	return MarshalVideoMetadata(&metadata)
 }
