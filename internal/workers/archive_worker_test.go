@@ -3,6 +3,7 @@ package workers
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -272,5 +273,127 @@ func TestSaveArchiveDataClosesReaderWhenStorageWriterFails(t *testing.T) {
 	}
 	if !data.closed {
 		t.Error("reader was not closed on the storage-writer failure path (leaks the archiver goroutine and its temp dir)")
+	}
+}
+
+// subtitleArchiver returns a video plus caption tracks, the way the yt-dlp
+// archiver does once a platform exposes them.
+type subtitleArchiver struct{ failExtra bool }
+
+func (a subtitleArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (archivers.Result, error) {
+	metadata := &archivers.VideoMetadata{
+		SchemaVersion: archivers.VideoMetadataSchemaVersion,
+		Title:         "Fixture video",
+		Subtitles: []archivers.SubtitleTrack{{
+			Lang: "en", Kind: archivers.SubtitleKindAuto, Format: "vtt",
+			ArtifactSuffix: ".sub.en.vtt", SizeBytes: 12,
+		}},
+		Transcript: &archivers.Transcript{Lang: "en", Source: archivers.SubtitleKindAuto, Text: "hello there"},
+	}
+	encoded, err := archivers.MarshalVideoMetadata(metadata)
+	if err != nil {
+		return archivers.Result{}, err
+	}
+	return archivers.Result{
+		Data:         bytes.NewReader([]byte("mp4-data")),
+		Extension:    ".mp4",
+		ContentType:  "video/mp4",
+		Metadata:     &archivers.Sidecar{Data: encoded},
+		RawMetadata:  &archivers.Sidecar{Data: []byte(`{"id":"x"}`)},
+		Completeness: archivers.CompletenessComplete,
+		Extras: []archivers.ExtraArtifact{{
+			NameSuffix:  ".sub.en.vtt",
+			ContentType: "text/vtt; charset=utf-8",
+			Data:        []byte("WEBVTT\n\nhello"),
+		}},
+	}, nil
+}
+
+// A completed item must never advertise a subtitle track that is not stored, so
+// extras go down before the row flips and their real keys are recorded in the
+// metadata sidecar rather than left to be guessed.
+func TestProcessArchiveJobStoresSubtitleExtras(t *testing.T) {
+	db := newWorkerTestDB(t)
+	url := models.ArchivedURL{Original: "https://www.youtube.com/watch?v=subs"}
+	db.Create(&url)
+	capture := models.Capture{ArchivedURLID: url.ID, Timestamp: time.Now(), ShortID: "sub01"}
+	db.Create(&capture)
+	item := models.ArchiveItem{CaptureID: capture.ID, Type: "yt-dlp", Status: "processing"}
+	db.Create(&item)
+
+	store := storage.NewMemoryStorage()
+	m := map[string]archivers.Archiver{"yt-dlp": subtitleArchiver{}}
+	args := ArchiveJobArgs{ShortID: "sub01", Type: "yt-dlp", URL: url.Original}
+	if err := processArchiveJob(context.Background(), args, &item, store, db, m); err != nil {
+		t.Fatalf("processArchiveJob: %v", err)
+	}
+
+	var got models.ArchiveItem
+	db.First(&got, item.ID)
+	if got.Status != "completed" || got.MetadataKey == "" {
+		t.Fatalf("item was not finalized: %+v", got)
+	}
+
+	reader, err := store.Reader(got.MetadataKey)
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	raw, _ := io.ReadAll(reader)
+	reader.Close()
+	var metadata archivers.VideoMetadata
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		t.Fatalf("decode metadata: %v", err)
+	}
+	if len(metadata.Subtitles) != 1 {
+		t.Fatalf("subtitles = %+v", metadata.Subtitles)
+	}
+	key := metadata.Subtitles[0].StorageKey
+	if key == "" {
+		t.Fatal("the stored metadata does not record where the subtitle track went")
+	}
+	// The key must sit under the same base as the video, and the object must
+	// actually be there — the whole point of storing extras first.
+	if !strings.HasSuffix(key, ".sub.en.vtt") {
+		t.Errorf("subtitle key = %q", key)
+	}
+	if exists, err := store.Exists(key); err != nil || !exists {
+		t.Fatalf("subtitle object %q missing (err %v)", key, err)
+	}
+	subtitle, err := store.Reader(key)
+	if err != nil {
+		t.Fatalf("read subtitle: %v", err)
+	}
+	data, _ := io.ReadAll(subtitle)
+	subtitle.Close()
+	if string(data) != "WEBVTT\n\nhello" {
+		t.Errorf("stored subtitle = %q", data)
+	}
+	if metadata.Transcript == nil || metadata.Transcript.Text != "hello there" {
+		t.Errorf("transcript = %+v", metadata.Transcript)
+	}
+}
+
+// A video with no captions is the normal case and must finalize exactly as
+// before: no extras, no subtitle fields, still completed and complete.
+func TestProcessArchiveJobWithoutSubtitlesIsUnchanged(t *testing.T) {
+	db := newWorkerTestDB(t)
+	url := models.ArchivedURL{Original: "https://www.youtube.com/watch?v=nosubs"}
+	db.Create(&url)
+	capture := models.Capture{ArchivedURLID: url.ID, Timestamp: time.Now(), ShortID: "nos01"}
+	db.Create(&capture)
+	item := models.ArchiveItem{CaptureID: capture.ID, Type: "yt-dlp", Status: "processing"}
+	db.Create(&item)
+
+	store := storage.NewMemoryStorage()
+	m := map[string]archivers.Archiver{"yt-dlp": videoDataArchiver{}}
+	args := ArchiveJobArgs{ShortID: "nos01", Type: "yt-dlp", URL: url.Original}
+	if err := processArchiveJob(context.Background(), args, &item, store, db, m); err != nil {
+		t.Fatalf("processArchiveJob: %v", err)
+	}
+
+	var got models.ArchiveItem
+	db.First(&got, item.ID)
+	if got.Status != "completed" || got.StorageKey == "" || got.MetadataKey == "" || got.RawMetadataKey == "" {
+		t.Fatalf("item without captions was not finalized: %+v", got)
 	}
 }
