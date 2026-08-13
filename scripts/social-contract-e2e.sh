@@ -107,6 +107,7 @@ check_social "$URL_VIMEO"          "vimeo"           yes
 check_social "$URL_REDDIT_GALLERY" "reddit-gallery"  yes
 check_social "$URL_BLUESKY_IMAGE"  "bluesky-image"   yes
 check_social "$URL_IMGUR_ALBUM"    "imgur-album"     yes
+check_social "$URL_FLICKR_PHOTO"   "flickr-photo"    yes
 
 # --- find-or-create: canonical identity + join/find ---
 if [ -n "$URL_YT_VIDEO" ]; then
