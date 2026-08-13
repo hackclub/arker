@@ -61,12 +61,16 @@ type GalleryMetadata struct {
 
 // GalleryFile describes one downloaded media file inside the ZIP.
 type GalleryFile struct {
-	Name         string `json:"name"`
-	Size         int64  `json:"size"`
-	ContentType  string `json:"content_type,omitempty"`
-	IsVideo      bool   `json:"is_video"`
-	Width        int    `json:"width,omitempty"`
-	Height       int    `json:"height,omitempty"`
+	Name        string `json:"name"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"content_type,omitempty"`
+	IsVideo     bool   `json:"is_video"`
+	Width       int    `json:"width,omitempty"`
+	Height      int    `json:"height,omitempty"`
+	// AltText is the poster's own description of this image, where the
+	// extractor exposes it. It is part of the post as published — often the
+	// only text describing an image-only post — so it is worth keeping.
+	AltText      string `json:"alt_text,omitempty"`
 	MetadataFile string `json:"metadata_file,omitempty"`
 }
 
@@ -592,12 +596,30 @@ func buildGalleryMetadata(dir, sourceURL, version string, media []string, sideca
 				if h := galleryInt(perFile, "height"); h != nil {
 					file.Height = int(*h)
 				}
+				file.AltText = galleryAltText(perFile, meta.Extractor)
 			}
 		}
 		meta.Files = append(meta.Files, file)
 	}
 
 	return meta
+}
+
+// galleryAltText reads the poster's description of one image.
+//
+// The explicit keys are unambiguous wherever an extractor provides them. The
+// Bluesky special case is not: it stores the post body under "text" and the
+// image's alt text under "description", so "description" is alt text there and
+// the caption everywhere else — reading it generically would stamp Instagram's
+// caption onto every slide as if it were alt text.
+func galleryAltText(perFile map[string]interface{}, extractor string) string {
+	if alt := galleryString(perFile, "alt_text", "ext_alt_text", "alt", "altText", "media_alt"); alt != "" {
+		return alt
+	}
+	if strings.EqualFold(extractor, "bluesky") {
+		return galleryString(perFile, "description")
+	}
+	return ""
 }
 
 func readGalleryJSON(path string, logWriter io.Writer) map[string]interface{} {

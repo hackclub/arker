@@ -133,6 +133,9 @@ type normalizedMedia struct {
 	Height          *int64   `json:"height,omitempty"`
 	DurationSeconds *float64 `json:"duration_seconds,omitempty"`
 	Quality         string   `json:"quality,omitempty"`
+	// AltText is the poster's own description of this image, where the
+	// platform exposes one. Often the only text on an image-only post.
+	AltText string `json:"alt_text,omitempty"`
 }
 
 type rawMetadataLink struct {
@@ -791,6 +794,7 @@ func buildGallerySocial(c *gin.Context, store storage.Storage, shortID string, i
 				height := int64(details.Height)
 				media.Height = &height
 			}
+			media.AltText = details.AltText
 		}
 		out.Media = append(out.Media, media)
 	}

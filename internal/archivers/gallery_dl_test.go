@@ -658,3 +658,30 @@ func TestGalleryThumbnailToleratesNilMetadata(t *testing.T) {
 		t.Errorf("expected nil, got %+v", got)
 	}
 }
+
+// Alt text is often the only description an image-only post carries, so it is
+// worth keeping — but only where the extractor genuinely means alt text.
+func TestGalleryAltTextResolution(t *testing.T) {
+	// Bluesky stores the post body in "text" and the image's alt text in
+	// "description". Reading "description" generically would put Instagram's
+	// caption on every slide as if the poster had described each image.
+	blueskyMeta := metaFrom(t, blueskySidecar)
+	if blueskyMeta.Files[0].AltText != "A rendering of the new Filters button" {
+		t.Errorf("bluesky alt text = %q, want the image description", blueskyMeta.Files[0].AltText)
+	}
+	if blueskyMeta.Description != "v1.127 is live! We're rolling out improvements to search" {
+		t.Errorf("the caption was disturbed: %q", blueskyMeta.Description)
+	}
+
+	instagramMeta := metaFrom(t, instagramCarouselSidecar)
+	if instagramMeta.Files[0].AltText != "" {
+		t.Errorf("instagram alt text = %q, want empty: its description is the post caption",
+			instagramMeta.Files[0].AltText)
+	}
+
+	// An explicit alt field is unambiguous wherever it appears.
+	explicit := metaFrom(t, `{"category":"twitter","tweet_id":1,"ext_alt_text":"a hand-drawn map","width":10,"height":10}`)
+	if explicit.Files[0].AltText != "a hand-drawn map" {
+		t.Errorf("explicit alt text = %q", explicit.Files[0].AltText)
+	}
+}
