@@ -99,8 +99,6 @@ Given a social-media URL, Arker creates a durable true archive with:
   in logs only; BD usage rows have product/dataset/snapshot/cost. Surface in
   social_post.provenance: attempts, last_failure_reason (sanitized), fallback ops
   summary (product, records, bytes, snapshot_id, est cost). No secrets/signed URLs.
-- **G9 (canaries)**: none exist. Build cost-aware recurring canaries + reporting
-  (design doc in this folder when written). NOT activated this run.
 - **G11 (multi-item social)**: buildSocialPost picks first yt-dlp-or-gallery-dl item
   (archive_result.go:230-235); prefer the media item that matches the URL's routed
   type; if both exist prefer completed one.

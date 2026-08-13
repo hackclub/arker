@@ -159,32 +159,6 @@ With the fallback enabled, Instagram gallery items are created even when no
 cookie jar is configured: the native run still fails fast, but the item now has
 a real path to success instead of being skipped outright.
 
-### Production Canaries
-
-Canaries archive a small set of known-good public posts (YouTube video and
-Short, Vimeo, a Reddit gallery, a Bluesky post, an Imgur album) on a schedule
-and validate the whole archive contract on each result: the item completed,
-real media bytes of the right kind reached storage, normalized metadata is
-present and sane, the raw provider record is retrievable, and the artifact came
-from the free native path. Failures log at ERROR as `CANARY FAILED` with the
-stage and reason, surface at `GET /admin/canaries`, and set an additive
-`degraded` flag in `GET /health`.
-
-They are **disabled by default** — nothing recurring runs until
-`CANARY_SCHEDULE` is set — and they are **free by construction**: the runner
-holds an archiver map built before the Bright Data wrappers are applied, so a
-probe has nothing billable to escalate to. A native failure that the paid
-fallback would have rescued is reported as a native-path failure rather than
-paid around.
-
-```bash
-CANARY_SCHEDULE=6h       # empty/off = disabled (the default); minimum 15m
-```
-
-Manual sweeps (`POST /admin/canaries/run?wait=1`) work whether or not the
-schedule is on. Activation steps, probe rotation guidance, storage cost, and
-failure triage are in [docs/canaries.md](docs/canaries.md).
-
 ### Storage Configuration
 
 Arker supports both filesystem and S3-compatible storage backends.

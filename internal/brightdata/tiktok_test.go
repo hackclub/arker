@@ -500,8 +500,7 @@ func TestTikTokShareCountIsReadFromTheStringField(t *testing.T) {
 // A first candidate that transfers bytes and then dies inflates what the
 // session cost without changing what the archive holds. The usage row must
 // carry the larger number and the metadata the smaller one; swapping them
-// either under-reports spend or claims the archive holds bytes it does not
-// (which the canary validator flags as a metadata/storage mismatch).
+// either under-reports spend or claims the archive holds bytes it does not.
 func TestArchiveTikTokVideoBillsTransferredButDescribesStored(t *testing.T) {
 	record := loadRecords(t, "tiktok_post.json")[0]
 	network := newFakeNetwork(record)

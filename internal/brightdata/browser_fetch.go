@@ -166,7 +166,7 @@ type browserFetchRequest struct {
 // for. StoredBytes is the size of the file at Path, which is what the
 // normalized metadata must report. Billing the stored size under-reports
 // spend; describing the archive with the billed size claims it holds bytes it
-// does not, which the canary validator catches as a metadata/storage mismatch.
+// does not.
 type browserFetchResult struct {
 	Path        string
 	Size        int64

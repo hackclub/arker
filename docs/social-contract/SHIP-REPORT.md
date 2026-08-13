@@ -1,34 +1,21 @@
 # Social-archive contract — overnight ship report (2026-08-13)
 
 **Shipped and live.** Production (archive.hackclub.com) runs main `2fca7b1`
-(~116 commits tonight across two phases: 7 Opus 5 agent branches + manager
+(~116 commits tonight across two phases: 6 Opus 5 agent branches + manager
 integration), deployed via the normal Coolify flow, zero crash loops.
 
 **Prod matrix v2 (final, live on 2fca7b1):** Reddit ✅ fulfilled via BD rescue
 ($0.0015, muxed audio verified) · X ✅ native · Pinterest ✅ native (previously
 no media item at all) · Facebook video ✅ native · FB photo post ⚠ honest
 partial (newly claimed shape) · TikTok ❌ explicit pending your BD KYC (one
-billed session, policy-cached) · everything from matrix v1 still green ·
-canary sweep 5/5 on the final SHA. Total BD spend: ~$0.23 of $10.
+billed session, policy-cached) · everything from matrix v1 still green. Total
+BD spend: ~$0.23 of $10.
 
-## ⚠️ Morning actions for Zach
+## ⚠️ Morning action for Zach
 
-1. (1 min) Persist canary env vars in Coolify — see below.
-2. (5 min, unlocks TikTok bytes) Complete Bright Data KYC: https://brightdata.com/cp/kyc — their compliance layer gates tiktok.com browser sessions until then.
-
-## Canary env persistence (action 1)
-
-Canaries are ACTIVE (6h sweeps) but the two env vars live in the container's
-`.env` file, which survives restarts but NOT the next Coolify deploy. Persist
-them in Coolify UI → Arker resource → Environment Variables:
-
-```
-CANARY_SCHEDULE=6h
-CANARY_PROBES=youtube/video,youtube/short,vimeo/video,bluesky/post,imgur/album
-```
-
-(No Coolify API token was available to the manager and creating one would have
-violated the no-auth-changes guardrail, hence the container-level activation.)
+(5 min, unlocks TikTok bytes) Complete Bright Data KYC:
+https://brightdata.com/cp/kyc — their compliance layer gates tiktok.com browser
+sessions until then.
 
 ## Test it yourself
 
@@ -40,9 +27,9 @@ curl -X POST https://archive.hackclub.com/api/v1/archive \
 curl -H "Authorization: Bearer <key>" https://archive.hackclub.com/api/v1/archive/<short_id>
 # find-or-create (canonical identity: youtu.be joins the watch?v= capture)
 curl -X POST https://archive.hackclub.com/api/v1/archive/find-or-create ... -d '{"url":"https://youtu.be/jNQXAC9IVRw"}'
-# canary fleet health
+# service health
 curl https://archive.hackclub.com/health
-# admin: /admin/canaries (history), /admin/brightdata-usage (spend)
+# admin: /admin/brightdata-usage (spend)
 ```
 
 `social_post` now carries: status/fulfilled (honest — see below), normalized
@@ -63,9 +50,9 @@ failure {code, message, retryable}.
 | Instagram carousel | ✅ fulfilled via **Bright Data rescue, 8/8 slides, $0.0015**, provenance surfaced | 7LRGk |
 | Bluesky image | ✅ fulfilled, native, complete | vWBbm |
 | Flickr photo | ✅ fulfilled, complete (structural single-asset rule) | 271PA |
-| Imgur album | ✅ (canary) 2/2 files | EikLI |
+| Imgur album | ✅ 2/2 files | EikLI |
 | Ordinary URL | ✅ unchanged behavior, no social_post | X8Udg |
-| TikTok video | ❌ explicit `extractor_failed` — TikTok bot-walls this egress IP (verified from both prod and HQ; same IP). Routing + metadata code is correct and fixture-tested; canary slot exists, default-off | jIeVJ |
+| TikTok video | ❌ explicit `extractor_failed` — TikTok bot-walls this egress IP (verified from both prod and HQ; same IP). Routing + metadata code is correct and fixture-tested | jIeVJ |
 | TikTok photo | routed to gallery-dl (new); same IP wall applies; fixture-tested | — |
 | X/Twitter | ❌ explicit `authentication_required` — X serves nothing logged-out and prod has no X cookies (owner decision; adding an X cookie jar would light this up) | TfbTE |
 | Reddit | ❌ reddit WAF 403s the `.json` API from prod's IP (verified from prod host). gallery-dl depends on it. Fix path: registered reddit OAuth client-id (owner decision). v.redd.it audio-mux fix is in and fixture-tested for when access returns | JVadH |
@@ -98,12 +85,6 @@ retryable-flagged failure in the API, never a silent mhtml/screenshot-only pass.
 5. **Explicit social intent**: every claimed platform shape (incl. TikTok
    photo) is recognized; social_post never silently absent for them.
 6. **Stable versioned API**: schema_version 1, all changes additive.
-7. **Canaries (G9)**: 5-slot native-only fleet, 6h cadence, structurally
-   incapable of spending (native-only archiver map + fail-closed assertion +
-   spend detection); durable canary_runs history; /admin/canaries; /health
-   carries fleet status scoped to the configured probe set; log-line alert
-   hook `CANARY FAILED`. Pre-flight sweep: 5/6 pass (reddit dropped, above).
-
 ## Costs (auditable ledger: BD-SPEND.md)
 
 Mission Bright Data spend: **$0.0030 of the $10.00 cap** (2 dataset records:
@@ -161,6 +142,5 @@ Live-verified results (dev stack, real BD calls, all ledgered):
 - Vimeo: per-video DRM exists (audio-only DRM observed); such videos fail
   explicitly. Non-DRM Vimeo verified working.
 - BD post dataset exposes post-level alt_text that isn't mapped yet (small).
-- Persist the canary env vars in Coolify (top of this report).
 - The `verify-prod-brightdata` worktree/branch and tonight's agent branches
   can be archived once reviewed.

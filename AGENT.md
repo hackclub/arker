@@ -175,11 +175,9 @@ When using Amp with `make dev` running in another window:
 - `POST /admin/api-keys` - Create new API key
 - `POST /admin/url/:id/capture` - Request new capture
 - `GET /admin/item/:id/log` - View capture logs
-- `GET /admin/canaries` - Canary health per platform/post-type, recent history, probe set, schedule state
-- `POST /admin/canaries/run` - Run canaries by hand (`?platform=` to narrow, `?wait=1` to block)
 
 ### Health & Monitoring
-- `GET /health` - Application health check. Additive `canaries` and `degraded` fields report canary status; the HTTP status deliberately stays 200 so a platform-side breakage cannot restart the container
+- `GET /health` - Application and database health check
 - `GET /metrics/browser` - Browser monitoring metrics
 - `GET /status/browser` - Browser status (leak detection)
 
@@ -210,7 +208,6 @@ git clone https://archive.hackclub.com/git/{shortid}
 - `BRIGHTDATA_SCRAPER_COST_PER_RECORD` / `BRIGHTDATA_BROWSER_COST_PER_GB` - Rates used to estimate spend in `BrightDataUsage` rows (defaults `0.0015` and `8.40`, Bright Data's pay-as-you-go prices). They do not change what is spent, only what Arker reports it spent.
 - `BRIGHTDATA_YT_CLIENT_NAME` / `BRIGHTDATA_YT_CLIENT_VERSION` - The Innertube client the YouTube fallback impersonates (`ANDROID` / a version string). This is the one YouTube-versioned knob in the fallback: when YouTube retires the version, updating the env var fixes it without a code change.
 
-- `CANARY_SCHEDULE` - Interval for production canaries as a Go duration (`6h`). **Empty (the default) disables them entirely**: no River periodic job is registered and no sweep can start. Minimum `15m`. Canaries archive a small set of known-good public posts and validate the full social archive contract on the result; they run native-only and cannot spend money. Companion variables (`CANARY_PROBES`, `CANARY_PROBE_URL_<SLOT>`, `CANARY_PROBE_TIMEOUT`, `CANARY_ALLOW_PAID_FALLBACK`, `CANARY_MAX_COST_USD_PER_RUN`, `CANARY_MAX_COST_USD_PER_DAY`) and the activation/rotation runbook live in `docs/canaries.md`.
 - `ARKER_SUB_LANGS` - Optional override for which subtitle tracks yt-dlp fetches, passed to `--sub-langs` verbatim. Leave unset: the default is computed per video as its own language plus English, using **exact** codes. Do not "improve" it to `en.*` — yt-dlp matches these as anchored regexes and YouTube names machine-translated auto-captions `<target>-<source>`, so `en.*` also matches `en-de` ("English from German"); on a video offering ~150 translations that fetched three tracks and earned an HTTP 429. Use `all,-live_chat` to deliberately hoard every translation.
 - `LOGIN_TEXT` - Text to display under login form
 
@@ -464,13 +461,6 @@ guessing which one is the secret is how one gets left behind.
 ### Health Monitoring
 - Startup health checks verify yt-dlp, gallery-dl, and Playwright availability
 - Browser process monitoring with leak detection
-- Production canaries (`internal/canary`, disabled by default) archive known-good
-  public posts on a schedule and validate the full contract on the result —
-  media bytes, normalized metadata, raw provider record, native provenance.
-  They hold a native-only archiver map, so a probe cannot reach the paid
-  fallback; a native failure is reported as a native failure rather than
-  rescued. See `docs/canaries.md`.
-
 - Automatic log cleanup (30 days for completed items)
 
 ## Architecture Notes

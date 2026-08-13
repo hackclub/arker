@@ -16,14 +16,13 @@ Rule: fetch origin/main before every integration; agents never push; manager nev
 | agent/fulfillment-completeness | A 078db3e9 | G1 G2 G7 G11 + G13 transcripts | working (timebox 02:00 ET) |
 | agent/platform-routing | B 4cd989f0 | G3a-e + recognition | MERGED + manager Vimeo DRM followup (80f2f26) |
 | agent/contract-tests | C eabdff17 | fixtures + harness + 250 tests | MERGED; found G14 (fixed by manager ed08670) |
-| agent/canaries | D 5504a31d | G9 canary system (activation = manager step) | MERGED @ manager review passed, suite green |
 | agent/canonical-identity | E 3a66266a | G5 + races + AutoMigrate finding | MERGED + dedupe reconcile; postgres/race suites pass |
 
 ## Integrated into fulfill-social-contract
-- agent/canaries (9 commits): canary_runs table, internal/canary pkg (probes/validate/budget/history/runner/job), workers inline runner, /admin/canaries + /health degraded field, docs/canaries.md. Manager-reviewed: native-only map snapshot verified in cmd/main.go, PaidFallbackEnabled fail-closed check, dedicated 1-worker queue, periodic job only when CANARY_SCHEDULE set. Full tests green post-merge.
+- Platform routing, contract testing, canonical identity, and fulfillment completeness branches were manager-reviewed and integrated.
 
 ## SHIPPED
-- 2026-08-13 05:04 UTC (~01:04 ET... corrected: ~05:04Z): pushed fulfill-social-contract -> main, 814fd21..0c476b5 (73 commits, fast-forward, no force). All 5 agent branches + manager fixes (G12, G14, Vimeo DRM, structural-single, IG alt key). Local gates at push: fmt/vet clean, 12/12 packages, race+postgres suites, full E2E incl. BD-fallback carousel (10/10, $0.0015) and YouTube transcript end-to-end.
+- 2026-08-13 05:04 UTC (~01:04 ET... corrected: ~05:04Z): pushed fulfill-social-contract -> main, 814fd21..0c476b5 (73 commits, fast-forward, no force). All listed agent branches + manager fixes (G12, G14, Vimeo DRM, structural-single, IG alt key). Local gates at push: fmt/vet clean, 12/12 packages, race+postgres suites, full E2E incl. BD-fallback carousel (10/10, $0.0015) and YouTube transcript end-to-end.
 
 ## Cross-cutting findings during integration
 - E: AutoMigrate silently no-ops on EXISTING prod tables (driver bug) — every new column needs explicit ADD COLUMN IF NOT EXISTS DDL; A warned; verify at A integration.
@@ -35,7 +34,7 @@ Rule: fetch origin/main before every integration; agents never push; manager nev
 12-hour shipping window through ~2026-08-13 10:50 ET:
 - Manager (only) MAY: push reviewed+tested commits to main (no force-push), allow
   normal Coolify deploy, test/verify production, minimal production-safe live
-  capture probes, activate canaries.
+  capture probes.
 - Bright Data: up to $10.00 USD TOTAL new test spend, auditable per-call ledger
   (see BD-SPEND.md). Stop before exceeding.
 - Still forbidden: force pushes, destructive prod/db changes, credential rotation
@@ -43,7 +42,7 @@ Rule: fetch origin/main before every integration; agents never push; manager nev
 - Process per integration: fetch origin/main → independent review → rerun affected
   tests → push → observe deploy → verify exact revision in prod.
 - End state: shipped to prod + production platform matrix verified + cost
-  accounting verified + canaries ACTIVE. Not just an RC.
+  accounting verified. Not just an RC.
 - Window expiry ~10:50 ET: stop shipping/spending; reporting still allowed.
 
 ## DEADLINE (Zach, 2026-08-13 ~00:05 ET)

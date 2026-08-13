@@ -160,55 +160,6 @@ type BrightDataUsage struct {
 	Detail           string
 }
 
-// CanaryRun is the durable history of one production canary probe: a real
-// archive of a known-good public URL, validated against the social archive
-// contract end to end.
-//
-// One row is written per probe attempt, including the failed and aborted ones.
-// The row is created before the archive starts (so a crash mid-probe leaves
-// evidence rather than silence) and updated when the probe finishes; a row with
-// no FinishedAt is a probe that never reported back.
-//
-// StageReached names how far the probe got, and FailureStage/FailureReason name
-// exactly where and why it stopped. That pairing is the whole point of the
-// table: "youtube/video failed" is not actionable, "youtube/video reached
-// item_completed then failed raw_metadata: raw metadata key is empty" is.
-type CanaryRun struct {
-	gorm.Model
-	// Platform and PostType together identify the probe slot (the health view
-	// is the newest row per pair); ProbeKey is their stable "platform/post_type"
-	// spelling as configured.
-	ProbeKey string `gorm:"index"`
-	Platform string `gorm:"index"`
-	PostType string `gorm:"index"`
-	URL      string
-	// Trigger records who asked: "schedule" or "manual".
-	Trigger     string `gorm:"index"`
-	ArchiveType string
-	StartedAt   time.Time `gorm:"index"`
-	FinishedAt  *time.Time
-	DurationMS  int64
-	// StageReached is the last stage that succeeded (or "passed").
-	StageReached  string
-	Passed        bool `gorm:"index"`
-	FailureStage  string
-	FailureReason string
-	// ShortID is the capture this probe created, empty if it never got that far.
-	// It is the join key to captures/archive_items and to bright_data_usages.
-	ShortID     string `gorm:"index"`
-	MediaBytes  int64
-	MediaCount  int
-	ContentType string
-	// Provenance mirrors ArchiveItem.Source ("native"/"brightdata"). A canary
-	// that reports anything but native means the paid guard was bypassed.
-	Provenance string
-	// CostUSD is the Bright Data spend attributed to this probe's capture. It is
-	// zero for every run of a native-only canary, which is the default and the
-	// only configuration that can be scheduled without opting in to paid probes.
-	CostUSD     float64
-	PaidAllowed bool
-}
-
 // ArchiveItemLog stores immutable log chunks for an archive item.
 type ArchiveItemLog struct {
 	ID            uint        `gorm:"primaryKey"`
