@@ -78,6 +78,7 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 		fmt.Fprintf(logWriter, "Fetching via %s (the page URL is not retrievable without an account)\n", fetchURL)
 	}
 	refererArgs := utils.YtDlpRefererArgsForURL(fetchURL)
+	refererArgs = append(refererArgs, utils.YtDlpFormatFallbackArgsForURL(fetchURL)...)
 
 	// Prepare command arguments
 	testArgs := []string{"--print", "title,duration,uploader"}

@@ -160,3 +160,27 @@ func YtDlpRefererArgsForURL(fetchURL string) []string {
 	}
 	return nil
 }
+
+// YtDlpFormatFallbackArgsForURL returns extra format-selection arguments for
+// platforms whose "best" format can be undownloadable, or nil.
+//
+// Vimeo mixes DRM into the player's HLS ladder per video — sometimes only some
+// variants (76979871 serves clear video but every audio rendition is
+// cbcs-protected). Without --check-formats, yt-dlp picks the nominal best,
+// hits the DRM error mid-download, and the whole item fails even when a clean
+// variant exists one row down. With it, yt-dlp verifies candidates and falls
+// back; a video whose every usable combination is protected still fails, now
+// for the honest reason that nothing retrievable exists.
+//
+// Scoped to the Vimeo player rather than global because the verification
+// probes cost a request per candidate format on every download.
+func YtDlpFormatFallbackArgsForURL(fetchURL string) []string {
+	parsed, err := url.Parse(fetchURL)
+	if err != nil {
+		return nil
+	}
+	if strings.ToLower(parsed.Hostname()) == vimeoPlayerHost {
+		return []string{"--check-formats"}
+	}
+	return nil
+}

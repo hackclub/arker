@@ -123,3 +123,18 @@ func TestVimeoRewriteKeepsRoutingIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestYtDlpFormatFallbackArgsScopedToVimeoPlayer(t *testing.T) {
+	if got := YtDlpFormatFallbackArgsForURL("https://player.vimeo.com/video/76979871"); len(got) != 1 || got[0] != "--check-formats" {
+		t.Fatalf("vimeo player should get --check-formats, got %v", got)
+	}
+	for _, url := range []string{
+		"https://www.youtube.com/watch?v=jNQXAC9IVRw",
+		"https://vimeo.com/76979871", // main-site URL: transform happens first; fallback keys off the fetch URL
+		"not a url",
+	} {
+		if got := YtDlpFormatFallbackArgsForURL(url); got != nil {
+			t.Fatalf("%s should get no format fallback args, got %v", url, got)
+		}
+	}
+}
