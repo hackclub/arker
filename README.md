@@ -6,6 +6,15 @@ A self-hostable minimalist version of <https://archive.org>.
 - Also supports git clones, videos (yt-dlp), photo posts and carousels (gallery-dl), itch.io games, and website screenshots
 - Comprehensive API
 
+The API-key-protected `POST /api/v1/archive` returns the original public `url`
+plus `short_id` and `result_url`. Poll `GET /api/v1/archive/:shortid` for the
+schema-versioned unified result: all capture items, normalized social metadata,
+Arker-stored media URLs, provenance, sanitized provider-metadata links, and a
+USD cost summary. Native operations are surfaced as free; Bright Data usage
+includes successful and failed billable attempts and is marked as estimated.
+Known captures return 200 even while pending or after a partial/failed result;
+unknown IDs return 404. Capture aliases expose both requested and canonical IDs.
+
 - Stores everything compressed using [zstd](https://github.com/facebook/zstd) level 6 (seekable format for random access)
 - Flexible storage: local filesystem or S3-compatible cloud storage
 
@@ -82,7 +91,8 @@ image and video in the post along with the caption, author, date, and like count
 The result is a ZIP holding every downloaded file, gallery-dl's raw per-file
 metadata sidecars, and a normalized `metadata.json` written by Arker. The viewer
 renders it as the original post; `/gallery/:shortid/list` returns the same data
-as JSON.
+as JSON. `/gallery/:shortid/raw` returns sanitized provider sidecars while the
+existing ZIP remains available unchanged.
 
 Routed hosts (post-shaped URLs only, so a profile link never pulls a whole
 account): Instagram `/p/` and `/tv/`, X/Twitter, Reddit, Tumblr, Bluesky, Flickr,

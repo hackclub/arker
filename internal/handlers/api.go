@@ -94,6 +94,13 @@ func ApiArchive(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) 
 		return
 	}
 
-	fullURL := utils.BuildFullURL(c, shortID)
-	c.JSON(http.StatusOK, gin.H{"url": fullURL})
+	c.JSON(http.StatusOK, archiveQueuedResponse(c, shortID))
+}
+
+func archiveQueuedResponse(c *gin.Context, shortID string) gin.H {
+	return gin.H{
+		"url":        utils.BuildFullURL(c, shortID),
+		"short_id":   shortID,
+		"result_url": utils.BuildFullURL(c, "api/v1/archive/"+shortID),
+	}
 }

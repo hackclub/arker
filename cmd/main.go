@@ -671,6 +671,7 @@ func main() {
 	})
 	r.GET("/docs", handlers.DocsGet)
 	r.POST("/api/v1/archive", handlers.RequireAPIKey(db), func(c *gin.Context) { handlers.ApiArchive(c, db, riverClient) })
+	r.GET("/api/v1/archive/:shortid", handlers.RequireAPIKey(db), func(c *gin.Context) { handlers.ApiArchiveResult(c, storageInstance, db) })
 	r.GET("/api/v1/past-archives", handlers.RequireAPIKey(db), func(c *gin.Context) { handlers.ApiPastArchives(c, db) })
 	r.GET("/web/past-archives", func(c *gin.Context) { handlers.WebPastArchives(c, db) })
 	r.GET("/logs/:shortid/:type", func(c *gin.Context) { handlers.GetLogs(c, db) })
@@ -698,6 +699,7 @@ func main() {
 
 	// Gallery routes - MUST come before /:shortid/:type catch-all
 	r.GET("/gallery/:shortid/list", func(c *gin.Context) { handlers.ServeGalleryManifest(c, storageInstance, db) })
+	r.GET("/gallery/:shortid/raw", func(c *gin.Context) { handlers.ServeGalleryRawMetadata(c, storageInstance, db) })
 	r.GET("/gallery/:shortid/file/*filepath", func(c *gin.Context) { handlers.ServeGalleryFile(c, storageInstance, db) })
 
 	r.Any("/git/*path", func(c *gin.Context) { handlers.GitHandler(c, storageInstance, db, cfg.CachePath) })

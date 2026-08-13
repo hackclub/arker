@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"arker/internal/archivers"
 	"arker/internal/models"
 	"arker/internal/storage"
 	"arker/internal/utils"
@@ -135,6 +136,45 @@ func openGalleryZip(c *gin.Context, storageInstance storage.Storage, db *gorm.DB
 	return zipReader, func() {}, true
 }
 
+// openGalleryZipData opens a known completed gallery item without writing an
+// HTTP response. It is shared by the unified result and raw-metadata adapters.
+func openGalleryZipData(storageInstance storage.Storage, item *models.ArchiveItem) (*zip.Reader, func(), bool) {
+	if item == nil || item.Status != "completed" || item.StorageKey == "" {
+		return nil, nil, false
+	}
+	size, err := storageInstance.Size(item.StorageKey)
+	if err != nil {
+		return nil, nil, false
+	}
+	if seekable, ok := storageInstance.(storage.SeekableStorage); ok {
+		reader, err := seekable.SeekableReader(item.StorageKey)
+		if err == nil {
+			zr, err := zip.NewReader(&seekerReaderAt{seeker: reader}, size)
+			if err == nil {
+				return zr, func() { _ = reader.Close() }, true
+			}
+			_ = reader.Close()
+		}
+	}
+	if size > maxGalleryBufferedSize {
+		return nil, nil, false
+	}
+	r, err := storageInstance.Reader(item.StorageKey)
+	if err != nil {
+		return nil, nil, false
+	}
+	defer r.Close()
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, nil, false
+	}
+	zr, err := zip.NewReader(&bytesReaderAtCloser{data: data}, int64(len(data)))
+	if err != nil {
+		return nil, nil, false
+	}
+	return zr, func() {}, true
+}
+
 // ServeGalleryManifest returns the normalized post metadata plus the list of
 // media files in the archive. The viewer calls this to render a post.
 func ServeGalleryManifest(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
@@ -185,6 +225,63 @@ func ServeGalleryManifest(c *gin.Context, storageInstance storage.Storage, db *g
 	manifest["files"] = files
 
 	c.JSON(http.StatusOK, manifest)
+}
+
+// ServeGalleryRawMetadata exposes sanitized provider sidecars from the ZIP.
+// It never returns media or Arker's normalized metadata.json.
+func ServeGalleryRawMetadata(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
+	shortID := c.Param("shortid")
+	if redirectIfAlias(c, db, shortID) {
+		return
+	}
+	var item models.ArchiveItem
+	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").Where("captures.short_id = ? AND archive_items.type = ?", shortID, utils.ArchiveTypeGalleryDl).First(&item).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "gallery archive not found"})
+		return
+	}
+	zr, cleanup, ok := openGalleryZipData(storageInstance, &item)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "raw gallery metadata not available"})
+		return
+	}
+	defer cleanup()
+	type record struct {
+		Filename string          `json:"filename"`
+		Metadata json.RawMessage `json:"metadata"`
+	}
+	records := make([]record, 0)
+	for _, f := range zr.File {
+		if f.Name == galleryMetadataFilename || !strings.HasSuffix(strings.ToLower(f.Name), ".json") {
+			continue
+		}
+		r, err := f.Open()
+		if err != nil {
+			continue
+		}
+		raw, err := io.ReadAll(io.LimitReader(r, 4*1024*1024+1))
+		r.Close()
+		if err != nil || len(raw) > 4*1024*1024 {
+			continue
+		}
+		safe, err := archivers.SanitizeJSON(raw, utils.MediaProxyRedactionSecrets())
+		if err != nil {
+			continue
+		}
+		records = append(records, record{Filename: f.Name, Metadata: safe})
+	}
+	if len(records) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "raw gallery metadata not available"})
+		return
+	}
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.JSON(http.StatusOK, gin.H{"provider": func() string {
+		for _, r := range records {
+			if r.Filename == "brightdata.json" {
+				return "brightdata"
+			}
+		}
+		return "gallery-dl"
+	}(), "records": records})
 }
 
 // ServeGalleryFile serves a single media file out of the gallery-dl ZIP.
