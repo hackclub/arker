@@ -416,3 +416,54 @@ func TestArchiveTikTokPhotoPostWithoutBrowserCredentials(t *testing.T) {
 		t.Fatalf("usage rows = %+v; want only the dataset record", rows)
 	}
 }
+
+// A session that opened and was refused everything is not a success, even when
+// the archive as a whole survives as partial: the browser row has to say the
+// paid work delivered nothing.
+func TestArchiveTikTokPhotoPostBrowserDeliveredNothing(t *testing.T) {
+	image := fakePNG(t)
+	record := map[string]any{
+		"post_id":   "1",
+		"url":       "https://www.tiktok.com/@someone/photo/1",
+		"post_type": "photo",
+		"carousel_images": []any{
+			"https://p16-sign.tiktokcdn-us.com/one.image",
+			"https://p16-sign.tiktokcdn-us.com/two.image",
+		},
+	}
+	network := newFakeNetwork(record)
+	network.serve("https://p16-sign.tiktokcdn-us.com/one.image", image)
+
+	client, db := newTestClient(t, network)
+	// The session opens but serves nothing, so the refused still stays lost.
+	withFakeBrowser(client, newFakePage())
+
+	result, err := client.archiveTikTok(context.Background(), "https://www.tiktok.com/@someone/photo/1", utils.ArchiveTypeGalleryDl, io.Discard, db, 28, "tt008")
+	if err != nil {
+		t.Fatalf("archiveTikTok: %v", err)
+	}
+	readResult(t, result)
+	if result.Completeness != archivers.CompletenessPartial {
+		t.Errorf("completeness = %q; want partial", result.Completeness)
+	}
+
+	rows := usageRows(t, db)
+	if len(rows) != 2 {
+		t.Fatalf("usage rows = %d; want 2", len(rows))
+	}
+	var browser models.BrightDataUsage
+	for _, row := range rows {
+		if row.Product == "browser_api" {
+			browser = row
+		}
+	}
+	if browser.Product != "browser_api" {
+		t.Fatal("no browser usage row for the session that opened")
+	}
+	if browser.Success {
+		t.Error("a session that delivered nothing was recorded as a success")
+	}
+	if browser.BytesTransferred != browserPageOverheadBytes {
+		t.Errorf("browser bytes = %d; want the page overhead it did spend", browser.BytesTransferred)
+	}
+}

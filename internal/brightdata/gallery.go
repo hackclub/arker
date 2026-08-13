@@ -17,7 +17,7 @@ import (
 
 // mediaFetcher downloads one resolved media entry to dest and returns the
 // number of bytes written. Platforms whose media Arker can fetch over its own
-// connection pass Client.downloadToPath; TikTok wraps it with a Bright Data
+// connection pass Client.directFetch; TikTok wraps it with a Bright Data
 // browser fallback for the assets its CDN refuses.
 type mediaFetcher func(ctx context.Context, entry mediaEntry, dest string) (int64, error)
 

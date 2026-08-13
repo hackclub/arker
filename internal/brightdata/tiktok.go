@@ -165,13 +165,16 @@ func (c *Client) tiktokPhotos(ctx context.Context, targetURL string, logWriter i
 	result, completeness, totalBytes, err := c.buildGalleryArchive(ctx, entries, meta, record, fetcher.fetch, logWriter)
 
 	if fetcher.sessions > 0 {
+		// The session is a success only if it actually delivered media that was
+		// archived. A session that opened and was refused everything still
+		// spent its page load, which is what BytesTransferred records.
 		browserUsage := &models.BrightDataUsage{
 			ArchiveItemID: itemID,
 			ShortID:       shortID,
 			URL:           targetURL,
 			Product:       "browser_api",
-			Success:       err == nil,
-			Detail:        truncate(fmt.Sprintf("browser fallback for %d image(s)", fetcher.browserFiles), 500),
+			Success:       err == nil && fetcher.browserFiles > 0,
+			Detail:        truncate(fmt.Sprintf("browser fallback delivered %d image(s)", fetcher.browserFiles), 500),
 		}
 		browserUsage.BytesTransferred, browserUsage.CostUSD = c.browserSessionCost(fetcher.bytes, fetcher.sessions)
 		c.recordUsage(db, browserUsage)
