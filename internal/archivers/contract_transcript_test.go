@@ -3,6 +3,7 @@ package archivers
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"strings"
