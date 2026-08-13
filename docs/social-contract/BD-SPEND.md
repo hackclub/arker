@@ -14,6 +14,7 @@ but is monitored via GET /admin/brightdata-usage during the window.
 | 4 | 2026-08-13 ~05:10 | Phase-2 discovery: 1 trigger each on TikTok Posts (gd_lu702nij2f790tmv9h), Reddit Posts (gd_lvz8ah06191smkebj4), X Posts (gd_lwxkxvnf1cynvib9co) to learn schemas + CDN URL properties | web_scraper x3 | see purpose | sd_msr25mbhtpnzp8zos / sd_msr25mi41408hhlc4e / sd_msr25msl2ce5c4dsy3 | $0.0045 actual (3 records) | $0.0075 |
 | 5 | 2026-08-13 ~05:25 | X video-tweet record shape discovery (SpaceX Starship liftoff tweet) | web_scraper | gd_lwxkxvnf1cynvib9co | sd_msr2ajy91198xmx5yg | $0.0015 actual (1 record) | $0.0090 |
 | 6 | 2026-08-13 ~05:40 | Everything-sweep discovery: TikTok photo posts via keyword dataset, Pinterest posts discover, FB page posts (limits <=5 each) + follow-up single-record schema probes | web_scraper | gd_lilwhto81z415d9mdl, gd_lk0sjs4d21kdr7cnlv, gd_lkaxegm826bjpoo9m5, gd_lyclm1571iy3mv57zw, gd_lxk88z3v1ketji4pn | pinterest sd_msr2ik6pn2vyaf9e6 (3 rec), fb-pages sd_msr2ikn62mhaz0uk1w (5), tiktok-kw sd_msr2ix1q1nrlc7mb54 (6), fb-post sd_msr2*fbpost (1), vimeo probe (error rec) | ~$0.024 actual (~16 records) | ~$0.033 |
+| 7 | 2026-08-13 ~02:15 ET | Live verification of F pathways via dev stack: X photo (Obama), X video (SpaceX), Reddit video (roxy), TikTok video (@tiktok) | web_scraper x4 + browser_api x1 (TikTok) | posts datasets + browser zone | (post-run) | est $0.02-0.15 | tbd |
 
 Planned spend (subject to remaining budget):
 - End-of-run fallback-path verification: 1-2 deliberate rescues (dataset trigger
