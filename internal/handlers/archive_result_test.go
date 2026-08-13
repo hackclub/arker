@@ -629,3 +629,51 @@ func TestProvenanceOnFailedSocialItem(t *testing.T) {
 		t.Fatalf("last_failure_reason = %q", reason)
 	}
 }
+
+// Rows written before chunked logs existed keep the whole log in the item's own
+// column; the reason has to come from there too.
+func TestLastFailureReasonReadsLegacyLogColumn(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	createVideoCapture(t, db, "lgl01", "https://youtu.be/legacylog", map[string]string{"yt-dlp": "failed"})
+	db.Model(&models.ArchiveItem{}).Where("type = ?", "yt-dlp").
+		Update("logs", "starting\nERROR: Private video. Sign in if you've been granted access\n")
+
+	_, body := getResult(t, resultRouter(db, store), "lgl01")
+	prov := socialOf(t, body)["provenance"].(map[string]any)
+	if reason, _ := prov["last_failure_reason"].(string); !strings.Contains(reason, "Private video") {
+		t.Fatalf("last_failure_reason = %q, want the legacy column's failure line", reason)
+	}
+}
+
+// Only the tail of a long log is read, and a chunk boundary must not leave a
+// fragment of a word at the start of the reported reason.
+func TestLastFailureReasonReadsOnlyTheLogTail(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	createVideoCapture(t, db, "tail1", "https://youtu.be/longlog", map[string]string{"yt-dlp": "failed"})
+	var item models.ArchiveItem
+	db.Where("type = ?", "yt-dlp").First(&item)
+
+	// An early failure that must fall out of the window, then enough verbose
+	// output to push it there, then the failure that actually matters.
+	if err := utils.AppendArchiveItemLog(db, item.ID, 1, "ERROR: an ancient failure nobody should see\n"); err != nil {
+		t.Fatalf("append log: %v", err)
+	}
+	if err := utils.AppendArchiveItemLog(db, item.ID, 1, strings.Repeat("[debug] routine progress chatter\n", 4000)); err != nil {
+		t.Fatalf("append log: %v", err)
+	}
+	if err := utils.AppendArchiveItemLog(db, item.ID, 1, "ERROR: Video unavailable\n"); err != nil {
+		t.Fatalf("append log: %v", err)
+	}
+
+	_, body := getResult(t, resultRouter(db, store), "tail1")
+	prov := socialOf(t, body)["provenance"].(map[string]any)
+	reason, _ := prov["last_failure_reason"].(string)
+	if !strings.Contains(reason, "Video unavailable") {
+		t.Fatalf("last_failure_reason = %q, want the most recent failure", reason)
+	}
+	if strings.Contains(reason, "ancient") {
+		t.Fatalf("last_failure_reason = %q, want the newest failure, not the first", reason)
+	}
+}

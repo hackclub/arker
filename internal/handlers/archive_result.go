@@ -517,6 +517,12 @@ var failureReasonURL = regexp.MustCompile(`(?i)\bhttps?://[^\s'"<>)]+`)
 // so this reads their human text.
 var failureReasonMarkers = []string{"error", "failed", "failure", "timed out", "timeout", "denied", "refused", "unsupported", "unavailable"}
 
+// failureReasonChunkLimit bounds how much of an archive log is read. Logs are
+// stored as ~1KB chunks and a verbose yt-dlp run writes hundreds of them, but
+// only the end is needed: reading the whole log on every poll of an unfinished
+// archive would pull megabytes out of the database for one line of output.
+const failureReasonChunkLimit = 24
+
 // lastFailureReason returns the most recent failure line from an item's archive
 // log, sanitized for external display. Returns empty when nothing matched,
 // which means "not recorded" — never "the capture was clean".
@@ -524,8 +530,8 @@ func lastFailureReason(db *gorm.DB, item *models.ArchiveItem) string {
 	if db == nil || item == nil {
 		return ""
 	}
-	logs, err := utils.ArchiveItemLogString(db, item.ID, item.Logs)
-	if err != nil || logs == "" {
+	logs := recentArchiveLogTail(db, item)
+	if logs == "" {
 		return ""
 	}
 	lines := strings.Split(logs, "\n")
@@ -542,6 +548,36 @@ func lastFailureReason(db *gorm.DB, item *models.ArchiveItem) string {
 		}
 	}
 	return ""
+}
+
+// recentArchiveLogTail returns the last few log chunks for an item, in order.
+// Rows written before chunked logs existed keep their whole log in the item's
+// own column, which is already loaded, so that needs no query at all.
+func recentArchiveLogTail(db *gorm.DB, item *models.ArchiveItem) string {
+	var chunks []string
+	if err := db.Model(&models.ArchiveItemLog{}).
+		Where("archive_item_id = ?", item.ID).
+		Order("id DESC").Limit(failureReasonChunkLimit).
+		Pluck("chunk", &chunks).Error; err != nil {
+		return item.Logs
+	}
+	if len(chunks) == 0 {
+		return item.Logs
+	}
+	var tail strings.Builder
+	for i := len(chunks) - 1; i >= 0; i-- {
+		tail.WriteString(chunks[i])
+	}
+	logs := tail.String()
+	// A chunk boundary can fall mid-line, so when the window is full drop
+	// everything before the first newline rather than risk reporting a
+	// fragment that starts halfway through a word.
+	if len(chunks) == failureReasonChunkLimit {
+		if newline := strings.Index(logs, "\n"); newline >= 0 {
+			logs = logs[newline+1:]
+		}
+	}
+	return logs
 }
 
 func sanitizeFailureReason(line string) string {
