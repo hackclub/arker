@@ -52,6 +52,7 @@ const (
 	DatasetRedditPosts    = "gd_lvz8ah06191smkebj4"
 	DatasetXPosts         = "gd_lwxkxvnf1cynvib9co"
 	DatasetPinterestPosts = "gd_lk0sjs4d21kdr7cnlv"
+	DatasetFacebookPosts  = "gd_lyclm1571iy3mv57zw"
 )
 
 // Config carries everything the fallback needs. Only APIKey is required:
