@@ -221,7 +221,7 @@ func buildArchiveResultCost(db *gorm.DB, items []models.ArchiveItem) (archiveRes
 }
 
 func buildSocialPost(c *gin.Context, store storage.Storage, capture *models.Capture, sourceURL string) *socialPostResult {
-	recognized := utils.IsVideoURL(sourceURL) || utils.IsGalleryDLURL(sourceURL)
+	recognized := utils.IsSocialMediaPostURL(sourceURL)
 	if !recognized {
 		return nil
 	}
