@@ -241,3 +241,21 @@ func TestArchiveRedditRejectsVideoItemType(t *testing.T) {
 		t.Errorf("spent money on an unroutable item type: %+v", rows)
 	}
 }
+
+// A CDN that answers 200 with an error page must not become the post's video.
+// Storing it would produce a bundle that reads complete and holds an HTML
+// document where the archive promised source media.
+func TestArchiveRedditRejectsNonVideoBytes(t *testing.T) {
+	record := loadRecords(t, "reddit_post.json")[0]
+	network := newFakeNetwork(record)
+	network.serve(redditMediaEntries(record)[0].URL, []byte("<html><body>over capacity</body></html>"))
+
+	client, db := newTestClient(t, network)
+	_, err := client.archiveReddit(context.Background(), redditPostURL, utils.ArchiveTypeGalleryDl, io.Discard, db, 5, "rdbad")
+	if err == nil {
+		t.Fatal("an HTML error page was accepted as the post's video")
+	}
+	if rows := usageRows(t, db); len(rows) != 1 || rows[0].Success {
+		t.Errorf("usage rows = %+v; want one unsuccessful row", rows)
+	}
+}

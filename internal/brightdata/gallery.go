@@ -46,8 +46,18 @@ func (c *Client) buildGalleryArchive(ctx context.Context, entries []mediaEntry, 
 	var missing []int
 	for i, entry := range entries {
 		name := fmt.Sprintf("%03d%s", i+1, entry.extension())
+		path := filepath.Join(tmpDir, name)
 		fmt.Fprintf(logWriter, "Downloading %s...\n", name)
-		size, err := fetch(ctx, entry, filepath.Join(tmpDir, name))
+		size, err := fetch(ctx, entry, path)
+		if err == nil {
+			// A CDN that answers 200 with an error page would otherwise be
+			// stored as the post's video and counted towards completeness —
+			// a bundle that looks whole and holds an HTML document.
+			err = verifyGalleryMedia(entry, path)
+			if err != nil {
+				removeFile(path)
+			}
+		}
 		if err != nil {
 			// A carousel with one dead slide is still worth archiving, but the
 			// archive has to say which slide was lost instead of looking like a
@@ -114,6 +124,18 @@ func closeResultData(result archivers.Result) {
 	if closer, ok := result.Data.(io.Closer); ok {
 		closer.Close()
 	}
+}
+
+// verifyGalleryMedia rejects a download that is not what the entry claimed to
+// be. Only MP4/MOV containers are checkable this cheaply (both are ISO base
+// media, so "ftyp" at offset 4 identifies them); images are left alone, since a
+// broken one is visible rather than silently counted as the post's video.
+func verifyGalleryMedia(entry mediaEntry, path string) error {
+	switch entry.extension() {
+	case ".mp4", ".mov":
+		return verifyMP4(path)
+	}
+	return nil
 }
 
 // storedFileSize returns the size recorded for the first stored file matching
