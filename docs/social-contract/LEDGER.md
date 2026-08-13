@@ -37,6 +37,15 @@ Rule: fetch origin/main before every integration; agents never push; manager nev
   accounting verified + canaries ACTIVE. Not just an RC.
 - Window expiry ~10:50 ET: stop shipping/spending; reporting still allowed.
 
+## DEADLINE (Zach, 2026-08-13 ~00:05 ET)
+Contract must be FULFILLED AND LIVE in prod, owner-testable, working on all common
+platforms, by ~08:00 ET (owner wakes). Internal target: shipped + prod-verified by
+~07:00 ET. Agent branches time-boxed to 02:00 ET with must-have/cuttable priorities.
+BD testing re-confirmed OK <= $10 total, used judiciously.
+Known honest limits to surface in the morning report: X/Twitter needs cookies prod
+does not have (explicit authentication_required, never false-green); Facebook photo
+posts are not a claimed shape; IG under throttle degrades to BD fallback.
+
 ## Bright Data spend ledger
 Running total: $0.00 of $10.00 cap. Per-call entries in docs/social-contract/BD-SPEND.md
 (every paid call: timestamp, purpose, product, request/snapshot id, est. cost).
