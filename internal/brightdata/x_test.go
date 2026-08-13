@@ -250,3 +250,42 @@ func TestArchiveXMediaDownloadFailureRecordsUsage(t *testing.T) {
 		t.Errorf("billable collection not recorded: records=%d cost=%v", rows[0].Records, rows[0].CostUSD)
 	}
 }
+
+// net/http embeds the full request URL — query string included — in every
+// transport-level error, and the archive log applies no redaction of its own.
+// A DNS failure or a reset connection on a signed CDN URL would therefore
+// store live credentials in the log the admin API serves, by the one path that
+// never passes through SanitizeJSON.
+func TestArchiveXTransportFailureKeepsSignedURLOutOfTheLog(t *testing.T) {
+	const signedURL = "https://scontent.cdninstagram.com/v/photo.jpg?oe=EXPIRESVAL&signature=SIGNATUREVAL&_nc_sid=SIDVAL"
+	record := map[string]any{
+		"id":          "1",
+		"url":         "https://x.com/someone/status/1",
+		"user_posted": "someone",
+		"photos":      []any{signedURL},
+	}
+	network := newFakeNetwork(record)
+	network.failTransport[signedURL] = true
+
+	client, db := newTestClient(t, network)
+	var log strings.Builder
+	_, err := client.archiveX(context.Background(), "https://x.com/someone/status/1", utils.ArchiveTypeGalleryDl, &log, db, 14, "xlog1")
+	if err == nil {
+		t.Fatal("expected the download to fail")
+	}
+
+	// The failure must still be legible: the host and the reason survive.
+	if !strings.Contains(log.String(), "connection refused") {
+		t.Errorf("log lost the reason for the failure:\n%s", log.String())
+	}
+	for _, secret := range []string{"EXPIRESVAL", "SIGNATUREVAL", "SIDVAL"} {
+		if strings.Contains(log.String(), secret) {
+			t.Errorf("archive log stores the signed URL parameter %s:\n%s", secret, log.String())
+		}
+		for _, row := range usageRows(t, db) {
+			if strings.Contains(row.Detail, secret) {
+				t.Errorf("usage detail stores the signed URL parameter %s: %q", secret, row.Detail)
+			}
+		}
+	}
+}

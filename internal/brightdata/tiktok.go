@@ -90,9 +90,13 @@ func (c *Client) tiktokVideo(ctx context.Context, targetURL string, logWriter io
 		finishBrowserUsage(false, err.Error())
 		return archivers.Result{}, err
 	}
-	fmt.Fprintf(logWriter, "Downloaded %d bytes through Bright Data browser session\n", fetch.Size)
+	fmt.Fprintf(logWriter, "Downloaded %d bytes through Bright Data browser session (%d billable)\n",
+		fetch.StoredBytes, fetch.Size)
 
-	metadata, rawMetadata, err := buildBrightDataTikTokVideoArtifacts(record, targetURL, fetch.Size, time.Now())
+	// The stored size, not the billed one: a retried or partially-transferred
+	// attempt inflates what the session cost without changing what the archive
+	// holds, and the metadata has to describe the file.
+	metadata, rawMetadata, err := buildBrightDataTikTokVideoArtifacts(record, targetURL, fetch.StoredBytes, time.Now())
 	if err != nil {
 		removeFile(fetch.Path)
 		finishBrowserUsage(false, "metadata build failed: "+err.Error())
@@ -109,7 +113,7 @@ func (c *Client) tiktokVideo(ctx context.Context, targetURL string, logWriter io
 		finishBrowserUsage(false, err.Error())
 		return archivers.Result{}, err
 	}
-	finishBrowserUsage(true, fmt.Sprintf("video %d bytes", fetch.Size))
+	finishBrowserUsage(true, fmt.Sprintf("video %d bytes stored, %d transferred", fetch.StoredBytes, fetch.Size))
 	return archivers.Result{
 		Data:        reader,
 		Extension:   ".mp4",

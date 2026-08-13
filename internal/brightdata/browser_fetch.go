@@ -156,13 +156,21 @@ type browserFetchRequest struct {
 	Retryable func(error) bool
 }
 
-// browserFetchResult reports what a fetch cost as well as what it produced:
-// Sessions and Size are the inputs to the Browser API usage row, and are
-// meaningful even when the fetch ultimately failed.
+// browserFetchResult reports what a fetch cost as well as what it produced.
+//
+// Size and StoredBytes are deliberately separate and are NOT the same number.
+// Size is every byte that crossed the session — including the partial transfer
+// of a candidate URL that died halfway, and a whole session's worth of
+// progress thrown away on a retry elsewhere — which is what Bright Data bills
+// for. StoredBytes is the size of the file at Path, which is what the
+// normalized metadata must report. Billing the stored size under-reports
+// spend; describing the archive with the billed size claims it holds bytes it
+// does not, which the canary validator catches as a metadata/storage mismatch.
 type browserFetchResult struct {
-	Path     string
-	Size     int64
-	Sessions int
+	Path        string
+	Size        int64
+	StoredBytes int64
+	Sessions    int
 	// MediaURL is the candidate that actually answered.
 	MediaURL string
 }
@@ -188,8 +196,8 @@ func (c *Client) fetchThroughBrowser(ctx context.Context, req browserFetchReques
 				countryLabel(country), lastErr)
 		}
 
-		path, size, mediaURL, opened, err := c.browserFetchSession(ctx, country, req)
-		out.Size += size
+		path, transferred, stored, mediaURL, opened, err := c.browserFetchSession(ctx, country, req)
+		out.Size += transferred
 		// Only a session that actually opened is billable: a connect that
 		// never established one transferred nothing, and counting it would
 		// invent page-load overhead in the spend estimate.
@@ -197,7 +205,7 @@ func (c *Client) fetchThroughBrowser(ctx context.Context, req browserFetchReques
 			out.Sessions++
 		}
 		if err == nil {
-			out.Path, out.MediaURL = path, mediaURL
+			out.Path, out.MediaURL, out.StoredBytes = path, mediaURL, stored
 			return out, nil
 		}
 		lastErr = err
@@ -209,14 +217,16 @@ func (c *Client) fetchThroughBrowser(ctx context.Context, req browserFetchReques
 }
 
 // browserFetchSession runs one session: connect, navigate, then try each
-// candidate URL until one yields bytes. The opened return reports whether a
-// remote session was actually established, which is what makes it billable.
-func (c *Client) browserFetchSession(ctx context.Context, country string, req browserFetchRequest) (string, int64, string, bool, error) {
+// candidate URL until one yields bytes. It returns the transferred total (every
+// candidate attempt, billable) and the stored size (the candidate that
+// answered) separately, plus whether a remote session was actually
+// established, which is what makes it billable at all.
+func (c *Client) browserFetchSession(ctx context.Context, country string, req browserFetchRequest) (string, int64, int64, string, bool, error) {
 	session, err := c.openBrowserSession(ctx, country, req.PageURL, req.LogWriter)
 	if err != nil {
 		// A session that reached Bright Data before failing still loaded a
 		// page, so it is billed; one that never connected is not.
-		return "", 0, "", sessionConnected(err), err
+		return "", 0, 0, "", sessionConnected(err), err
 	}
 	defer session.Close()
 
@@ -226,7 +236,7 @@ func (c *Client) browserFetchSession(ctx context.Context, country string, req br
 		path, size, err := fetchURLThroughPage(ctx, session, mediaURL, req.TotalHint, req.TempPattern, req.LogWriter)
 		fetched += size
 		if err == nil {
-			return path, fetched, mediaURL, true, nil
+			return path, fetched, size, mediaURL, true, nil
 		}
 		lastErr = err
 		if ctx.Err() != nil {
@@ -234,7 +244,7 @@ func (c *Client) browserFetchSession(ctx context.Context, country string, req br
 		}
 		fmt.Fprintf(req.LogWriter, "In-page fetch failed for one candidate URL: %v\n", err)
 	}
-	return "", fetched, "", true, lastErr
+	return "", fetched, 0, "", true, lastErr
 }
 
 // fetchMediaChunkJS fetches one Range of the media URL inside the page and

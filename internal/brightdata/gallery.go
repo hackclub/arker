@@ -152,10 +152,63 @@ func storedFileSize(meta *archivers.GalleryMetadata, pred func(archivers.Gallery
 
 // videoResolutionPatterns match the resolution marker platforms embed in a
 // media URL, most specific first.
+//
+// The last pattern requires a non-alphanumeric boundary on both sides of the
+// marker, which is the whole reason it is safe to use. Reddit's media IDs are
+// random base36 — "q7f331pd9k2la" contains "331p" — and about one in 240 of
+// them reads as a resolution to an unbounded pattern. Matching one would score
+// every variant of that video identically (they share the ID), so the
+// first-listed, which for Reddit is the smallest, would win silently: a 392p
+// copy of a 1080p video, archived with no error and a fabricated quality
+// label. Requiring the boundary costs the occasional real marker glued to a
+// word ("video1080p.mp4"), which merely means the variants are not collapsed —
+// the safe direction to be wrong in.
 var videoResolutionPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^(\d{2,5})x(\d{2,5})$`),  // X: .../vid/avc1/3840x2160/name.mp4
 	regexp.MustCompile(`(?i)res[_-]?(\d{2,5})p`), // Reddit: .../pb/m2-res_1080p.mp4
-	regexp.MustCompile(`(?i)(?:^|[^0-9])(\d{3,4})p(?:$|[^0-9])`),
+	regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(\d{3,4})p(?:$|[^a-z0-9])`),
+}
+
+// resolutionMatch locates a resolution marker within a URL's path.
+type resolutionMatch struct {
+	// segment is the index of the path segment carrying the marker; everything
+	// before it identifies the video the variants belong to.
+	segment int
+	score   int64
+	label   string
+}
+
+// findVideoResolution scans a path for a resolution marker, most specific
+// pattern first rather than left-most segment first.
+//
+// Pattern confidence has to outrank position: a path can carry a weak marker
+// early and the real one late, and taking the left-most match would group on
+// the weak one. Scores from different patterns are never compared — a match
+// fixes both the group and the scale, and every variant of one video uses the
+// same URL scheme.
+func findVideoResolution(segments []string) (resolutionMatch, bool) {
+	for _, pattern := range videoResolutionPatterns {
+		for i, segment := range segments {
+			m := pattern.FindStringSubmatch(segment)
+			if m == nil {
+				continue
+			}
+			if len(m) > 2 && m[2] != "" {
+				width, err := strconv.ParseInt(m[1], 10, 64)
+				height, hErr := strconv.ParseInt(m[2], 10, 64)
+				if err != nil || hErr != nil {
+					continue
+				}
+				return resolutionMatch{segment: i, score: width * height, label: m[0]}, true
+			}
+			value, err := strconv.ParseInt(m[1], 10, 64)
+			if err != nil {
+				continue
+			}
+			return resolutionMatch{segment: i, score: value, label: m[1] + "p"}, true
+		}
+	}
+	return resolutionMatch{}, false
 }
 
 // bestVideoVariants collapses multi-resolution variants of the same video into
@@ -210,51 +263,23 @@ func videoVariantKey(rawURL string) (string, int64) {
 		return rawURL, 0
 	}
 	segments := strings.Split(parsed.Path, "/")
-	for i, segment := range segments {
-		if score, ok := videoResolutionScore(segment); ok {
-			return parsed.Host + strings.Join(segments[:i], "/"), score
-		}
+	match, ok := findVideoResolution(segments)
+	if !ok {
+		return rawURL, 0
 	}
-	return rawURL, 0
-}
-
-func videoResolutionScore(segment string) (int64, bool) {
-	for _, pattern := range videoResolutionPatterns {
-		m := pattern.FindStringSubmatch(segment)
-		if m == nil {
-			continue
-		}
-		if len(m) > 2 && m[2] != "" {
-			width, _ := strconv.ParseInt(m[1], 10, 64)
-			height, _ := strconv.ParseInt(m[2], 10, 64)
-			return width * height, true
-		}
-		value, err := strconv.ParseInt(m[1], 10, 64)
-		if err != nil {
-			continue
-		}
-		return value, true
-	}
-	return 0, false
+	return parsed.Host + strings.Join(segments[:match.segment], "/"), match.score
 }
 
 // videoQualityLabel names the resolution a media URL advertises, for the
-// normalized metadata's quality_label. Empty when the URL says nothing.
+// normalized metadata's quality_label. Empty when the URL says nothing, which
+// is more useful than a number invented from an ID.
 func videoQualityLabel(rawURL string) string {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return ""
 	}
-	for _, segment := range strings.Split(parsed.Path, "/") {
-		if m := videoResolutionPatterns[0].FindStringSubmatch(segment); m != nil {
-			return m[0]
-		}
-		if m := videoResolutionPatterns[1].FindStringSubmatch(segment); m != nil {
-			return m[1] + "p"
-		}
-		if m := videoResolutionPatterns[2].FindStringSubmatch(segment); m != nil {
-			return m[1] + "p"
-		}
+	if match, ok := findVideoResolution(strings.Split(parsed.Path, "/")); ok {
+		return match.label
 	}
 	return ""
 }

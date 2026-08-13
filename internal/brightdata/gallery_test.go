@@ -213,3 +213,48 @@ func TestIntFieldAcceptsNumericStrings(t *testing.T) {
 		t.Errorf("key precedence broken: %v", got)
 	}
 }
+
+// Reddit media IDs are random base36, and roughly one in 240 of them contains
+// a digit run followed by "p" — "q7f331pd9k2la" reads as 331p. A resolution
+// matcher that accepts that groups every variant of the video under a score
+// taken from the shared ID, so the smallest variant (which Reddit lists first)
+// is archived silently, with a fabricated quality label to match.
+func TestVideoVariantsIgnoreResolutionLookalikesInMediaIDs(t *testing.T) {
+	resolutions := []string{"392", "480", "640", "854", "1280", "1920"}
+	for _, id := range []string{"12xltuysedih1", "q7f331pd9k2la", "abc1080pxyz12", "aa720pbb11cc2"} {
+		var urls []string
+		for _, res := range resolutions {
+			urls = append(urls, "https://packaged-media.redd.it/"+id+"/pb/m2-res_"+res+"p.mp4?s=x")
+		}
+
+		got := bestVideoVariants(urls)
+		if len(got) != 1 {
+			t.Errorf("id %s: %d entries; want the six variants collapsed to one", id, len(got))
+			continue
+		}
+		if !strings.Contains(got[0], "m2-res_1920p.mp4") {
+			t.Errorf("id %s: chose %q; want the 1920p variant", id, got[0])
+		}
+		if label := videoQualityLabel(got[0]); label != "1920p" {
+			t.Errorf("id %s: quality label = %q; want 1920p", id, label)
+		}
+	}
+}
+
+// The same lookalike must not invent a quality label for a URL that carries no
+// resolution at all: an absent label is honest, a wrong one is not.
+func TestVideoQualityLabelIgnoresLookalikes(t *testing.T) {
+	cases := map[string]string{
+		"https://v.redd.it/q7f331pd9k2la/DASH_720.mp4":                    "",
+		"https://cdn.example/abc1080pxyz12/video.mp4":                     "",
+		"https://cdn.example/1080p/video.mp4":                             "1080p",
+		"https://cdn.example/x/720p.mp4":                                  "720p",
+		"https://video.twimg.com/amplify/1/vid/1280x720/a.mp4":            "1280x720",
+		"https://packaged-media.redd.it/q7f331pd9k2la/pb/m2-res_480p.mp4": "480p",
+	}
+	for rawURL, want := range cases {
+		if got := videoQualityLabel(rawURL); got != want {
+			t.Errorf("videoQualityLabel(%s) = %q; want %q", rawURL, got, want)
+		}
+	}
+}

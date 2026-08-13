@@ -487,3 +487,72 @@ func TestTikTokShareCountIsReadFromTheStringField(t *testing.T) {
 		t.Errorf("share_count = %d; want 99 read from the string value", got)
 	}
 }
+
+// A first candidate that transfers bytes and then dies inflates what the
+// session cost without changing what the archive holds. The usage row must
+// carry the larger number and the metadata the smaller one; swapping them
+// either under-reports spend or claims the archive holds bytes it does not
+// (which the canary validator flags as a metadata/storage mismatch).
+func TestArchiveTikTokVideoBillsTransferredButDescribesStored(t *testing.T) {
+	record := loadRecords(t, "tiktok_post.json")[0]
+	network := newFakeNetwork(record)
+	network.serve(stringField(record, "preview_image"), fakePNG(t))
+
+	stored := fakeMP4(4096)
+	page := &partialThenGoodPage{
+		fakePage:  newFakePage(),
+		failAfter: stringField(record, "video_url"),
+		partial:   mediaChunkBytes, // one full chunk, then the URL dies
+	}
+	page.media[stringField(record, "video_url")] = fakeMP4(3 * mediaChunkBytes)
+	page.media[stringField(record, "cdn_link")] = stored
+
+	client, db := newTestClient(t, network)
+	withFakeBrowser(client, page)
+
+	result, err := client.archiveTikTok(context.Background(), tiktokVideoURL, utils.ArchiveTypeYtDlp, io.Discard, db, 29, "tt009")
+	if err != nil {
+		t.Fatalf("archiveTikTok: %v", err)
+	}
+	if got := readResult(t, result); len(got) != len(stored) {
+		t.Fatalf("stored %d bytes; want %d", len(got), len(stored))
+	}
+
+	meta := videoMetadataFromSidecar(t, result.Metadata)
+	if meta.Media.SizeBytes != int64(len(stored)) {
+		t.Errorf("metadata reports %d media bytes; storage holds %d", meta.Media.SizeBytes, len(stored))
+	}
+
+	var browser models.BrightDataUsage
+	for _, row := range usageRows(t, db) {
+		if row.Product == "browser_api" {
+			browser = row
+		}
+	}
+	wantBilled := int64(mediaChunkBytes) + int64(len(stored)) + browserPageOverheadBytes
+	if browser.BytesTransferred != wantBilled {
+		t.Errorf("billed %d bytes; want %d (abandoned chunk + stored file + page load)",
+			browser.BytesTransferred, wantBilled)
+	}
+}
+
+// partialThenGoodPage serves failAfter's bytes up to partial and then refuses,
+// the shape of a signed URL whose window closes mid-download.
+type partialThenGoodPage struct {
+	*fakePage
+	failAfter string
+	partial   int
+	delivered int
+}
+
+func (p *partialThenGoodPage) Evaluate(expression string, arg ...any) (any, error) {
+	args, _ := arg[0].(map[string]interface{})
+	if mediaURL, _ := args["url"].(string); mediaURL == p.failAfter {
+		if p.delivered >= p.partial {
+			p.requests = append(p.requests, mediaURL)
+			return `{"error":"status 403"}`, nil
+		}
+		p.delivered += mediaChunkBytes
+	}
+	return p.fakePage.Evaluate(expression, arg...)
+}

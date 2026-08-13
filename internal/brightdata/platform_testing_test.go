@@ -68,12 +68,16 @@ type fakeNetwork struct {
 
 	// media maps an exact URL to its response.
 	media map[string]cdnResponse
+	// failTransport marks URLs whose request fails below HTTP — DNS, TLS,
+	// connection reset — which is how net/http produces a *url.Error carrying
+	// the full signed URL.
+	failTransport map[string]bool
 
 	requests []string
 }
 
 func newFakeNetwork(records ...map[string]any) *fakeNetwork {
-	return &fakeNetwork{records: records, media: map[string]cdnResponse{}}
+	return &fakeNetwork{records: records, media: map[string]cdnResponse{}, failTransport: map[string]bool{}}
 }
 
 func (f *fakeNetwork) serve(rawURL string, body []byte) {
@@ -107,8 +111,13 @@ func (f *fakeNetwork) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	f.mu.Lock()
+	failTransport := f.failTransport[req.URL.String()]
 	response, ok := f.media[req.URL.String()]
 	f.mu.Unlock()
+	if failTransport {
+		// http.Client wraps this in a *url.Error carrying the request URL.
+		return nil, fmt.Errorf("dial tcp 203.0.113.1:443: connect: connection refused")
+	}
 	if !ok {
 		// The shape of an IP-locked CDN refusing a request from Arker's own
 		// network position.
@@ -232,7 +241,7 @@ func newTestClient(t *testing.T, network *fakeNetwork) (*Client, *gorm.DB) {
 
 // withFakeBrowser points the client's browser sessions at a fake page and
 // reports how many sessions were opened.
-func withFakeBrowser(client *Client, pages ...*fakePage) *int {
+func withFakeBrowser(client *Client, pages ...browserSession) *int {
 	opened := 0
 	client.openBrowser = func(ctx context.Context, country, pageURL string, logWriter io.Writer) (browserSession, error) {
 		index := opened
