@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -90,15 +91,37 @@ func (c *Client) openBrowserSession(ctx context.Context, country, pageURL string
 	page, err := browserPage(browser)
 	if err != nil {
 		closeSession()
-		return nil, err
+		return nil, &sessionOpenError{connected: true, err: err}
 	}
 
 	fmt.Fprintf(logWriter, "Loading %s in remote browser...\n", pageURL)
 	if err := gotoWithRetry(ctx, page, pageURL, logWriter); err != nil {
 		closeSession()
-		return nil, fmt.Errorf("remote browser navigation failed: %w", err)
+		return nil, &sessionOpenError{connected: true, err: fmt.Errorf("remote browser navigation failed: %w", err)}
 	}
 	return &playwrightSession{Page: page, closeFn: closeSession}, nil
+}
+
+// sessionOpenError marks a session attempt that reached Bright Data's network
+// before failing. Navigation is real traffic on a real session, so it is
+// billable even though it produced nothing; a CDP connect that never landed is
+// not. Without the distinction the usage row either invents spend for failed
+// connects or hides it for failed page loads, and the table exists to be
+// trusted in both directions.
+type sessionOpenError struct {
+	connected bool
+	err       error
+}
+
+func (e *sessionOpenError) Error() string { return e.err.Error() }
+func (e *sessionOpenError) Unwrap() error { return e.err }
+
+// sessionConnected reports whether a failed session attempt transferred
+// anything billable. Unmarked errors count as not connected: those are the
+// pre-connect failures (no credentials, Playwright unavailable, CDP refused).
+func sessionConnected(err error) bool {
+	var open *sessionOpenError
+	return errors.As(err, &open) && open.connected
 }
 
 // playwrightSession adapts a live Playwright page to the browserSession
@@ -191,7 +214,9 @@ func (c *Client) fetchThroughBrowser(ctx context.Context, req browserFetchReques
 func (c *Client) browserFetchSession(ctx context.Context, country string, req browserFetchRequest) (string, int64, string, bool, error) {
 	session, err := c.openBrowserSession(ctx, country, req.PageURL, req.LogWriter)
 	if err != nil {
-		return "", 0, "", false, err
+		// A session that reached Bright Data before failing still loaded a
+		// page, so it is billed; one that never connected is not.
+		return "", 0, "", sessionConnected(err), err
 	}
 	defer session.Close()
 

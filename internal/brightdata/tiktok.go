@@ -251,8 +251,11 @@ func (f *tiktokMediaFetcher) browserPage(ctx context.Context) (pageEvaluator, er
 	}
 	session, err := f.client.openBrowserSession(ctx, country, f.pageURL, f.logWriter)
 	if err != nil {
-		// A session that never opened is not billable, so it is not counted:
-		// the usage row would otherwise invent a page load that never happened.
+		// A session that never connected is not billable; one that connected
+		// and then failed to navigate loaded a page and is.
+		if sessionConnected(err) {
+			f.sessions++
+		}
 		f.sessionErr = err
 		return nil, err
 	}

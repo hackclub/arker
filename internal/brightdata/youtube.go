@@ -136,7 +136,7 @@ func (c *Client) archiveYouTube(ctx context.Context, targetURL string, logWriter
 func (c *Client) youtubeSession(ctx context.Context, country, watchURL, videoID string, logWriter io.Writer) (*youtubeMediaInfo, string, int64, bool, error) {
 	session, err := c.openBrowserSession(ctx, country, watchURL, logWriter)
 	if err != nil {
-		return nil, "", 0, false, err
+		return nil, "", 0, sessionConnected(err), err
 	}
 	defer session.Close()
 

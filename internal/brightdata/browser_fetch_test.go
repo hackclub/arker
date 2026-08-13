@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -274,5 +275,46 @@ func TestFetchThroughBrowserDoesNotBillSessionsThatNeverOpened(t *testing.T) {
 	}
 	if bytesTransferred, cost := client.browserSessionCost(result.Size, result.Sessions); bytesTransferred != 0 || cost != 0 {
 		t.Errorf("charged %d bytes / $%v for sessions that never opened", bytesTransferred, cost)
+	}
+}
+
+// The other direction of the same rule: a session that reached Bright Data and
+// then failed to navigate did load a page, so hiding it would under-report
+// real spend.
+func TestFetchThroughBrowserBillsSessionsThatConnectedThenFailed(t *testing.T) {
+	client := &Client{}
+	client.openBrowser = func(ctx context.Context, country, pageURL string, logWriter io.Writer) (browserSession, error) {
+		return nil, &sessionOpenError{connected: true, err: errors.New("remote browser navigation failed")}
+	}
+
+	result, err := client.fetchThroughBrowser(context.Background(), browserFetchRequest{
+		PageURL:     "https://example.com/post",
+		MediaURLs:   []string{testMediaURL},
+		Countries:   []string{"us"},
+		TempPattern: "arker-test-*.bin",
+		LogWriter:   io.Discard,
+	})
+	if err == nil {
+		t.Fatal("expected the fetch to fail")
+	}
+	if result.Sessions != 1 {
+		t.Errorf("billed %d sessions; want 1 for a session that loaded a page", result.Sessions)
+	}
+}
+
+func TestSessionConnected(t *testing.T) {
+	if sessionConnected(errors.New("Bright Data browser credentials are not configured")) {
+		t.Error("a pre-connect failure was counted as billable")
+	}
+	if !sessionConnected(&sessionOpenError{connected: true, err: errors.New("navigation failed")}) {
+		t.Error("a connected session was not counted as billable")
+	}
+	if sessionConnected(nil) {
+		t.Error("nil error counted as a session")
+	}
+	// It survives wrapping, since callers add context to session errors.
+	wrapped := fmt.Errorf("session attempt: %w", &sessionOpenError{connected: true, err: errors.New("boom")})
+	if !sessionConnected(wrapped) {
+		t.Error("a wrapped session error lost its billing classification")
 	}
 }
