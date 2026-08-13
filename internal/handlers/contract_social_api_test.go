@@ -108,15 +108,6 @@ func seedRealGalleryCapture(t *testing.T, db *gorm.DB, store storage.Storage,
 	return capture
 }
 
-func socialOf(t *testing.T, body map[string]any) map[string]any {
-	t.Helper()
-	social, ok := body["social_post"].(map[string]any)
-	if !ok {
-		t.Fatalf("social_post is not an object: %#v", body["social_post"])
-	}
-	return social
-}
-
 // TestFulfilledVideoExposesTheWholeContract walks a real extraction all the
 // way to the API. Contract #6: status, normalized post, Arker-hosted media
 // URLs, raw metadata, provenance.
