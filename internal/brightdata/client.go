@@ -31,10 +31,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
 
+	"arker/internal/archivers"
 	"arker/internal/models"
 )
 
@@ -45,6 +48,9 @@ const apiBase = "https://api.brightdata.com"
 const (
 	DatasetInstagramReels = "gd_lyclm20il4r5helnj"
 	DatasetInstagramPosts = "gd_lk5ns7kz21pck8jpis"
+	DatasetTikTokPosts    = "gd_lu702nij2f790tmv9h"
+	DatasetRedditPosts    = "gd_lvz8ah06191smkebj4"
+	DatasetXPosts         = "gd_lwxkxvnf1cynvib9co"
 )
 
 // Config carries everything the fallback needs. Only APIKey is required:
@@ -74,6 +80,12 @@ type Config struct {
 type Client struct {
 	cfg  Config
 	http *http.Client
+	// openBrowser opens one page in a Bright Data Browser API session. It is a
+	// field rather than a plain method so tests can drive the whole in-page
+	// fetch path — chunk loop, retries, EOF handling — against a fake page
+	// without a remote browser or a live signed URL. Nil means the real
+	// Browser API (see openBrowserSession).
+	openBrowser func(ctx context.Context, country, pageURL string, logWriter io.Writer) (browserSession, error)
 }
 
 // New builds a client and resolves the missing credentials it can. It never
@@ -357,16 +369,17 @@ func (c *Client) getJSON(ctx context.Context, endpoint string, out any) error {
 }
 
 // downloadToTemp streams a URL to a temp file and returns the path and size.
-// Used for CDN media (Instagram) that is fetched from Arker's own network.
+// Used for CDN media (Instagram, Reddit, X) that is fetched from Arker's own
+// network.
 func (c *Client) downloadToTemp(ctx context.Context, mediaURL, pattern string) (string, int64, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, mediaURL, nil)
 	if err != nil {
-		return "", 0, err
+		return "", 0, sanitizeTransportError(err)
 	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", 0, err
+		return "", 0, sanitizeTransportError(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -399,3 +412,45 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+// urlInErrorText matches an absolute URL embedded in an error message. Go
+// formats transport errors as: Get "https://host/path?sig=…": dial tcp …
+var urlInErrorText = regexp.MustCompile(`https?://[^\s"]+`)
+
+// sanitizeTransportError redacts the signed media URL that net/http embeds in
+// every transport-layer error.
+//
+// A DNS failure, a reset connection or a timeout produces a *url.Error whose
+// message carries the full URL, query string included — net/http strips
+// userinfo passwords and nothing else. That message reaches the persisted
+// archive log, which applies no redaction of its own, and on the Instagram
+// video path it also reaches BrightDataUsage.Detail. So a live signed CDN URL
+// ends up stored in exactly the places the sanitizer exists to keep it out of,
+// via the one path that never goes through SanitizeJSON.
+//
+// Only the transport layer is affected: an HTTP status failure carries no URL.
+func sanitizeTransportError(err error) error {
+	if err == nil {
+		return nil
+	}
+	message := err.Error()
+	sanitized := urlInErrorText.ReplaceAllStringFunc(message, func(rawURL string) string {
+		// Trailing punctuation is part of the message, not the URL.
+		trimmed := strings.TrimRight(rawURL, `:,.;`)
+		return archivers.SanitizeURL(trimmed, nil) + rawURL[len(trimmed):]
+	})
+	if sanitized == message {
+		return err
+	}
+	// Wrapped rather than replaced so errors.Is/As still see the cause.
+	return &sanitizedError{message: sanitized, cause: err}
+}
+
+// sanitizedError presents a redacted message while preserving the error chain.
+type sanitizedError struct {
+	message string
+	cause   error
+}
+
+func (e *sanitizedError) Error() string { return e.message }
+func (e *sanitizedError) Unwrap() error { return e.cause }

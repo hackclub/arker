@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -319,11 +320,40 @@ func sanitizeJSONString(value string, secrets []string) string {
 	return parsed.String()
 }
 
+// signedMediaHostSuffixes are the media CDNs whose URLs carry expiring
+// credentials. Every query parameter on these hosts is redacted before a raw
+// record is stored, because the parameter names are provider-specific and
+// undocumented: Reddit signs with s=/e=/v=, TikTok with policy/signature/tk/l.
+// Guessing which of those is the secret is exactly the kind of judgement that
+// leaves one credential at rest, so on a signed host none of them survive.
+var signedMediaHostSuffixes = []string{
+	"googlevideo.com",
+	"cdninstagram.com",
+	"fbcdn.net",
+	// Reddit: packaged-media/v/preview/i.redd.it plus its styles host.
+	"redd.it",
+	"redditmedia.com",
+	// TikTok's image and video CDNs.
+	"tiktokcdn.com",
+	"tiktokcdn-us.com",
+	"tiktokv.com",
+}
+
+// tiktokMediaSubdomain matches TikTok's regional media hosts
+// (v16-webapp-prime.us.tiktok.com, p16-common-sign.us.tiktok.com), which sign
+// like the CDNs above but share the tiktok.com domain with ordinary post URLs.
+// Post URLs must keep their query strings, so the match is on the media
+// subdomain shape rather than the domain.
+var tiktokMediaSubdomain = regexp.MustCompile(`^[vp]\d+[a-z0-9-]*\.`)
+
 func signedMediaHost(host string) bool {
 	host = strings.ToLower(host)
-	return strings.HasSuffix(host, ".googlevideo.com") || host == "googlevideo.com" ||
-		strings.HasSuffix(host, ".cdninstagram.com") || host == "cdninstagram.com" ||
-		strings.HasSuffix(host, ".fbcdn.net") || host == "fbcdn.net"
+	for _, suffix := range signedMediaHostSuffixes {
+		if host == suffix || strings.HasSuffix(host, "."+suffix) {
+			return true
+		}
+	}
+	return strings.HasSuffix(host, ".tiktok.com") && tiktokMediaSubdomain.MatchString(host)
 }
 
 func sensitiveURLParameter(key string) bool {

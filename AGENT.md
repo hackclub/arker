@@ -205,6 +205,10 @@ git clone https://archive.hackclub.com/git/{shortid}
 - `YTDLP_IMPERSONATE` - Optional yt-dlp `--impersonate` target for Instagram/TikTok/Facebook video URLs. Docker images default to `chrome` and install `curl-cffi`; set empty to disable for manual installs without curl-cffi.
 - `GALLERYDL_USER_AGENT` - Optional `--user-agent` override for gallery-dl. Leave unset: gallery-dl sets a per-site User-Agent already (Instagram gets a current Chrome UA because it serves lower-quality video to anything else), and this replaces those defaults everywhere.
 - `GALLERYDL_SLEEP_REQUEST` - Optional `--sleep-request` override (`"1"`, `"0.5-1.5"`). Leave unset. gallery-dl ships per-site request intervals (Instagram waits a randomized 6-12s between API calls); because `--sleep-request` is a root config key it *replaces* those rather than acting as a floor, so any value below a site's own default makes throttling more likely, not less. Set it only to slow gallery-dl down further.
+- `BRIGHTDATA_API_KEY` - Enables the paid media fallback (see "Bright Data fallback"). Empty disables it entirely: no dataset is triggered, no browser session is opened, and login-only sites with no cookie jar go back to producing no media item at all.
+- `BRIGHTDATA_BROWSER_ZONE` / `BRIGHTDATA_BROWSER_ZONE_PASSWORD` / `BRIGHTDATA_CUSTOMER_ID` - Browser API credentials. Required only for the platforms whose media is IP-locked to the resolver (YouTube, TikTok video); the customer ID and zone password are resolved from the API at startup when unset. Without them those two fallbacks stay off and the rest keep working.
+- `BRIGHTDATA_SCRAPER_COST_PER_RECORD` / `BRIGHTDATA_BROWSER_COST_PER_GB` - Rates used to estimate spend in `BrightDataUsage` rows (defaults `0.0015` and `8.40`, Bright Data's pay-as-you-go prices). They do not change what is spent, only what Arker reports it spent.
+- `BRIGHTDATA_YT_CLIENT_NAME` / `BRIGHTDATA_YT_CLIENT_VERSION` - The Innertube client the YouTube fallback impersonates (`ANDROID` / a version string). This is the one YouTube-versioned knob in the fallback: when YouTube retires the version, updating the env var fixes it without a code change.
 
 - `CANARY_SCHEDULE` - Interval for production canaries as a Go duration (`6h`). **Empty (the default) disables them entirely**: no River periodic job is registered and no sweep can start. Minimum `15m`. Canaries archive a small set of known-good public posts and validate the full social archive contract on the result; they run native-only and cannot spend money. Companion variables (`CANARY_PROBES`, `CANARY_PROBE_URL_<SLOT>`, `CANARY_PROBE_TIMEOUT`, `CANARY_ALLOW_PAID_FALLBACK`, `CANARY_MAX_COST_USD_PER_RUN`, `CANARY_MAX_COST_USD_PER_DAY`) and the activation/rotation runbook live in `docs/canaries.md`.
 - `ARKER_SUB_LANGS` - Optional override for which subtitle tracks yt-dlp fetches, passed to `--sub-langs` verbatim. Leave unset: the default is computed per video as its own language plus English, using **exact** codes. Do not "improve" it to `en.*` — yt-dlp matches these as anchored regexes and YouTube names machine-translated auto-captions `<target>-<source>`, so `en.*` also matches `en-de` ("English from German"); on a video offering ~150 translations that fetched three tracks and earned an HTTP 429. Use `all,-live_chat` to deliberately hoard every translation.
@@ -368,7 +372,45 @@ Platform quirks worth knowing before changing a route:
   archive is the source file, byte for byte.
 - **Login-only sites** (Instagram feed posts, X, Pinterest) get no gallery-dl
   item without a cookie jar: the run cannot succeed and would spend rate limit
-  proving it. The API reports `authentication_required` for those.
+  proving it. The API reports `authentication_required` for those. The
+  exception is a site the Bright Data fallback covers — Instagram and X today —
+  which does get an item when the fallback is configured, because the
+  guaranteed-failed native run is then followed by one that can actually
+  succeed. Routing asks the fallback client itself
+  (`utils.SetBrightDataMediaFallback` carries `Client.SupportsFallback`), so
+  coverage lives in one place instead of two lists that can drift.
+
+### Bright Data fallback
+
+`internal/brightdata` buys media the free path cannot get. It only ever runs
+after a recorded native failure, only for URLs it can plausibly rescue, and it
+writes a `BrightDataUsage` row per billable operation — including failed ones,
+because a failed attempt can still be billable and silent spend is the thing
+that table exists to prevent. Costs are estimates from configured rates
+(`BRIGHTDATA_SCRAPER_COST_PER_RECORD`, `BRIGHTDATA_BROWSER_COST_PER_GB`); the
+scoped API key cannot read Bright Data's billing endpoints.
+
+| Platform | Item type | How the bytes are obtained |
+|---|---|---|
+| Instagram reel / feed post | yt-dlp, gallery-dl | Web Scraper dataset, then direct CDN download |
+| YouTube video | yt-dlp | Browser API session: in-page Innertube resolve + ranged fetch |
+| TikTok video | yt-dlp | Dataset resolves the URL; Browser API session fetches the bytes |
+| TikTok photo post | gallery-dl | Dataset, direct CDN download, browser session per refused still |
+| Reddit post | gallery-dl | Dataset, then direct download of the muxed `packaged-media.redd.it` MP4 |
+| X status | gallery-dl | Dataset, then direct `pbs.twimg.com` / `video.twimg.com` download |
+
+The split that matters: **YouTube and TikTok sign their media against the
+resolving IP**, so those bytes can only be fetched from inside a Bright Data
+browser session (`internal/brightdata/browser_fetch.go`) and need
+`BRIGHTDATA_BROWSER_ZONE` credentials. Instagram, Reddit and X sign but do not
+IP-lock, so only the resolution is paid for and the download runs over Arker's
+own connection.
+
+Raw provider records are sanitized before storage, in the sidecar and inside
+the gallery ZIP: on a signed media host every query parameter is redacted,
+because the credential-bearing parameter names are provider-specific
+(`s`/`e`/`v` on redd.it, `policy`/`signature`/`tk` on TikTok's CDNs) and
+guessing which one is the secret is how one gets left behind.
 
 ### Database Changes
 1. Update models in `internal/models/models.go`

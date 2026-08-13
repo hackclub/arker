@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"arker/internal/archivers"
+	"arker/internal/models"
 	"arker/internal/utils"
 )
 
@@ -169,31 +170,61 @@ func TestWithFallbackReturnsPrimaryWhenDisabled(t *testing.T) {
 	}
 }
 
+// The coverage table is load-bearing twice over: it decides when money may be
+// spent, and routing consults it before creating a gallery item for a
+// login-only site, so a row that changes here changes what Arker archives.
 func TestClientSupportsFallback(t *testing.T) {
-	igOnly := &Client{cfg: Config{APIKey: "k"}}
+	datasetOnly := &Client{cfg: Config{APIKey: "k"}}
 	full := &Client{cfg: Config{APIKey: "k", CustomerID: "c", BrowserZone: "z", BrowserZonePassword: "p"}}
 
 	cases := []struct {
+		name     string
 		client   *Client
 		url, typ string
 		want     bool
 	}{
-		{igOnly, "https://www.instagram.com/reel/X/", utils.ArchiveTypeYtDlp, true},
-		{igOnly, "https://www.instagram.com/p/X/", utils.ArchiveTypeGalleryDl, true},
-		// YouTube needs browser credentials.
-		{igOnly, "https://www.youtube.com/watch?v=abc123def45", utils.ArchiveTypeYtDlp, false},
-		{full, "https://www.youtube.com/watch?v=abc123def45", utils.ArchiveTypeYtDlp, true},
-		{full, "https://youtu.be/abc123def45", utils.ArchiveTypeYtDlp, true},
-		// No fallback exists for other platforms or types.
-		{full, "https://vimeo.com/1234", utils.ArchiveTypeYtDlp, false},
-		{full, "https://www.tiktok.com/@u/video/1", utils.ArchiveTypeYtDlp, false},
-		{full, "https://x.com/u/status/1", utils.ArchiveTypeGalleryDl, false},
-		{full, "https://www.youtube.com/watch?v=abc123def45", utils.ArchiveTypeMHTML, false},
+		{"instagram reel", datasetOnly, "https://www.instagram.com/reel/X/", utils.ArchiveTypeYtDlp, true},
+		{"instagram post", datasetOnly, "https://www.instagram.com/p/X/", utils.ArchiveTypeGalleryDl, true},
+
+		// YouTube and TikTok video bytes are IP-locked to the resolver, so
+		// they are only rescuable with browser credentials.
+		{"youtube without browser", datasetOnly, "https://www.youtube.com/watch?v=abc123def45", utils.ArchiveTypeYtDlp, false},
+		{"youtube with browser", full, "https://www.youtube.com/watch?v=abc123def45", utils.ArchiveTypeYtDlp, true},
+		{"youtu.be", full, "https://youtu.be/abc123def45", utils.ArchiveTypeYtDlp, true},
+		{"tiktok video without browser", datasetOnly, "https://www.tiktok.com/@u/video/1", utils.ArchiveTypeYtDlp, false},
+		{"tiktok video with browser", full, "https://www.tiktok.com/@u/video/1", utils.ArchiveTypeYtDlp, true},
+		{"tiktok short link", full, "https://vm.tiktok.com/ZMabcdef/", utils.ArchiveTypeYtDlp, true},
+
+		// TikTok stills download directly; the browser is only the fallback.
+		{"tiktok photo post", datasetOnly, "https://www.tiktok.com/@u/photo/1", utils.ArchiveTypeGalleryDl, true},
+
+		// Reddit and X media download from Arker's own connection.
+		{"reddit comments", datasetOnly, "https://www.reddit.com/r/aww/comments/abc/title/", utils.ArchiveTypeGalleryDl, true},
+		{"redd.it short link", datasetOnly, "https://redd.it/abc123", utils.ArchiveTypeGalleryDl, true},
+		{"x status", datasetOnly, "https://x.com/u/status/1", utils.ArchiveTypeGalleryDl, true},
+		{"twitter status", datasetOnly, "https://twitter.com/u/status/1", utils.ArchiveTypeGalleryDl, true},
+
+		// Wrong archive type for the platform, or no fallback at all.
+		{"reddit as video", full, "https://www.reddit.com/r/aww/comments/abc/title/", utils.ArchiveTypeYtDlp, false},
+		{"x as video", full, "https://x.com/u/status/1", utils.ArchiveTypeYtDlp, false},
+		{"subreddit page", full, "https://www.reddit.com/r/aww/", utils.ArchiveTypeGalleryDl, false},
+		{"x profile", full, "https://x.com/someone", utils.ArchiveTypeGalleryDl, false},
+		{"vimeo", full, "https://vimeo.com/1234", utils.ArchiveTypeYtDlp, false},
+		{"pinterest", full, "https://www.pinterest.com/pin/1/", utils.ArchiveTypeGalleryDl, false},
+		{"mhtml", full, "https://www.youtube.com/watch?v=abc123def45", utils.ArchiveTypeMHTML, false},
 	}
 	for _, c := range cases {
-		if got := c.client.SupportsFallback(c.url, c.typ); got != c.want {
-			t.Errorf("SupportsFallback(%s, %s) = %v; want %v", c.url, c.typ, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.client.SupportsFallback(c.url, c.typ); got != c.want {
+				t.Errorf("SupportsFallback(%s, %s) = %v; want %v", c.url, c.typ, got, c.want)
+			}
+		})
+	}
+
+	// A client with no API key never spends, whatever the URL.
+	disabled := &Client{}
+	if disabled.SupportsFallback("https://www.reddit.com/r/aww/comments/abc/x/", utils.ArchiveTypeGalleryDl) {
+		t.Error("an unconfigured client claimed it could rescue a URL")
 	}
 }
 
@@ -213,5 +244,53 @@ func TestExtractYouTubeVideoID(t *testing.T) {
 		if got := ExtractYouTubeVideoID(url); got != want {
 			t.Errorf("ExtractYouTubeVideoID(%s) = %q; want %q", url, got, want)
 		}
+	}
+}
+
+// One test that runs the whole public path: a native failure, the coverage
+// check, the dispatch, the platform flow, and the usage row attributed to a
+// real capture. The per-platform tests call the flows directly, so nothing
+// else would catch SupportsFallback and ArchiveFallback disagreeing about a
+// platform — a disagreement that reads as "native failed, and so did the
+// rescue" in production.
+func TestFallbackArchiverRescuesRedditThroughTheRealClient(t *testing.T) {
+	record := loadRecords(t, "reddit_post.json")[0]
+	network := newFakeNetwork(record)
+	video := fakeMP4(2048)
+	network.serve(redditMediaEntries(record)[0].URL, video)
+
+	client, db := newTestClient(t, network)
+
+	capture := models.Capture{ShortID: "rd001"}
+	if err := db.Create(&capture).Error; err != nil {
+		t.Fatalf("create capture: %v", err)
+	}
+	item := models.ArchiveItem{CaptureID: capture.ID, Type: utils.ArchiveTypeGalleryDl, Status: "processing"}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+
+	arch := WithFallback(&fakePrimary{err: errors.New("gallery-dl: HTTP 403")}, utils.ArchiveTypeGalleryDl, client)
+	var log strings.Builder
+	result, err := arch.Archive(context.Background(), redditPostURL, &log, db, item.ID)
+	if err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	if result.Source != models.ArchiveSourceBrightData || result.Extension != ".zip" {
+		t.Errorf("result = %q %s; want a brightdata ZIP", result.Source, result.Extension)
+	}
+	readResult(t, result)
+
+	rows := usageRows(t, db)
+	if len(rows) != 1 || !rows[0].Success {
+		t.Fatalf("usage rows = %+v", rows)
+	}
+	// The row has to be findable from the capture, which is how the API
+	// reports what a rescue cost.
+	if rows[0].ShortID != "rd001" || rows[0].ArchiveItemID != item.ID {
+		t.Errorf("usage row not attributed to the capture: %+v", rows[0])
+	}
+	if !strings.Contains(log.String(), "Bright Data fallback succeeded") {
+		t.Error("archive log does not record the rescue")
 	}
 }

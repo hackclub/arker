@@ -170,9 +170,10 @@ func TestIsGalleryDLURLRejectsBareHosts(t *testing.T) {
 	}
 }
 
-// A login-only Instagram URL without cookies is only worth an archive item
-// when the Bright Data fallback gives the guaranteed-to-fail native run a real
-// path to success. Other login-only sites have no fallback and stay excluded.
+// A login-only URL without cookies is only worth an archive item when the
+// Bright Data fallback gives the guaranteed-to-fail native run a real path to
+// success. Coverage is the fallback client's own answer, per URL and archive
+// type: a login-only site it does not cover stays excluded.
 func TestShouldCreateGalleryDLItemWithBrightDataFallback(t *testing.T) {
 	if MediaCookiesConfigured() {
 		t.Skip("test requires no cookie jar configured")
@@ -180,18 +181,68 @@ func TestShouldCreateGalleryDLItemWithBrightDataFallback(t *testing.T) {
 
 	const igPost = "https://www.instagram.com/p/ABC123/"
 	const xPost = "https://x.com/user/status/123"
+	const pinterestPin = "https://www.pinterest.com/pin/1234567890/"
 
-	SetBrightDataMediaFallback(false)
-	t.Cleanup(func() { SetBrightDataMediaFallback(false) })
-	if ShouldCreateGalleryDLItem(igPost) {
-		t.Error("cookie-less Instagram item created with no fallback configured")
+	SetBrightDataMediaFallback(nil)
+	t.Cleanup(func() { SetBrightDataMediaFallback(nil) })
+	for _, rawURL := range []string{igPost, xPost, pinterestPin} {
+		if ShouldCreateGalleryDLItem(rawURL) {
+			t.Errorf("cookie-less item created for %s with no fallback configured", rawURL)
+		}
 	}
 
-	SetBrightDataMediaFallback(true)
+	// Stands in for the real client's coverage table (brightdata.Client.
+	// SupportsFallback), which covers Instagram and X but not Pinterest.
+	SetBrightDataMediaFallback(func(rawURL, itemType string) bool {
+		return itemType == ArchiveTypeGalleryDl && (IsInstagramURL(rawURL) || IsXPostURL(rawURL))
+	})
 	if !ShouldCreateGalleryDLItem(igPost) {
 		t.Error("cookie-less Instagram item not created despite Bright Data fallback")
 	}
-	if ShouldCreateGalleryDLItem(xPost) {
-		t.Error("cookie-less X item created; Bright Data fallback does not cover X")
+	if !ShouldCreateGalleryDLItem(xPost) {
+		t.Error("cookie-less X item not created despite Bright Data fallback")
+	}
+	if ShouldCreateGalleryDLItem(pinterestPin) {
+		t.Error("cookie-less Pinterest item created; the fallback does not cover Pinterest")
+	}
+}
+
+// The Bright Data fallback dispatches on these, so a URL that matches the
+// wrong one buys the wrong dataset — or a subreddit feed instead of a post.
+func TestIsRedditPostURL(t *testing.T) {
+	cases := map[string]bool{
+		"https://www.reddit.com/r/aww/comments/1vjt9lo/meet_roxy/": true,
+		"https://reddit.com/r/aww/comments/abc/":                   true,
+		"https://old.reddit.com/r/aww/comments/abc/title/":         true,
+		"https://redd.it/1vjt9lo":                                  true,
+		"https://www.reddit.com/r/aww/":                            false,
+		"https://www.reddit.com/":                                  false,
+		"https://www.reddit.com/user/someone":                      false,
+		"https://redd.it/":                                         false,
+		"https://notreddit.com/r/aww/comments/abc/":                false,
+		"https://example.com/?ref=reddit.com/comments/abc":         false,
+	}
+	for rawURL, want := range cases {
+		if got := IsRedditPostURL(rawURL); got != want {
+			t.Errorf("IsRedditPostURL(%s) = %v; want %v", rawURL, got, want)
+		}
+	}
+}
+
+func TestIsXPostURL(t *testing.T) {
+	cases := map[string]bool{
+		"https://x.com/SpaceX/status/2057952539417461045":       true,
+		"https://twitter.com/BarackObama/status/266031293945":   true,
+		"https://mobile.twitter.com/someone/status/1":           true,
+		"https://www.x.com/someone/status/1?s=20":               true,
+		"https://x.com/someone":                                 false,
+		"https://x.com/":                                        false,
+		"https://netflix.com/status/1":                          false,
+		"https://example.com/?u=https://x.com/someone/status/1": false,
+	}
+	for rawURL, want := range cases {
+		if got := IsXPostURL(rawURL); got != want {
+			t.Errorf("IsXPostURL(%s) = %v; want %v", rawURL, got, want)
+		}
 	}
 }

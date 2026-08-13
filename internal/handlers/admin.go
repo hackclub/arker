@@ -220,6 +220,12 @@ var mediaBackfillURLPattern = map[string]struct {
 		sqlLike: "(LOWER(archived_urls.original) LIKE '%instagram.com%' OR LOWER(archived_urls.original) LIKE '%twitter.com%' OR LOWER(archived_urls.original) LIKE '%x.com%' OR LOWER(archived_urls.original) LIKE '%reddit.com%' OR LOWER(archived_urls.original) LIKE '%redd.it%' OR LOWER(archived_urls.original) LIKE '%tumblr.com%' OR LOWER(archived_urls.original) LIKE '%bsky.app%' OR LOWER(archived_urls.original) LIKE '%flickr.com%' OR LOWER(archived_urls.original) LIKE '%imgur.com%' OR LOWER(archived_urls.original) LIKE '%deviantart.com%' OR LOWER(archived_urls.original) LIKE '%artstation.com%' OR LOWER(archived_urls.original) LIKE '%pixiv.net%' OR LOWER(archived_urls.original) LIKE '%pinterest.com%' OR LOWER(archived_urls.original) LIKE '%newgrounds.com%' OR LOWER(archived_urls.original) LIKE '%vsco.co%')",
 		// Same gate as live capture: without cookies, backfilling a login-only
 		// site would queue thousands of guaranteed failures.
+		//
+		// With the Bright Data fallback configured, a login-only site it covers
+		// (Instagram, X) passes this gate instead — so those rows are no longer
+		// guaranteed failures, they are guaranteed *spend*: one dataset record
+		// each, after the native attempt fails. Use ?limit and ?dry_run before
+		// a bulk run against those platforms.
 		matches: utils.ShouldCreateGalleryDLItem,
 	},
 }

@@ -2,7 +2,6 @@ package brightdata
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,23 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mxschmitt/playwright-go"
 	"gorm.io/gorm"
 
 	"arker/internal/archivers"
 	"arker/internal/models"
 	"arker/internal/utils"
 )
-
-// browserPageOverheadBytes is the estimated non-media traffic of one YouTube
-// watch-page session (HTML, player JS, API calls). Counted into usage so the
-// cost estimate errs high rather than silently low.
-const browserPageOverheadBytes = 3 << 20
-
-// mediaChunkBytes is the Range size for in-page media fetches. Each chunk
-// crosses the CDP connection base64-encoded, so this trades round-trips
-// against websocket message size.
-const mediaChunkBytes = 6 << 20
 
 // archiveYouTube downloads a YouTube video through a Bright Data Browser API
 // session.
@@ -66,8 +54,7 @@ func (c *Client) archiveYouTube(ctx context.Context, targetURL string, logWriter
 	var totalBytes int64
 	sessions := 0
 	finishUsage := func(success bool, detail string) {
-		usage.BytesTransferred = totalBytes + int64(sessions)*browserPageOverheadBytes
-		usage.CostUSD = float64(usage.BytesTransferred) / 1e9 * c.cfg.BrowserCostPerGB
+		usage.BytesTransferred, usage.CostUSD = c.browserSessionCost(totalBytes, sessions)
 		usage.Success = success
 		usage.Detail = truncate(detail, 500)
 		c.recordUsage(db, usage)
@@ -85,13 +72,17 @@ func (c *Client) archiveYouTube(ctx context.Context, targetURL string, logWriter
 			fmt.Fprintf(logWriter, "Retrying with a different session geography (%s) after: %v\n",
 				countryLabel(country), lastErr)
 		}
-		sessions++
-
 		var info *youtubeMediaInfo
 		var videoPath string
 		var size int64
-		info, videoPath, size, lastErr = c.youtubeSession(ctx, country, watchURL, videoID, logWriter)
+		var opened bool
+		info, videoPath, size, opened, lastErr = c.youtubeSession(ctx, country, watchURL, videoID, logWriter)
 		totalBytes += size
+		// A session that never connected transferred nothing, so it is not
+		// billed: counting it would invent page-load overhead in the estimate.
+		if opened {
+			sessions++
+		}
 		if lastErr == nil {
 			fmt.Fprintf(logWriter, "Downloaded %d bytes through Bright Data browser session\n", size)
 
@@ -139,35 +130,19 @@ func (c *Client) archiveYouTube(ctx context.Context, targetURL string, logWriter
 }
 
 // youtubeSession runs one complete browser session attempt: connect, navigate,
-// resolve, download. Returns the media info, temp file path, and bytes
-// fetched (bytes are reported even on failure, for usage accounting).
-func (c *Client) youtubeSession(ctx context.Context, country, watchURL, videoID string, logWriter io.Writer) (*youtubeMediaInfo, string, int64, error) {
-	fmt.Fprintf(logWriter, "Connecting to Bright Data browser session (%s)...\n", countryLabel(country))
-	pw, err := playwright.Run()
+// resolve, download. Returns the media info, temp file path, the bytes fetched
+// and whether a remote session actually opened — the last two are reported
+// even on failure, because that is what the usage row has to bill.
+func (c *Client) youtubeSession(ctx context.Context, country, watchURL, videoID string, logWriter io.Writer) (*youtubeMediaInfo, string, int64, bool, error) {
+	session, err := c.openBrowserSession(ctx, country, watchURL, logWriter)
 	if err != nil {
-		return nil, "", 0, fmt.Errorf("failed to start Playwright: %w", err)
+		return nil, "", 0, sessionConnected(err), err
 	}
-	defer pw.Stop()
+	defer session.Close()
 
-	browser, err := pw.Chromium.ConnectOverCDP(c.browserWSEndpoint(country))
+	info, err := resolveYouTubeMedia(session, videoID, c.cfg)
 	if err != nil {
-		return nil, "", 0, fmt.Errorf("failed to connect to Bright Data browser: %w", err)
-	}
-	defer browser.Close()
-
-	page, err := browserPage(browser)
-	if err != nil {
-		return nil, "", 0, err
-	}
-
-	fmt.Fprintf(logWriter, "Loading %s in remote browser...\n", watchURL)
-	if err := gotoWithRetry(ctx, page, watchURL, logWriter); err != nil {
-		return nil, "", 0, fmt.Errorf("remote browser navigation failed: %w", err)
-	}
-
-	info, err := resolveYouTubeMedia(page, videoID, c.cfg)
-	if err != nil {
-		return nil, "", 0, err
+		return nil, "", 0, true, err
 	}
 	fmt.Fprintf(logWriter, "Resolved %s (%s) by %s: %s, %d bytes\n",
 		info.Title, info.QualityLabel, info.Author, info.MimeType, info.ContentLength)
@@ -178,15 +153,15 @@ func (c *Client) youtubeSession(ctx context.Context, country, watchURL, videoID 
 		fmt.Fprintf(logWriter, "Description: %s\n", utils.TruncateForLog(info.ShortDescription, 300))
 	}
 
-	videoPath, size, err := fetchMediaThroughPage(ctx, page, info, logWriter)
+	videoPath, size, err := fetchURLThroughPage(ctx, session, info.URL, info.ContentLength, "arker-bd-yt-*.mp4", logWriter)
 	if err != nil {
-		return nil, "", size, err
+		return nil, "", size, true, err
 	}
 	if err := verifyMP4(videoPath); err != nil {
 		removeFile(videoPath)
-		return nil, "", size, err
+		return nil, "", size, true, err
 	}
-	return info, videoPath, size, nil
+	return info, videoPath, size, true, nil
 }
 
 // retryableInAnotherCountry classifies failures a fresh session elsewhere
@@ -199,51 +174,6 @@ func retryableInAnotherCountry(err error) bool {
 	return strings.Contains(msg, "not available in your country") ||
 		strings.Contains(msg, "no_peers") ||
 		strings.Contains(msg, "no peer found")
-}
-
-func countryLabel(country string) string {
-	if country == "" {
-		return "any peer"
-	}
-	return "country " + country
-}
-
-// gotoWithRetry navigates with a few retries. Bright Data's browser pool
-// intermittently reports "No Peer Found (no_peers)" when no exit is free;
-// their docs class it as transient, and a short wait usually clears it.
-func gotoWithRetry(ctx context.Context, page playwright.Page, targetURL string, logWriter io.Writer) error {
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			fmt.Fprintf(logWriter, "Retrying navigation after transient error: %v\n", lastErr)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(time.Duration(attempt) * 10 * time.Second):
-			}
-		}
-		_, lastErr = page.Goto(targetURL, playwright.PageGotoOptions{
-			Timeout:   playwright.Float(90000),
-			WaitUntil: playwright.WaitUntilStateDomcontentloaded,
-		})
-		if lastErr == nil {
-			return nil
-		}
-	}
-	return lastErr
-}
-
-// browserPage returns a fresh page in the remote browser's default context.
-func browserPage(browser playwright.Browser) (playwright.Page, error) {
-	contexts := browser.Contexts()
-	if len(contexts) > 0 {
-		return contexts[0].NewPage()
-	}
-	ctx, err := browser.NewContext()
-	if err != nil {
-		return nil, err
-	}
-	return ctx.NewPage()
 }
 
 // youtubeMediaInfo is what the in-page resolution returns.
@@ -452,7 +382,7 @@ func normalizeProviderDate(value string) string {
 	return ""
 }
 
-func resolveYouTubeMedia(page playwright.Page, videoID string, cfg Config) (*youtubeMediaInfo, error) {
+func resolveYouTubeMedia(page pageEvaluator, videoID string, cfg Config) (*youtubeMediaInfo, error) {
 	raw, err := page.Evaluate(resolveYouTubeMediaJS, map[string]interface{}{
 		"videoId":       videoID,
 		"clientName":    cfg.YouTubeClientName,
@@ -473,169 +403,6 @@ func resolveYouTubeMedia(page playwright.Page, videoID string, cfg Config) (*you
 		return nil, fmt.Errorf("YouTube refused playback through Bright Data browser: %s", info.Reason)
 	}
 	return &info, nil
-}
-
-// fetchMediaChunkJS fetches one Range of the media URL inside the page and
-// returns it base64-encoded. Running in the page is the point: the media URL
-// only answers to the remote session's exit IP.
-const fetchMediaChunkJS = `
-async (args) => {
-  let r;
-  try {
-    r = await fetch(args.url, {headers: {'Range': 'bytes=' + args.start + '-' + args.end}});
-  } catch (e) {
-    return JSON.stringify({error: 'fetch failed: ' + e});
-  }
-  if (r.status !== 206 && r.status !== 200) {
-    return JSON.stringify({error: 'status ' + r.status});
-  }
-  const contentRange = r.headers.get('Content-Range') || '';
-  const buf = new Uint8Array(await r.arrayBuffer());
-  let binary = '';
-  const step = 0x8000;
-  for (let i = 0; i < buf.length; i += step) {
-    binary += String.fromCharCode.apply(null, buf.subarray(i, i + step));
-  }
-  return JSON.stringify({b64: btoa(binary), range: contentRange, status: r.status});
-}
-`
-
-var contentRangeTotal = regexp.MustCompile(`bytes \d+-\d+/(\d+)`)
-
-// fetchMediaThroughPage pulls the media file through the remote page in ranged
-// chunks. Returns the temp file path and the number of media bytes fetched
-// (also on error, for usage accounting).
-func fetchMediaThroughPage(ctx context.Context, page playwright.Page, info *youtubeMediaInfo, logWriter io.Writer) (string, int64, error) {
-	out, err := createTempFile("arker-bd-yt-*.mp4")
-	if err != nil {
-		return "", 0, err
-	}
-	outPath := out.Name()
-	ok := false
-	defer func() {
-		out.Close()
-		if !ok {
-			removeFile(outPath)
-		}
-	}()
-
-	total := info.ContentLength
-	var offset int64
-	for {
-		select {
-		case <-ctx.Done():
-			return "", offset, fmt.Errorf("cancelled during media download: %w", ctx.Err())
-		default:
-		}
-
-		requested := int64(mediaChunkBytes)
-		if total > 0 && total-offset < requested {
-			requested = total - offset
-		}
-		end := offset + requested - 1
-
-		chunk, contentRange, status, err := fetchOneChunk(page, info.URL, offset, end)
-		if err != nil {
-			// A 416 after bytes have flowed is the server saying the offset
-			// equals the file size: the download is complete, we just did not
-			// know the size up front (Content-Range is not a CORS-exposed
-			// header, and some Innertube responses omit contentLength).
-			if offset > 0 && isRangeNotSatisfiable(err) {
-				fmt.Fprintf(logWriter, "Range end at %d bytes; download complete\n", offset)
-				break
-			}
-			return "", offset, fmt.Errorf("media chunk at offset %d failed: %w", offset, err)
-		}
-		if _, err := out.Write(chunk); err != nil {
-			return "", offset, err
-		}
-		offset += int64(len(chunk))
-
-		if total <= 0 {
-			if m := contentRangeTotal.FindStringSubmatch(contentRange); m != nil {
-				if parsed, err := strconv.ParseInt(m[1], 10, 64); err == nil {
-					total = parsed
-					fmt.Fprintf(logWriter, "Media size from Content-Range: %d bytes\n", total)
-				}
-			}
-		}
-
-		// Termination: a 200 means the server ignored Range and sent the whole
-		// file; a short or empty chunk means the range ran past EOF; and once
-		// the total is known, stopping at it avoids a pointless final request.
-		if status == 200 || int64(len(chunk)) < requested || (total > 0 && offset >= total) {
-			break
-		}
-		fmt.Fprintf(logWriter, "Fetched %d / %d bytes...\n", offset, total)
-	}
-
-	if offset == 0 {
-		return "", 0, fmt.Errorf("media download produced no bytes")
-	}
-	if total > 0 && offset < total {
-		return "", offset, fmt.Errorf("media download incomplete: %d of %d bytes", offset, total)
-	}
-	if err := out.Close(); err != nil {
-		return "", offset, err
-	}
-	ok = true
-	return outPath, offset, nil
-}
-
-// isRangeNotSatisfiable matches the in-page fetch error for HTTP 416.
-func isRangeNotSatisfiable(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "status 416")
-}
-
-// fetchOneChunk runs one in-page ranged fetch with retries. Chunk fetches ride
-// on a live remote session, so a transient failure is worth two more tries
-// before abandoning the whole (already paid-for) session.
-func fetchOneChunk(page playwright.Page, mediaURL string, start, end int64) ([]byte, string, int, error) {
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		// 416 is deterministic, not transient: the range starts past EOF.
-		if isRangeNotSatisfiable(lastErr) {
-			break
-		}
-		if attempt > 0 {
-			time.Sleep(2 * time.Second)
-		}
-		raw, err := page.Evaluate(fetchMediaChunkJS, map[string]interface{}{
-			"url":   mediaURL,
-			"start": fmt.Sprintf("%d", start),
-			"end":   fmt.Sprintf("%d", end),
-		})
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		text, ok := raw.(string)
-		if !ok {
-			lastErr = fmt.Errorf("chunk fetch returned %T", raw)
-			continue
-		}
-		var result struct {
-			Error  string `json:"error"`
-			B64    string `json:"b64"`
-			Range  string `json:"range"`
-			Status int    `json:"status"`
-		}
-		if err := json.Unmarshal([]byte(text), &result); err != nil {
-			lastErr = err
-			continue
-		}
-		if result.Error != "" {
-			lastErr = fmt.Errorf("%s", result.Error)
-			continue
-		}
-		data, err := base64.StdEncoding.DecodeString(result.B64)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		return data, result.Range, result.Status, nil
-	}
-	return nil, "", 0, lastErr
 }
 
 var youtubeIDPatterns = []*regexp.Regexp{

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -428,14 +429,22 @@ func galleryMetadataFromRecord(record map[string]any, sourceURL string) *archive
 
 // buildGalleryZip writes metadata.json, the raw record, and the media files
 // into a ZIP laid out exactly like the native gallery-dl artifact.
+//
+// The raw record is sanitized on the way in, not on the way out. The bundle is
+// downloadable, so a signed CDN URL written into it is a credential stored at
+// rest — serve-time redaction would not reach it.
 func buildGalleryZip(dir string, meta *archivers.GalleryMetadata, record map[string]any) (string, error) {
 	metadataJSON, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return "", err
 	}
-	rawJSON, err := json.MarshalIndent(record, "", "  ")
+	recordJSON, err := json.Marshal(record)
 	if err != nil {
 		return "", err
+	}
+	rawJSON, err := archivers.SanitizeJSON(recordJSON, nil)
+	if err != nil {
+		return "", fmt.Errorf("sanitize Bright Data record: %w", err)
 	}
 
 	zipFile, err := createTempFile("arker-bd-gallery-*.zip")
@@ -626,6 +635,13 @@ func stringSlice(record map[string]any, key string) []string {
 	return result
 }
 
+// intField reads a counter from a provider record.
+//
+// Numbers arrive as strings often enough to matter — TikTok's share_count is
+// "99" while its digg_count is 1807, in the same record — and a reader that
+// only accepts JSON numbers drops those silently, which shows up as an archive
+// that reports no shares rather than as an error. Strings are parsed strictly:
+// a value like "1.2K" is not a count this can honestly report.
 func intField(record map[string]any, keys ...string) *int64 {
 	for _, key := range keys {
 		switch value := record[key].(type) {
@@ -634,6 +650,10 @@ func intField(record map[string]any, keys ...string) *int64 {
 			return &v
 		case json.Number:
 			if v, err := value.Int64(); err == nil {
+				return &v
+			}
+		case string:
+			if v, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil {
 				return &v
 			}
 		}

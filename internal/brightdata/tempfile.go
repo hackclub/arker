@@ -37,3 +37,13 @@ func removeFile(path string) {
 		_ = os.Remove(path)
 	}
 }
+
+// renameTempFile moves a finished download into place, removing the temp file
+// if the move fails so a failed download never leaks.
+func renameTempFile(tmpPath, dest string) error {
+	if err := os.Rename(tmpPath, dest); err != nil {
+		removeFile(tmpPath)
+		return err
+	}
+	return nil
+}

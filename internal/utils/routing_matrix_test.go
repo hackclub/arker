@@ -59,8 +59,8 @@ func assertArchiveTypes(t *testing.T, url string, want ...string) {
 // login-only capture.
 func TestArchiveTypeMatrixWithoutCookies(t *testing.T) {
 	configureMediaCookies(t, false)
-	SetBrightDataMediaFallback(false)
-	t.Cleanup(func() { SetBrightDataMediaFallback(false) })
+	SetBrightDataMediaFallback(nil)
+	t.Cleanup(func() { SetBrightDataMediaFallback(nil) })
 
 	base := []string{ArchiveTypeMHTML, ArchiveTypeScreenshot}
 	withYtDlp := append(append([]string{}, base...), ArchiveTypeYtDlp)
@@ -154,6 +154,49 @@ func TestArchiveTypeMatrixWithCookies(t *testing.T) {
 		// Unchanged by cookies.
 		{"instagram reel", "https://www.instagram.com/reel/DPAid-WDi67/", append(append([]string{}, base...), ArchiveTypeYtDlp)},
 		{"tiktok photo post", "https://www.tiktok.com/@someone/photo/7412345678901234567", withGallery},
+		{"plain page", "https://example.com/article", base},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.platform, func(t *testing.T) {
+			assertArchiveTypes(t, tt.url, tt.want...)
+		})
+	}
+}
+
+// A login-only site with no cookie jar gets its media item back when the
+// Bright Data fallback covers it: the native run still fails first, but it is
+// now followed by one that can succeed, so the item is worth creating. This is
+// the routing half of the fallback contract — the client's coverage decides,
+// not a list kept here.
+func TestArchiveTypeMatrixWithoutCookiesButWithBrightDataFallback(t *testing.T) {
+	configureMediaCookies(t, false)
+	// Stands in for brightdata.Client.SupportsFallback, which covers Instagram
+	// and X for gallery items but not Pinterest.
+	SetBrightDataMediaFallback(func(rawURL, itemType string) bool {
+		return itemType == ArchiveTypeGalleryDl && (IsInstagramURL(rawURL) || IsXPostURL(rawURL))
+	})
+	t.Cleanup(func() { SetBrightDataMediaFallback(nil) })
+
+	base := []string{ArchiveTypeMHTML, ArchiveTypeScreenshot}
+	withGallery := append(append([]string{}, base...), ArchiveTypeGalleryDl)
+
+	tests := []struct {
+		platform string
+		url      string
+		want     []string
+	}{
+		{"x status", "https://x.com/someone/status/1234567890123456789", withGallery},
+		{"twitter status", "https://twitter.com/someone/status/1234567890123456789", withGallery},
+		{"instagram feed post", "https://www.instagram.com/p/DbktPO1Eopi/", withGallery},
+
+		// Not covered by the fallback: still no item, because the native run
+		// cannot succeed and nothing follows it.
+		{"pinterest pin", "https://www.pinterest.com/pin/1234567890/", base},
+
+		// Anonymous sites are unaffected either way.
+		{"reddit comments", "https://www.reddit.com/r/aww/comments/abc123/title/", withGallery},
+		{"instagram reel", "https://www.instagram.com/reel/DPAid-WDi67/", append(append([]string{}, base...), ArchiveTypeYtDlp)},
 		{"plain page", "https://example.com/article", base},
 	}
 

@@ -614,9 +614,10 @@ func main() {
 		nativeArchiversMap[name] = arch
 	}
 
-	// Bright Data fallback: wraps the media archivers so a failed native run
-	// on an Instagram/YouTube URL gets one paid second chance. Native flows
-	// stay preferred; the fallback only runs after they fail.
+	// Bright Data fallback: wraps the media archivers so a failed native run on
+	// a covered URL (Instagram, YouTube, TikTok, Reddit, X) gets one paid
+	// second chance. Native flows stay preferred; the fallback only runs after
+	// they fail.
 	var bdClient *brightdata.Client
 	if cfg.BrightDataAPIKey != "" {
 		bdClient = brightdata.New(context.Background(), brightdata.Config{
@@ -631,10 +632,15 @@ func main() {
 		})
 		archiversMap[utils.ArchiveTypeYtDlp] = brightdata.WithFallback(archiversMap[utils.ArchiveTypeYtDlp], utils.ArchiveTypeYtDlp, bdClient)
 		archiversMap[utils.ArchiveTypeGalleryDl] = brightdata.WithFallback(archiversMap[utils.ArchiveTypeGalleryDl], utils.ArchiveTypeGalleryDl, bdClient)
-		utils.SetBrightDataMediaFallback(bdClient.Enabled())
+		// Routing asks the client itself whether a login-only URL has a paid
+		// path to success before queueing an item for it, so the coverage
+		// table lives in exactly one place.
+		if bdClient.Enabled() {
+			utils.SetBrightDataMediaFallback(bdClient.SupportsFallback)
+		}
 		slog.Info("Bright Data media fallback configured",
-			"instagram", bdClient.Enabled(),
-			"youtube_browser", bdClient.BrowserReady())
+			"datasets", bdClient.Enabled(),
+			"browser_sessions", bdClient.BrowserReady())
 	} else {
 		slog.Info("Bright Data media fallback not configured (BRIGHTDATA_API_KEY unset)")
 	}
