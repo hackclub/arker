@@ -243,7 +243,7 @@ func TestSanitizeJSONRedactsPathEmbeddedSignatures(t *testing.T) {
 		t.Fatal("sanitization dropped the URL entirely; the host is useful provenance")
 	}
 
-	t.Skip("contract-pending: G14 (new — found by these tests; number provisional, manager to assign) — SanitizeJSON only redacts query parameters, so path-embedded HLS signatures and client IPs survive; enable at integration")
+	// G14 fixed at integration: path-embedded signatures are now redacted.
 
 	for _, secret := range []string{
 		"AE0s2JYwRQIgaB6812wW7sOHGbtxnAdY21EcPjVZUJ9AJUKxoYO", // sig

@@ -240,6 +240,35 @@ func sanitizeJSONString(value string, secrets []string) string {
 	if changed {
 		parsed.RawQuery = query.Encode()
 	}
+
+	// Signed media hosts do not only sign via the query string. googlevideo's
+	// HLS manifest URLs carry expire/ei/ip/sig/lsig as ALTERNATING PATH
+	// SEGMENTS (/expire/1786.../ei/czt9.../ip/198.51.100.23/.../sig/AE0s...),
+	// so a query-only pass stores the viewer's client IP and a live URL
+	// signature in raw metadata (G14). Walk the path pairwise and redact the
+	// value after any segment that names a sensitive parameter. Scoped to
+	// signed media hosts so ordinary URLs never have their paths rewritten.
+	if signedMediaHost(parsed.Hostname()) {
+		segments := strings.Split(parsed.EscapedPath(), "/")
+		pathChanged := false
+		for i := 0; i+1 < len(segments); i++ {
+			if segments[i] != "" && sensitiveURLParameter(segments[i]) && segments[i+1] != "" {
+				segments[i+1] = utils.RedactPlaceholder
+				pathChanged = true
+				i++ // the redacted value cannot itself be a key
+			}
+		}
+		if pathChanged {
+			escaped := strings.Join(segments, "/")
+			if unescaped, err := url.PathUnescape(escaped); err == nil {
+				parsed.Path = unescaped
+				parsed.RawPath = escaped
+			} else {
+				parsed.Path = escaped
+				parsed.RawPath = ""
+			}
+		}
+	}
 	return parsed.String()
 }
 
@@ -264,7 +293,11 @@ func sensitiveURLParameter(key string) bool {
 		return true
 	}
 	switch normalized {
-	case "sig", "lsig", "auth", "api_key", "apikey", "key", "ipbits", "hdntl", "hdnea", "hdnts", "pot":
+	case "sig", "lsig", "auth", "api_key", "apikey", "key", "ipbits", "hdntl", "hdnea", "hdnts", "pot",
+		// Path-segment session tokens on signed media hosts (G14): "ei" is
+		// googlevideo's per-viewer session identifier; spc/vprv/bui are opaque
+		// per-session blobs riding the same manifest paths.
+		"ei", "spc", "vprv", "bui":
 		return true
 	default:
 		return false
