@@ -130,9 +130,17 @@ Live-verified results (dev stack, real BD calls, all ledgered):
   KYC approval (https://brightdata.com/cp/kyc). One-time owner action; the code
   path is built and expected to work unchanged after approval. Refusals now
   abort without retry (a blocked rescue costs one session, not three).
-- Pinterest + Facebook pathways implemented off the same discovery (agent G;
-  see final integration notes) — Pinterest pins and FB photos/videos direct-
-  download verified from our IP during discovery.
+- **Pinterest: pathway shipped** — pins previously got NO media item at all
+  (cookie-gated, no fallback); now routed + BD-rescued (i.pinimg originals,
+  direct download). Video pins carry a VideoMetadata sidecar.
+- **Facebook: pathway shipped on both routes** — video permalinks (yt-dlp item,
+  video.fbcdn.net direct) AND newly-claimed photo/post permalink shapes
+  (/photo/?fbid=, /photo.php, /<page>/photos/<id>, /<page>/posts/<id> incl.
+  pfbid) through the gallery route. FB photo posts were previously entirely
+  unclaimed (ordinary-URL treatment).
+- Compliance refusals (KYC-gated hosts) now abort without retry AND are cached
+  per host for the process lifetime — a blocked TikTok rescue costs one session
+  (~$0.03), not three per URL.
 - **Vimeo: no BD pathway** — the dataset crawler fails on exactly the DRM class
   native can't get; DRM is cryptographic, not positional. Documented.
 
