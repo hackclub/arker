@@ -231,6 +231,20 @@ func IsXPostURL(rawURL string) bool {
 	return strings.Contains(strings.ToLower(parsed.Path), "/status/")
 }
 
+// IsPinterestPinURL reports whether a URL is a single Pinterest pin.
+//
+// Boards and profiles must never match: a board URL sent to the fallback would
+// buy a dataset record for a container rather than a pin, and gallery-dl
+// pointed at one would download somebody's entire board.
+func IsPinterestPinURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return hostMatches(strings.ToLower(parsed.Hostname()), "pinterest.com") &&
+		strings.Contains(strings.ToLower(parsed.Path), "/pin/")
+}
+
 // Check if URL is a Facebook video URL (reels, watch, and page videos)
 func IsFacebookURL(url string) bool {
 	lowerURL := strings.ToLower(url)

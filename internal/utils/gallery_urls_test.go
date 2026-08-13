@@ -191,8 +191,8 @@ func TestShouldCreateGalleryDLItemWithBrightDataFallback(t *testing.T) {
 		}
 	}
 
-	// Stands in for the real client's coverage table (brightdata.Client.
-	// SupportsFallback), which covers Instagram and X but not Pinterest.
+	// Coverage is per URL, not per switch: a client covering Instagram and X
+	// must not drag every other login-only site along with it.
 	SetBrightDataMediaFallback(func(rawURL, itemType string) bool {
 		return itemType == ArchiveTypeGalleryDl && (IsInstagramURL(rawURL) || IsXPostURL(rawURL))
 	})
@@ -203,7 +203,38 @@ func TestShouldCreateGalleryDLItemWithBrightDataFallback(t *testing.T) {
 		t.Error("cookie-less X item not created despite Bright Data fallback")
 	}
 	if ShouldCreateGalleryDLItem(pinterestPin) {
-		t.Error("cookie-less Pinterest item created; the fallback does not cover Pinterest")
+		t.Error("cookie-less Pinterest item created by a fallback that does not cover Pinterest")
+	}
+
+	// And a client that does cover Pinterest — which the real one now does —
+	// gets the pin its item, which is the whole point of the carve-out: before
+	// this, a cookie-less pin produced no media item at all.
+	SetBrightDataMediaFallback(func(rawURL, itemType string) bool {
+		return itemType == ArchiveTypeGalleryDl && IsPinterestPinURL(rawURL)
+	})
+	if !ShouldCreateGalleryDLItem(pinterestPin) {
+		t.Error("cookie-less Pinterest item not created despite Bright Data fallback")
+	}
+}
+
+// The fallback dispatches on this, so a board or profile URL matching it would
+// buy a dataset record for a container instead of a pin.
+func TestIsPinterestPinURL(t *testing.T) {
+	cases := map[string]bool{
+		"https://www.pinterest.com/pin/1123648175807513296":  true,
+		"https://www.pinterest.com/pin/1123648175807513296/": true,
+		"https://pinterest.com/pin/123":                      true,
+		"https://in.pinterest.com/pin/123/":                  true,
+		"https://www.pinterest.com/someone/some-board/":      false,
+		"https://www.pinterest.com/someone/":                 false,
+		"https://www.pinterest.com/":                         false,
+		"https://notpinterest.com/pin/123":                   false,
+		"https://example.com/pin/123":                        false,
+	}
+	for rawURL, want := range cases {
+		if got := IsPinterestPinURL(rawURL); got != want {
+			t.Errorf("IsPinterestPinURL(%q) = %v, want %v", rawURL, got, want)
+		}
 	}
 }
 

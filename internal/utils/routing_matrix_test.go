@@ -190,8 +190,9 @@ func TestArchiveTypeMatrixWithoutCookiesButWithBrightDataFallback(t *testing.T) 
 		{"twitter status", "https://twitter.com/someone/status/1234567890123456789", withGallery},
 		{"instagram feed post", "https://www.instagram.com/p/DbktPO1Eopi/", withGallery},
 
-		// Not covered by the fallback: still no item, because the native run
-		// cannot succeed and nothing follows it.
+		// Not covered by this fallback: still no item, because the native run
+		// cannot succeed and nothing follows it. Coverage is per URL, so a
+		// client that omits Pinterest does not accidentally queue one.
 		{"pinterest pin", "https://www.pinterest.com/pin/1234567890/", base},
 
 		// Anonymous sites are unaffected either way.
@@ -205,6 +206,31 @@ func TestArchiveTypeMatrixWithoutCookiesButWithBrightDataFallback(t *testing.T) 
 			assertArchiveTypes(t, tt.url, tt.want...)
 		})
 	}
+}
+
+// A Pinterest pin is the shape the carve-out was generalized for: it is
+// login-only, it has no cookie jar in production, and until the Bright Data
+// Pinterest pathway existed it produced no media item at all — an MHTML of the
+// login wall and nothing else. With the pathway enabled the pin gets its
+// gallery item back.
+func TestArchiveTypeMatrixPinterestWithBrightDataFallback(t *testing.T) {
+	configureMediaCookies(t, false)
+	// Stands in for brightdata.Client.SupportsFallback with the Pinterest
+	// pathway configured.
+	SetBrightDataMediaFallback(func(rawURL, itemType string) bool {
+		return itemType == ArchiveTypeGalleryDl && IsPinterestPinURL(rawURL)
+	})
+	t.Cleanup(func() { SetBrightDataMediaFallback(nil) })
+
+	base := []string{ArchiveTypeMHTML, ArchiveTypeScreenshot}
+	withGallery := append(append([]string{}, base...), ArchiveTypeGalleryDl)
+
+	assertArchiveTypes(t, "https://www.pinterest.com/pin/1234567890/", withGallery...)
+	// A pin is one image: the yt-dlp path must stay out of it.
+	assertArchiveTypes(t, "https://www.pinterest.com/someone/some-board/", base...)
+	// Sites this client does not cover are unaffected.
+	assertArchiveTypes(t, "https://x.com/someone/status/1234567890123456789", base...)
+	assertArchiveTypes(t, "https://example.com/article", base...)
 }
 
 // Recognition must cover every shape the routing table claims. A recognized

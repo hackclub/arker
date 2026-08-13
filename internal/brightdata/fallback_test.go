@@ -204,13 +204,17 @@ func TestClientSupportsFallback(t *testing.T) {
 		{"x status", datasetOnly, "https://x.com/u/status/1", utils.ArchiveTypeGalleryDl, true},
 		{"twitter status", datasetOnly, "https://twitter.com/u/status/1", utils.ArchiveTypeGalleryDl, true},
 
+		// Pinterest's i.pinimg.com assets download from Arker's own connection.
+		{"pinterest pin", datasetOnly, "https://www.pinterest.com/pin/1/", utils.ArchiveTypeGalleryDl, true},
+
 		// Wrong archive type for the platform, or no fallback at all.
 		{"reddit as video", full, "https://www.reddit.com/r/aww/comments/abc/title/", utils.ArchiveTypeYtDlp, false},
 		{"x as video", full, "https://x.com/u/status/1", utils.ArchiveTypeYtDlp, false},
 		{"subreddit page", full, "https://www.reddit.com/r/aww/", utils.ArchiveTypeGalleryDl, false},
 		{"x profile", full, "https://x.com/someone", utils.ArchiveTypeGalleryDl, false},
 		{"vimeo", full, "https://vimeo.com/1234", utils.ArchiveTypeYtDlp, false},
-		{"pinterest", full, "https://www.pinterest.com/pin/1/", utils.ArchiveTypeGalleryDl, false},
+		{"pinterest as video", full, "https://www.pinterest.com/pin/1/", utils.ArchiveTypeYtDlp, false},
+		{"pinterest board", full, "https://www.pinterest.com/someone/some-board/", utils.ArchiveTypeGalleryDl, false},
 		{"mhtml", full, "https://www.youtube.com/watch?v=abc123def45", utils.ArchiveTypeMHTML, false},
 	}
 	for _, c := range cases {

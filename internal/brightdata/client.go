@@ -51,6 +51,7 @@ const (
 	DatasetTikTokPosts    = "gd_lu702nij2f790tmv9h"
 	DatasetRedditPosts    = "gd_lvz8ah06191smkebj4"
 	DatasetXPosts         = "gd_lwxkxvnf1cynvib9co"
+	DatasetPinterestPosts = "gd_lk0sjs4d21kdr7cnlv"
 )
 
 // Config carries everything the fallback needs. Only APIKey is required:
