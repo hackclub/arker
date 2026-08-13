@@ -4,7 +4,12 @@
 (74 commits tonight: 5 Opus 5 agent branches + manager integration fixes),
 deployed via the normal Coolify flow, zero crash loops, migrations verified.
 
-## ⚠️ One morning action for Zach (1 minute)
+## ⚠️ Morning actions for Zach
+
+1. (1 min) Persist canary env vars in Coolify — see below.
+2. (5 min, unlocks TikTok bytes) Complete Bright Data KYC: https://brightdata.com/cp/kyc — their compliance layer gates tiktok.com browser sessions until then.
+
+## Canary env persistence (action 1)
 
 Canaries are ACTIVE (6h sweeps) but the two env vars live in the container's
 `.env` file, which survives restarts but NOT the next Coolify deploy. Persist
@@ -107,6 +112,29 @@ one local-verify carousel, one prod-verify carousel; snapshot ids recorded;
   worker/API code with sanitized fixtures for every matrix cell (no network).
 - Browser E2E locally + live prod matrix above, with actual nonzero media
   bytes fetched through the API for every green cell.
+
+## Phase 2 (post-1st-ship, same night): Bright Data pathways for blocked platforms
+
+Zach directive ~01:05 ET: "the ones we can't get native extractors for, implement
+Bright Data pathways for … basically get it working for everything."
+
+Live-verified results (dev stack, real BD calls, all ledgered):
+- **Reddit: WORKS.** Native WAF-blocked -> BD Posts dataset -> packaged-media
+  muxed MP4 (h264+AAC verified by ffprobe on the stored artifact), photos[] for
+  image/gallery posts, completeness recorded, $0.0015/rescue.
+- **X: routing now creates the item, and native gallery-dl (syndication route)
+  succeeded anonymously in verification — free path first, BD pathway armed
+  behind it** (photos + video variants incl. 4K, direct-download verified).
+- **TikTok: metadata pathway works; BYTES BLOCKED at Bright Data's compliance
+  layer** — browser sessions refuse tiktok.com navigation pending account-level
+  KYC approval (https://brightdata.com/cp/kyc). One-time owner action; the code
+  path is built and expected to work unchanged after approval. Refusals now
+  abort without retry (a blocked rescue costs one session, not three).
+- Pinterest + Facebook pathways implemented off the same discovery (agent G;
+  see final integration notes) — Pinterest pins and FB photos/videos direct-
+  download verified from our IP during discovery.
+- **Vimeo: no BD pathway** — the dataset crawler fails on exactly the DRM class
+  native can't get; DRM is cryptographic, not positional. Documented.
 
 ## Known limits + recommended follow-ups (owner decisions)
 
