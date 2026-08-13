@@ -350,6 +350,12 @@ func main() {
 	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_archive_items_status_created_at ON archive_items (status, created_at)").Error; err != nil {
 		slog.Error("Failed to create archive_items status/created_at index", "error", err)
 	}
+	// Explicit DDL, not AutoMigrate: AutoMigrate cannot add a column to a table
+	// that already exists with these driver versions, and it fails silently.
+	// See EnsureCompletenessSchema.
+	if err := utils.EnsureCompletenessSchema(db); err != nil {
+		slog.Error("Completeness column migration failed", "error", err)
+	}
 	if err := utils.ConfigureArchiveItemLogSchema(db); err != nil {
 		slog.Error("Archive log schema configuration failed", "error", err)
 	} else if err := utils.BackfillLegacyArchiveItemLogs(db); err != nil {
