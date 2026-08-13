@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"arker/internal/archivers"
+	"arker/internal/models"
 	"arker/internal/utils"
 )
 
@@ -243,5 +244,53 @@ func TestExtractYouTubeVideoID(t *testing.T) {
 		if got := ExtractYouTubeVideoID(url); got != want {
 			t.Errorf("ExtractYouTubeVideoID(%s) = %q; want %q", url, got, want)
 		}
+	}
+}
+
+// One test that runs the whole public path: a native failure, the coverage
+// check, the dispatch, the platform flow, and the usage row attributed to a
+// real capture. The per-platform tests call the flows directly, so nothing
+// else would catch SupportsFallback and ArchiveFallback disagreeing about a
+// platform — a disagreement that reads as "native failed, and so did the
+// rescue" in production.
+func TestFallbackArchiverRescuesRedditThroughTheRealClient(t *testing.T) {
+	record := loadRecords(t, "reddit_post.json")[0]
+	network := newFakeNetwork(record)
+	video := fakeMP4(2048)
+	network.serve(redditMediaEntries(record)[0].URL, video)
+
+	client, db := newTestClient(t, network)
+
+	capture := models.Capture{ShortID: "rd001"}
+	if err := db.Create(&capture).Error; err != nil {
+		t.Fatalf("create capture: %v", err)
+	}
+	item := models.ArchiveItem{CaptureID: capture.ID, Type: utils.ArchiveTypeGalleryDl, Status: "processing"}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+
+	arch := WithFallback(&fakePrimary{err: errors.New("gallery-dl: HTTP 403")}, utils.ArchiveTypeGalleryDl, client)
+	var log strings.Builder
+	result, err := arch.Archive(context.Background(), redditPostURL, &log, db, item.ID)
+	if err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	if result.Source != models.ArchiveSourceBrightData || result.Extension != ".zip" {
+		t.Errorf("result = %q %s; want a brightdata ZIP", result.Source, result.Extension)
+	}
+	readResult(t, result)
+
+	rows := usageRows(t, db)
+	if len(rows) != 1 || !rows[0].Success {
+		t.Fatalf("usage rows = %+v", rows)
+	}
+	// The row has to be findable from the capture, which is how the API
+	// reports what a rescue cost.
+	if rows[0].ShortID != "rd001" || rows[0].ArchiveItemID != item.ID {
+		t.Errorf("usage row not attributed to the capture: %+v", rows[0])
+	}
+	if !strings.Contains(log.String(), "Bright Data fallback succeeded") {
+		t.Error("archive log does not record the rescue")
 	}
 }
