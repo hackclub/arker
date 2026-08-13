@@ -3,6 +3,7 @@ package workers
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -25,6 +26,138 @@ type FindOrCreateResult struct {
 	Action  string
 	ShortID string
 	Status  string
+}
+
+// captureIdentityLocks serializes capture creation for one canonical identity
+// within this process. It is the in-process half of the pair described on
+// withCaptureIdentityLock.
+var captureIdentityLocks = &identityLockSet{locks: map[string]*identityLock{}}
+
+type identityLockSet struct {
+	mu    sync.Mutex
+	locks map[string]*identityLock
+}
+
+type identityLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// acquire blocks until identity is free and returns its release func. Waiters
+// are counted before blocking so an entry cannot be evicted out from under one.
+func (s *identityLockSet) acquire(identity string) func() {
+	s.mu.Lock()
+	lock := s.locks[identity]
+	if lock == nil {
+		lock = &identityLock{}
+		s.locks[identity] = lock
+	}
+	lock.refs++
+	s.mu.Unlock()
+
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		s.mu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(s.locks, identity)
+		}
+		s.mu.Unlock()
+	}
+}
+
+// withCaptureIdentityLock runs fn inside a transaction serialized on a canonical
+// identity, so concurrent submissions of one post cannot each conclude that no
+// capture exists and each start a full archive. Two same-second POSTs are 18.4%
+// of same-day repeats in prod; keying on the canonical identity rather than the
+// raw string extends that protection to two different *spellings* of one post,
+// which is the whole point of this change.
+//
+// Both halves are needed and neither is redundant:
+//
+//   - pg_advisory_xact_lock is the real lock. It is held until the transaction
+//     commits and it works across app instances, which is the deployed shape.
+//     hashtext collisions merely cause harmless extra serialization.
+//   - The in-process mutex covers dialects that have no advisory locks (SQLite,
+//     which is what the tests run on). It is not cross-process safe and does not
+//     pretend to be — on Postgres it is a cheap fast-path that the advisory lock
+//     would enforce anyway — but it makes the concurrency contract executable
+//     rather than assertable only against a live Postgres.
+//
+// Lock order is fixed (in-process, then advisory) and fn takes no further
+// identity locks, so the pair cannot deadlock.
+func withCaptureIdentityLock(db *gorm.DB, identity string, fn func(tx *gorm.DB) error) error {
+	unlock := captureIdentityLocks.acquire(identity)
+	defer unlock()
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		if tx.Dialector.Name() == "postgres" {
+			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", identity).Error; err != nil {
+				return err
+			}
+		}
+		return fn(tx)
+	})
+}
+
+// loadIdentityRows returns every ArchivedURL row sharing url's canonical
+// identity, plus the row (if any) holding url verbatim.
+//
+// The original column is matched as well as the canonical one so the lookup
+// degrades to exactly its pre-canonicalization behavior when canonical_url is
+// still empty — a row created before the column existed, or one the startup
+// backfill has not reached yet. Matching the canonical string against original
+// catches the same case from the other side: a legacy row that happens to have
+// been stored in canonical form already.
+func loadIdentityRows(tx *gorm.DB, url, canonical string) ([]models.ArchivedURL, *models.ArchivedURL, error) {
+	var rows []models.ArchivedURL
+	if err := tx.Where("canonical_url = ? OR original = ? OR original = ?", canonical, url, canonical).
+		Order("id").Find(&rows).Error; err != nil {
+		return nil, nil, err
+	}
+	for i := range rows {
+		if rows[i].Original == url {
+			return rows, &rows[i], nil
+		}
+	}
+	return rows, nil, nil
+}
+
+func archivedURLIDs(rows []models.ArchivedURL) []uint {
+	ids := make([]uint, len(rows))
+	for i := range rows {
+		ids[i] = rows[i].ID
+	}
+	return ids
+}
+
+// ensureArchivedURL returns the row a new capture of url should hang off,
+// creating it when this exact spelling has never been archived.
+//
+// Every distinct spelling keeps its own row on purpose: the contract is that
+// the submitted URL is stored, displayed, and archived untouched, and rewriting
+// Original to a canonical form would break that (and would rewrite history for
+// rows that already exist). The canonical column is what ties the spellings
+// together.
+func ensureArchivedURL(tx *gorm.DB, url, canonical string, exact *models.ArchivedURL) (models.ArchivedURL, error) {
+	if exact != nil {
+		// Self-heal a row the startup backfill missed or predates, so the next
+		// lookup can match it on the indexed canonical column.
+		if exact.CanonicalURL != canonical {
+			if err := tx.Model(&models.ArchivedURL{}).Where("id = ?", exact.ID).
+				UpdateColumn("canonical_url", canonical).Error; err != nil {
+				return models.ArchivedURL{}, err
+			}
+			exact.CanonicalURL = canonical
+		}
+		return *exact, nil
+	}
+	created := models.ArchivedURL{Original: url, CanonicalURL: canonical}
+	if err := tx.Create(&created).Error; err != nil {
+		return models.ArchivedURL{}, err
+	}
+	return created, nil
 }
 
 // QueueCapture creates an ArchivedURL (if needed), a capture, and queues
@@ -116,21 +249,20 @@ func FindOrCreateCapture(ctx context.Context, db *gorm.DB, riverClient *river.Cl
 		types = utils.NormalizeArchiveTypes(types)
 	}
 
-	var result FindOrCreateResult
-	err := db.Transaction(func(tx *gorm.DB) error {
-		if tx.Dialector.Name() == "postgres" {
-			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", url).Error; err != nil {
-				return err
-			}
-		}
+	canonical := utils.CanonicalizeArchiveURL(url)
 
-		var archivedURL models.ArchivedURL
-		err := tx.Where("original = ?", url).First(&archivedURL).Error
-		if err != nil && err != gorm.ErrRecordNotFound {
+	var result FindOrCreateResult
+	err := withCaptureIdentityLock(db, canonical, func(tx *gorm.DB) error {
+		rows, exact, err := loadIdentityRows(tx, url, canonical)
+		if err != nil {
 			return err
 		}
-		if err == nil {
-			capture, status, findErr := findFindOrCreateCandidate(tx, archivedURL.ID, types)
+		if len(rows) > 0 {
+			// Candidates are gathered across every row sharing the identity:
+			// after the backfill several spellings of one post each have their
+			// own row, and the newest completed capture of the post can hang off
+			// any of them.
+			capture, status, findErr := findFindOrCreateCandidate(tx, archivedURLIDs(rows), types)
 			if findErr != nil {
 				return findErr
 			}
@@ -141,11 +273,11 @@ func FindOrCreateCapture(ctx context.Context, db *gorm.DB, riverClient *river.Cl
 				}
 				return nil
 			}
-		} else {
-			archivedURL = models.ArchivedURL{Original: url}
-			if err := tx.Create(&archivedURL).Error; err != nil {
-				return err
-			}
+		}
+
+		archivedURL, err := ensureArchivedURL(tx, url, canonical, exact)
+		if err != nil {
+			return err
 		}
 
 		capture := models.Capture{ArchivedURLID: archivedURL.ID, Timestamp: time.Now(), ShortID: utils.GenerateShortID(tx), APIKeyID: apiKeyID}
@@ -174,9 +306,15 @@ func FindOrCreateCapture(ctx context.Context, db *gorm.DB, riverClient *river.Cl
 // findFindOrCreateCandidate deliberately has no age or row limit. Completion
 // time is the latest UpdatedAt among the required items; this is when the
 // requested set became usable, and is distinct from capture creation time.
-func findFindOrCreateCandidate(tx *gorm.DB, archivedURLID uint, types []string) (*models.Capture, string, error) {
+//
+// archivedURLIDs is every row sharing one canonical identity, so a capture made
+// under one spelling of a post answers a request made under another.
+func findFindOrCreateCandidate(tx *gorm.DB, archivedURLIDs []uint, types []string) (*models.Capture, string, error) {
+	if len(archivedURLIDs) == 0 {
+		return nil, "", nil
+	}
 	var candidates []models.Capture
-	if err := tx.Where("archived_url_id = ? AND alias_of_id IS NULL", archivedURLID).
+	if err := tx.Where("archived_url_id IN ? AND alias_of_id IS NULL", archivedURLIDs).
 		Preload("ArchiveItems").Find(&candidates).Error; err != nil {
 		return nil, "", err
 	}
@@ -243,37 +381,26 @@ func captureStatusForTypes(c *models.Capture, types []string) (string, time.Time
 // short ID, the canonical capture when the new capture is an alias (nil for
 // full captures), and the number of archive items created.
 func createCapture(db *gorm.DB, url string, types []string, apiKeyID *uint, force bool) (string, *models.Capture, int, error) {
+	canonical := utils.CanonicalizeArchiveURL(url)
+
 	var shortID string
 	var createdItems int
 	var aliasOf *models.Capture
 
-	err := db.Transaction(func(tx *gorm.DB) error {
-		// Serialize concurrent submissions of the same URL until this
-		// transaction commits. Without this, two same-second POSTs (18.4% of
-		// same-day repeats in prod) both pass the freshness check below and
-		// both trigger a full re-archive. hashtext collisions merely cause
-		// harmless extra serialization. Advisory locks are Postgres-only;
-		// other dialects (SQLite in tests) skip this.
-		if tx.Dialector.Name() == "postgres" {
-			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", url).Error; err != nil {
-				return err
-			}
-		}
-
-		// Find or create ArchivedURL
-		var u models.ArchivedURL
-		err := tx.Where("original = ?", url).First(&u).Error
-		if err == gorm.ErrRecordNotFound {
-			u = models.ArchivedURL{Original: url}
-			if err = tx.Create(&u).Error; err != nil {
-				return err
-			}
-		} else if err != nil {
+	err := withCaptureIdentityLock(db, canonical, func(tx *gorm.DB) error {
+		rows, exact, err := loadIdentityRows(tx, url, canonical)
+		if err != nil {
 			return err
 		}
 
 		if !force {
-			aliasOf = findReusableCapture(tx, u.ID, types)
+			aliasOf = findReusableCapture(tx, archivedURLIDs(rows), types)
+		}
+
+		// Find or create the ArchivedURL for this exact spelling.
+		u, err := ensureArchivedURL(tx, url, canonical, exact)
+		if err != nil {
+			return err
 		}
 
 		// Generate short ID
@@ -328,25 +455,28 @@ func createCapture(db *gorm.DB, url string, types []string, apiKeyID *uint, forc
 	return shortID, aliasOf, createdItems, nil
 }
 
-// findReusableCapture returns the newest canonical (non-alias) capture of
-// archivedURLID within the freshness window whose archive items cover every
-// requested type with none of those items failed, or nil when a full capture
-// is required. Pending/processing items are acceptable: their jobs are already
-// in flight on the canonical capture.
-func findReusableCapture(tx *gorm.DB, archivedURLID uint, types []string) *models.Capture {
+// findReusableCapture returns the newest canonical (non-alias) capture sharing
+// the requested canonical identity, within the freshness window, whose archive
+// items cover every requested type with none of those items failed — or nil
+// when a full capture is required. Pending/processing items are acceptable:
+// their jobs are already in flight on the canonical capture.
+func findReusableCapture(tx *gorm.DB, archivedURLIDs []uint, types []string) *models.Capture {
+	if len(archivedURLIDs) == 0 {
+		return nil
+	}
 	window := utils.CaptureFreshnessWindow(tx)
 	if window <= 0 {
 		return nil // aliasing disabled via config
 	}
 
 	var candidates []models.Capture
-	if err := tx.Where("archived_url_id = ? AND alias_of_id IS NULL AND timestamp > ?",
-		archivedURLID, time.Now().Add(-window)).
+	if err := tx.Where("archived_url_id IN ? AND alias_of_id IS NULL AND timestamp > ?",
+		archivedURLIDs, time.Now().Add(-window)).
 		Order("timestamp DESC").
 		Limit(10).
 		Preload("ArchiveItems").
 		Find(&candidates).Error; err != nil {
-		slog.Error("Failed to look up reusable captures", "archived_url_id", archivedURLID, "error", err)
+		slog.Error("Failed to look up reusable captures", "archived_url_ids", archivedURLIDs, "error", err)
 		return nil
 	}
 

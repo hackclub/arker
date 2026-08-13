@@ -234,6 +234,103 @@ func migrateLegacyArchiveTypes(db *gorm.DB) error {
 	})
 }
 
+// ensureCanonicalURLSchema creates archived_urls.canonical_url and its index
+// explicitly, instead of trusting AutoMigrate to have done it.
+//
+// This is not belt-and-braces. With this repo's gorm.io/driver/postgres + pgx
+// pairing, AutoMigrate fails with "insufficient arguments" against any table
+// that already exists — it dies probing column types with
+// `SELECT * FROM "archived_urls" LIMIT 1`, before it would emit any ALTER. That
+// is why startup logs "Continuing startup despite AutoMigrate error" and keeps
+// going. A fresh database is unaffected (table creation works), so the failure
+// only shows up where it matters most: an existing production database.
+//
+// Without this, canonical_url would never appear in production, and every
+// find-or-create lookup would then reference a column that does not exist and
+// fail the request outright. It is the same explicit-DDL approach already used
+// below for the archive_items status/created_at index.
+//
+// Both statements are additive and idempotent. ADD COLUMN with no default is a
+// catalog-only change in PostgreSQL 11+, so it does not rewrite the table and
+// does not depend on row count. The index build takes a brief ACCESS EXCLUSIVE
+// lock, which on a table of this size is milliseconds and happens before the
+// server accepts traffic.
+func ensureCanonicalURLSchema(db *gorm.DB) error {
+	if db.Dialector.Name() != "postgres" {
+		// Other dialects only appear in tests, where AutoMigrate builds the
+		// table from the model and the column is already present.
+		return nil
+	}
+	if err := db.Exec(`ALTER TABLE archived_urls ADD COLUMN IF NOT EXISTS canonical_url text`).Error; err != nil {
+		return fmt.Errorf("add archived_urls.canonical_url: %w", err)
+	}
+	// Not UNIQUE: several spellings of one post share an identity by design.
+	if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_archived_urls_canonical_url ON archived_urls (canonical_url)`).Error; err != nil {
+		return fmt.Errorf("index archived_urls.canonical_url: %w", err)
+	}
+	return nil
+}
+
+// canonicalURLBackfillBatch bounds how many rows one transaction rewrites.
+// Small enough that no statement holds row locks on a meaningful slice of the
+// table, large enough that 50k rows is 50 round trips rather than 50k.
+const canonicalURLBackfillBatch = 1000
+
+// backfillCanonicalURLs fills archived_urls.canonical_url for rows created
+// before the column existed. New rows get their canonical identity at insert
+// time, so this converges and is a no-op on every boot after the first.
+//
+// Three properties make it safe to run unattended against production:
+//
+//   - Idempotent. It only ever selects rows whose canonical_url is still unset,
+//     and re-running after a partial pass resumes where it stopped. A row is
+//     never rewritten twice, and canonicalization is itself idempotent.
+//   - Additive. It writes one new column and reads Original; nothing existing is
+//     modified, and no row is merged or deleted. Several rows may end up sharing
+//     one canonical_url — that is expected, which is why the column is indexed
+//     rather than unique, and why find-or-create gathers candidates across every
+//     row sharing an identity.
+//   - Bounded. Batches are keyed off an ascending id cursor, so memory is
+//     O(batch) regardless of table size, and each transaction is short. The id
+//     cursor (not just the IS NULL filter) is what guarantees termination for a
+//     row whose canonical value is the empty string.
+//
+// UpdateColumn, not Update: bumping updated_at across the whole table would
+// rewrite history that operators read as "when did this URL last change".
+func backfillCanonicalURLs(db *gorm.DB) error {
+	start := time.Now()
+	var lastID uint
+	total := 0
+	for {
+		var rows []models.ArchivedURL
+		if err := db.Where("(canonical_url IS NULL OR canonical_url = '') AND id > ?", lastID).
+			Order("id").Limit(canonicalURLBackfillBatch).Find(&rows).Error; err != nil {
+			return fmt.Errorf("select archived_urls to backfill: %w", err)
+		}
+		if len(rows) == 0 {
+			break
+		}
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			for _, row := range rows {
+				canonical := utils.CanonicalizeArchiveURL(row.Original)
+				if err := tx.Model(&models.ArchivedURL{}).Where("id = ?", row.ID).
+					UpdateColumn("canonical_url", canonical).Error; err != nil {
+					return fmt.Errorf("set canonical_url for archived_url %d: %w", row.ID, err)
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		lastID = rows[len(rows)-1].ID
+		total += len(rows)
+	}
+	if total > 0 {
+		slog.Info("Backfilled canonical URLs", "rows", total, "duration", time.Since(start))
+	}
+	return nil
+}
+
 func populateFileSizes(db *gorm.DB, storage storage.Storage) {
 	var items []models.ArchiveItem
 	// Find completed archive items that don't have file size set
@@ -360,6 +457,13 @@ func main() {
 		slog.Error("Legacy archive log backfill failed", "error", err)
 	} else {
 		slog.Info("Archive log schema and legacy backfill completed successfully")
+	}
+	if err := ensureCanonicalURLSchema(db); err != nil {
+		slog.Error("Canonical URL schema configuration failed", "error", err)
+	} else if err := backfillCanonicalURLs(db); err != nil {
+		// Not fatal: find-or-create still matches un-backfilled rows on
+		// original, which is exactly its pre-canonicalization behavior.
+		slog.Error("Canonical URL backfill failed", "error", err)
 	}
 
 	// Get or generate session secret from database (overrides environment variable if not set)
