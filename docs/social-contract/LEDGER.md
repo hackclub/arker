@@ -53,5 +53,5 @@ does not have (explicit authentication_required, never false-green); Facebook ph
 posts are not a claimed shape; IG under throttle degrades to BD fallback.
 
 ## Bright Data spend ledger
-Running total: $0.00 of $10.00 cap. Per-call entries in docs/social-contract/BD-SPEND.md
+Running total: $0.0015 of $10.00 cap (local verification phase). Per-call entries in docs/social-contract/BD-SPEND.md
 (every paid call: timestamp, purpose, product, request/snapshot id, est. cost).
