@@ -28,17 +28,19 @@ type CanaryService interface {
 const manualSweepTimeout = 2 * time.Hour
 
 type canaryProbeView struct {
-	Key             string `json:"key"`
-	Platform        string `json:"platform"`
-	PostType        string `json:"post_type"`
-	URL             string `json:"url"`
-	ArchiveType     string `json:"archive_type"`
-	ExpectedMedia   string `json:"expected_media"`
-	MinMediaBytes   int64  `json:"min_media_bytes"`
-	RequiresCookies bool   `json:"requires_cookies"`
-	DefaultEnabled  bool   `json:"default_enabled"`
-	URLOverrideEnv  string `json:"url_override_env"`
-	Note            string `json:"note,omitempty"`
+	Key              string `json:"key"`
+	Platform         string `json:"platform"`
+	PostType         string `json:"post_type"`
+	URL              string `json:"url"`
+	ArchiveType      string `json:"archive_type"`
+	ExpectedMedia    string `json:"expected_media"`
+	MinMediaBytes    int64  `json:"min_media_bytes"`
+	MinMediaCount    int    `json:"min_media_count"`
+	RequiresCookies  bool   `json:"requires_cookies"`
+	DefaultEnabled   bool   `json:"default_enabled"`
+	URLOverrideEnv   string `json:"url_override_env"`
+	CountOverrideEnv string `json:"media_count_override_env"`
+	Note             string `json:"note,omitempty"`
 }
 
 // CanariesGet reports current canary health plus recent history.
@@ -79,9 +81,11 @@ func CanariesGet(c *gin.Context, db *gorm.DB, svc CanaryService) {
 		probeViews = append(probeViews, canaryProbeView{
 			Key: probe.Key(), Platform: probe.Platform, PostType: probe.PostType,
 			URL: probe.URL, ArchiveType: probe.ExpectedType, ExpectedMedia: probe.ExpectedMedia,
-			MinMediaBytes: probe.MinMediaBytes, RequiresCookies: probe.RequiresCookies,
-			DefaultEnabled: probe.DefaultEnabled, URLOverrideEnv: canary.ProbeURLEnvPrefix + probe.EnvKey(),
-			Note: probe.Note,
+			MinMediaBytes: probe.MinMediaBytes, MinMediaCount: probe.MinMediaCount,
+			RequiresCookies: probe.RequiresCookies, DefaultEnabled: probe.DefaultEnabled,
+			URLOverrideEnv:   canary.ProbeURLEnvPrefix + probe.EnvKey(),
+			CountOverrideEnv: canary.ProbeMediaCountEnvPrefix + probe.EnvKey(),
+			Note:             probe.Note,
 		})
 	}
 	skipped := make([]string, 0, len(problems))

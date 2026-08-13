@@ -133,3 +133,24 @@ func TestCatalogKeysAreUnique(t *testing.T) {
 		seen[probe.Key()] = true
 	}
 }
+
+// Rotating a gallery probe to a post with a different number of assets needs
+// the count override too, or the completeness check keeps asserting the old
+// post's shape.
+func TestSelectProbesAppliesMediaCountOverride(t *testing.T) {
+	cfg := Config{
+		ProbeKeys:                []string{"reddit/gallery"},
+		ProbeURLOverrides:        map[string]string{"REDDIT_GALLERY": "https://www.reddit.com/r/pics/comments/other/"},
+		ProbeMediaCountOverrides: map[string]int{"REDDIT_GALLERY": 7},
+	}
+	selected, problems := SelectProbes(cfg, DefaultProbes(), false)
+	if len(problems) != 0 || len(selected) != 1 {
+		t.Fatalf("selected %d probes, problems %v", len(selected), problems)
+	}
+	if selected[0].MinMediaCount != 7 {
+		t.Errorf("MinMediaCount = %d, want 7", selected[0].MinMediaCount)
+	}
+	if selected[0].URL != "https://www.reddit.com/r/pics/comments/other/" {
+		t.Errorf("URL = %q, want the override", selected[0].URL)
+	}
+}

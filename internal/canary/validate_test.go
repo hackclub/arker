@@ -313,3 +313,42 @@ func TestVideoMetadataProblemAcceptsSaneRecord(t *testing.T) {
 		t.Errorf("sane metadata reported a problem: %s", problem)
 	}
 }
+
+// The completeness check that does not rely on the extractor's own accounting:
+// a 4-image post that archived 2 images has perfectly self-consistent
+// metadata, and must still fail.
+func TestValidateArchiveGalleryDetectsMissingAssets(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	meta := defaultGalleryMeta() // consistent: claims 2 files, bundle holds 2
+	item := galleryFixture(t, store, meta, defaultGalleryFiles())
+
+	probe := galleryProbe()
+	probe.MinMediaCount = 4 // but the real post has four
+
+	got := ValidateArchive(probe, item, store, Spend{}, false)
+	if got.Passed {
+		t.Fatal("a 2-of-4 gallery passed validation")
+	}
+	if got.FailureStage != StageMedia {
+		t.Errorf("failure stage = %q, want %q", got.FailureStage, StageMedia)
+	}
+	if !strings.Contains(got.FailureReason, "partial download") {
+		t.Errorf("reason %q should name the partial download", got.FailureReason)
+	}
+
+	// The same bundle passes when the post really does have two assets.
+	probe.MinMediaCount = 2
+	if ok := ValidateArchive(probe, item, store, Spend{}, false); !ok.Passed {
+		t.Errorf("complete gallery failed at %s: %s", ok.FailureStage, ok.FailureReason)
+	}
+}
+
+// Every default-enabled probe must declare how many assets its post has,
+// otherwise the completeness check silently does nothing for that slot.
+func TestDefaultProbesDeclareExpectedMediaCount(t *testing.T) {
+	for _, probe := range DefaultProbes() {
+		if probe.DefaultEnabled && probe.MinMediaCount <= 0 {
+			t.Errorf("probe %s has no MinMediaCount, so a partial archive would pass", probe.Key())
+		}
+	}
+}

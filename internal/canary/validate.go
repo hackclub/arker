@@ -299,6 +299,15 @@ func validateGalleryArchive(probe Probe, item *models.ArchiveItem, store storage
 		return fail(StageItemCompleted, StageMedia,
 			"gallery bundle holds %d media bytes, below the %d-byte floor for this probe", mediaBytes, probe.MinMediaBytes)
 	}
+	// The partial-download check that does not trust the extractor's own
+	// accounting: the probe knows how many assets this post has, so a bundle
+	// with fewer is a partial archive no matter how self-consistent its
+	// metadata looks.
+	if probe.MinMediaCount > 0 && mediaCount < probe.MinMediaCount {
+		return fail(StageItemCompleted, StageMedia,
+			"gallery bundle holds %d media files but this post has %d (partial download reading as complete)",
+			mediaCount, probe.MinMediaCount)
+	}
 	if probe.ExpectedMedia == MediaKindImage && imageCount == 0 {
 		return fail(StageItemCompleted, StageMedia, "gallery bundle has %d video file(s) but no images, and this probe expects images", videoCount)
 	}
@@ -325,9 +334,14 @@ func validateGalleryArchive(probe Probe, item *models.ArchiveItem, store storage
 }
 
 // galleryMetadataProblem checks normalized gallery metadata against the ZIP's
-// actual contents. The file-count comparison is the partial-download check: a
-// bundle whose metadata claims ten files and holds three is the false green
-// this canary exists to catch.
+// actual contents.
+//
+// The file-count comparison catches metadata that describes more files than
+// the bundle holds. Today gallery-dl's file_count records what it managed to
+// download rather than what the post contains, so this fires only on genuine
+// metadata/bundle disagreement — the "3 of 10 slides" case is caught by the
+// probe's own MinMediaCount instead, and this check gets stronger for free if
+// expected-count tracking lands upstream in the archiver.
 func galleryMetadataProblem(meta archivers.GalleryMetadata, mediaCount int) string {
 	if meta.PostID == "" && meta.PostURL == "" {
 		return "gallery metadata identifies no post (both post_id and post_url are empty)"

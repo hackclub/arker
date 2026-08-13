@@ -45,8 +45,8 @@ sidecar-before-completed ordering — and then validates, in order:
 | `capture` | The capture and its archive item were created. |
 | `archive` | The archiver returned without error **on the free native path**. |
 | `item_completed` | The item is `completed` and has a storage key. |
-| `media` | Real bytes of the expected kind are in storage, above the probe's floor. For galleries: at least one image/video file actually inside the ZIP. |
-| `metadata` | Normalized metadata exists, parses, identifies a post, declares a content type, and has an RFC3339 `archived_at`. For galleries, the file count must not exceed what is really in the bundle — that is the partial-download check. |
+| `media` | Real bytes of the expected kind are in storage, above the probe's byte floor, and **at least as many assets as the post is known to have**. That count is the partial-download check: gallery-dl records what it downloaded, not what the post contains, so a 2-of-4 carousel is internally consistent and only a pinned expected count catches it. |
+| `metadata` | Normalized metadata exists, parses, identifies a post, declares a content type, and has an RFC3339 `archived_at`. For galleries the recorded file count must also not exceed what is really in the bundle. |
 | `raw_metadata` | The sanitized provider record is retrievable (sidecar key for yt-dlp, raw `.json` sidecars in the gallery ZIP). |
 | `provenance` | The artifact came from `native`, and **no** `bright_data_usages` rows are attributed to the capture. |
 
@@ -179,6 +179,18 @@ in `GET /admin/canaries`) for why it was chosen and what to watch for.
 
 Rotation is a config change, not a deploy: set the override variable and
 restart.
+
+**Rotating a multi-asset slot needs two variables.** Each probe pins how many
+assets its post has, and a bundle with fewer fails as a partial download. If
+the replacement post has a different number of images, set the count too:
+
+```
+CANARY_PROBE_URL_REDDIT_GALLERY=https://www.reddit.com/r/pics/comments/<new>/
+CANARY_PROBE_MEDIA_COUNT_REDDIT_GALLERY=6
+```
+
+Current counts are visible per probe at `GET /admin/canaries`
+(`min_media_count`, with the variable name in `media_count_override_env`).
 
 **How to pick a replacement.** In order of importance:
 
@@ -328,6 +340,7 @@ That needs no log pipeline, and it is unauthenticated. Do **not** alert on the
 | `CANARY_SCHEDULE` | *(empty)* | Sweep interval as a Go duration (`6h`). Empty/`off` disables recurring canaries entirely. Minimum `15m`. |
 | `CANARY_PROBES` | *(empty)* | Comma-separated probe keys to run, e.g. `youtube/video,bluesky/post`. Empty means every default-enabled probe. |
 | `CANARY_PROBE_URL_<SLOT>` | *(built-in)* | Override one probe's URL, e.g. `CANARY_PROBE_URL_VIMEO_VIDEO`. |
+| `CANARY_PROBE_MEDIA_COUNT_<SLOT>` | *(built-in)* | Override how many assets that probe's post has. Set it whenever you rotate a multi-asset slot. Non-numeric or non-positive values are ignored so a typo cannot silently disable the check. |
 | `CANARY_PROBE_TIMEOUT` | `15m` | Ceiling for a single probe. |
 | `CANARY_ALLOW_PAID_FALLBACK` | `false` | Lets probes reach the Bright Data fallback. **Not part of activation.** |
 | `CANARY_MAX_COST_USD_PER_RUN` | `0.25` | Per-sweep spend ceiling; only meaningful with paid probes enabled. |

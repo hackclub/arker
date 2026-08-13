@@ -115,3 +115,24 @@ func TestEffectiveProbeTimeoutFallsBack(t *testing.T) {
 		t.Errorf("probe timeout = %v, want the %v default", got, DefaultProbeTimeout)
 	}
 }
+
+// A typo'd count must not silently disable a probe's completeness check.
+func TestMediaCountOverridesIgnoreJunkValues(t *testing.T) {
+	cfg, err := LoadConfig(RawConfig{}, []string{
+		"CANARY_PROBE_MEDIA_COUNT_REDDIT_GALLERY=6",
+		"CANARY_PROBE_MEDIA_COUNT_IMGUR_ALBUM=lots",
+		"CANARY_PROBE_MEDIA_COUNT_BLUESKY_POST=0",
+		"CANARY_PROBE_MEDIA_COUNT_VIMEO_VIDEO=-3",
+	})
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := cfg.ProbeMediaCountOverrides["REDDIT_GALLERY"]; got != 6 {
+		t.Errorf("reddit override = %d, want 6", got)
+	}
+	for _, key := range []string{"IMGUR_ALBUM", "BLUESKY_POST", "VIMEO_VIDEO"} {
+		if _, ok := cfg.ProbeMediaCountOverrides[key]; ok {
+			t.Errorf("%s override was accepted despite an invalid value", key)
+		}
+	}
+}

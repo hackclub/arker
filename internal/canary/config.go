@@ -2,6 +2,7 @@ package canary
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -13,6 +14,13 @@ const (
 	// ProbeURLEnvPrefix + a probe's EnvKey overrides that probe's URL, e.g.
 	// CANARY_PROBE_URL_YOUTUBE_SHORT.
 	ProbeURLEnvPrefix = "CANARY_PROBE_URL_"
+	// ProbeMediaCountEnvPrefix + a probe's EnvKey overrides how many assets
+	// that probe's post is expected to have, e.g.
+	// CANARY_PROBE_MEDIA_COUNT_REDDIT_GALLERY=6. Needed when a rotated probe
+	// URL points at a post with a different number of assets than the built-in
+	// one; without it the completeness check would keep asserting the old
+	// count.
+	ProbeMediaCountEnvPrefix = "CANARY_PROBE_MEDIA_COUNT_"
 
 	// MinSchedule is the shortest accepted interval. Canaries archive real
 	// media from real platforms; running them every few minutes would be
@@ -47,6 +55,9 @@ type Config struct {
 	ProbeKeys []string
 	// ProbeURLOverrides maps a probe EnvKey to a replacement URL.
 	ProbeURLOverrides map[string]string
+	// ProbeMediaCountOverrides maps a probe EnvKey to a replacement expected
+	// asset count.
+	ProbeMediaCountOverrides map[string]int
 	// ProbeTimeout bounds one probe.
 	ProbeTimeout time.Duration
 }
@@ -83,13 +94,14 @@ type RawConfig struct {
 // archiver from starting.
 func LoadConfig(raw RawConfig, environ []string) (Config, error) {
 	cfg := Config{
-		Schedule:          strings.TrimSpace(raw.Schedule),
-		AllowPaidFallback: raw.AllowPaidFallback,
-		MaxCostPerRunUSD:  raw.MaxCostPerRunUSD,
-		MaxCostPerDayUSD:  raw.MaxCostPerDayUSD,
-		ProbeKeys:         parseProbeKeys(raw.Probes),
-		ProbeURLOverrides: parseProbeURLOverrides(environ),
-		ProbeTimeout:      raw.ProbeTimeout,
+		Schedule:                 strings.TrimSpace(raw.Schedule),
+		AllowPaidFallback:        raw.AllowPaidFallback,
+		MaxCostPerRunUSD:         raw.MaxCostPerRunUSD,
+		MaxCostPerDayUSD:         raw.MaxCostPerDayUSD,
+		ProbeKeys:                parseProbeKeys(raw.Probes),
+		ProbeURLOverrides:        parsePrefixedEnv(environ, ProbeURLEnvPrefix),
+		ProbeMediaCountOverrides: parseMediaCountOverrides(environ),
+		ProbeTimeout:             raw.ProbeTimeout,
 	}
 
 	interval, err := ParseSchedule(cfg.Schedule)
@@ -134,19 +146,33 @@ func parseProbeKeys(value string) []string {
 	return keys
 }
 
-func parseProbeURLOverrides(environ []string) map[string]string {
+func parsePrefixedEnv(environ []string, prefix string) map[string]string {
 	overrides := map[string]string{}
 	for _, entry := range environ {
 		name, value, ok := strings.Cut(entry, "=")
-		if !ok || !strings.HasPrefix(name, ProbeURLEnvPrefix) {
+		if !ok || !strings.HasPrefix(name, prefix) {
 			continue
 		}
-		key := strings.TrimPrefix(name, ProbeURLEnvPrefix)
+		key := strings.TrimPrefix(name, prefix)
 		value = strings.TrimSpace(value)
 		if key == "" || value == "" {
 			continue
 		}
 		overrides[key] = value
+	}
+	return overrides
+}
+
+// parseMediaCountOverrides ignores values that are not positive integers: a
+// typo must not silently disable a probe's completeness check.
+func parseMediaCountOverrides(environ []string) map[string]int {
+	overrides := map[string]int{}
+	for key, value := range parsePrefixedEnv(environ, ProbeMediaCountEnvPrefix) {
+		count, err := strconv.Atoi(value)
+		if err != nil || count <= 0 {
+			continue
+		}
+		overrides[key] = count
 	}
 	return overrides
 }
