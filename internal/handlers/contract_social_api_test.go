@@ -261,8 +261,6 @@ func TestTikTokPhotoPostIsRecognizedAsSocial(t *testing.T) {
 		t.Fatalf("status = %d", code)
 	}
 
-	t.Skip("contract-pending: G3a — TikTok /photo/ is not routed or recognized; enable at integration")
-
 	if body["social_post"] == nil {
 		t.Fatal("G3a: social_post is null for a TikTok photo post, so a page snapshot reads as a complete archive")
 	}
@@ -365,8 +363,6 @@ func TestCarouselFulfillmentRequiresEverySlide(t *testing.T) {
 		if len(media) != 3 {
 			t.Fatalf("media = %d entries, want the 3 slides that landed", len(media))
 		}
-
-		t.Skip("contract-pending: G1 — a 3-of-10 carousel currently reads fulfilled; enable at integration")
 
 		if social["fulfilled"] == true {
 			t.Fatal("G1: a partial carousel must never read fulfilled")

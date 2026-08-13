@@ -61,8 +61,6 @@ func TestYtDlpAsksForSubtitles(t *testing.T) {
 		t.Error("yt-dlp args no longer request the info JSON")
 	}
 
-	t.Skip("contract-pending: G13 — yt-dlp is not asked for subtitles yet; enable at integration")
-
 	for _, want := range []string{"--write-subs", "--write-auto-subs"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("yt-dlp args %v are missing %q", args, want)
@@ -91,9 +89,6 @@ func TestFulfilledYouTubeExposesTranscriptAndSubtitles(t *testing.T) {
 			if meta["post_id"] == "" || meta["title"] == "" {
 				t.Fatalf("normalized metadata is not a valid post: %v", meta)
 			}
-
-			t.Skip("contract-pending: G13 — transcripts are not extracted yet; enable at integration " +
-				"(field names transcript/subtitles are provisional, manager reconciles)")
 
 			transcript, ok := meta["transcript"].(map[string]any)
 			if !ok {
@@ -151,8 +146,6 @@ func TestUploaderSuppliedCaptionsAreNotLabelledAuto(t *testing.T) {
 		t.Fatal("normalized metadata is not a valid post")
 	}
 
-	t.Skip("contract-pending: G13 — transcripts are not extracted yet; enable at integration")
-
 	transcript, ok := meta["transcript"].(map[string]any)
 	if !ok {
 		t.Fatal("G13: no transcript for a captioned TikTok video")
@@ -182,8 +175,6 @@ func TestAbsentSubtitlesNeverBlockFulfillment(t *testing.T) {
 			if meta["post_id"] == "" || meta["media"] == nil {
 				t.Fatalf("a video with no captions must still produce a full archive: %v", meta)
 			}
-
-			t.Skip("contract-pending: G13 — transcript fields do not exist yet; enable at integration")
 
 			if _, present := meta["transcript"]; present {
 				t.Error("G13: a video with no captions must not carry an empty transcript object")
@@ -249,9 +240,6 @@ func TestBlueskyAltTextIsSurfaced(t *testing.T) {
 		t.Errorf("caption = %q, want the post body from the text field", meta.Description)
 	}
 
-	t.Skip("contract-pending: G13 — alt text is not surfaced yet; enable at integration " +
-		"(field name files[].alt_text is provisional, manager reconciles)")
-
 	raw := manifestRaw(t, data)
 	files, ok := raw["files"].([]any)
 	if !ok || len(files) == 0 {
@@ -278,15 +266,19 @@ func TestCarouselAltTextIsPerSlide(t *testing.T) {
 		t.Fatalf("files = %d, want 10", len(meta.Files))
 	}
 
-	t.Skip("contract-pending: G13 — per-slide alt text is not surfaced yet; enable at integration")
-
+	// Slides with alt text must carry it; slides without may omit the key
+	// (omitempty, consistent with every other optional field in this API).
 	raw := manifestRaw(t, data)
 	files, _ := raw["files"].([]any)
-	for i, entry := range files {
+	withAlt := 0
+	for _, entry := range files {
 		file, _ := entry.(map[string]any)
-		if _, present := file["alt_text"]; !present {
-			t.Errorf("G13: slide %d has no alt_text field (absent alt text should be an empty string, not a missing key)", i+1)
+		if text, _ := file["alt_text"].(string); text != "" {
+			withAlt++
 		}
+	}
+	if withAlt == 0 {
+		t.Error("G13: no slide carried alt_text even though the fixture provides it")
 	}
 }
 

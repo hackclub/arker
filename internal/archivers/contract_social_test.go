@@ -470,7 +470,6 @@ func TestPartialCarouselIsNeverRecordedAsComplete(t *testing.T) {
 
 	// Everything above is current behavior and must keep working. What
 	// follows is the contract the fix has to add.
-	t.Skip("contract-pending: G1 — partial-carousel completeness is not recorded yet; enable at integration")
 
 	raw := manifestRaw(t, data)
 	expected, ok := raw["expected_file_count"]
@@ -508,8 +507,6 @@ func TestCompleteCarouselIsRecordedAsComplete(t *testing.T) {
 		t.Fatalf("file_count = %d, want 10", meta.FileCount)
 	}
 
-	t.Skip("contract-pending: G1 — completeness is not recorded yet; enable at integration")
-
 	raw := manifestRaw(t, data)
 	if raw["completeness"] != "complete" {
 		t.Errorf("completeness = %v, want complete: every declared slide was stored, "+
@@ -533,8 +530,6 @@ func TestSingleMediaPostIsStructurallyComplete(t *testing.T) {
 			if meta := galleryManifest(t, data); meta.FileCount != 1 {
 				t.Fatalf("file_count = %d, want 1", meta.FileCount)
 			}
-
-			t.Skip("contract-pending: G1 — completeness is not recorded yet; enable at integration")
 
 			if raw := manifestRaw(t, data); raw["completeness"] != "complete" {
 				t.Errorf("completeness = %v, want complete", raw["completeness"])
