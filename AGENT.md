@@ -56,8 +56,12 @@ When using Amp with `make dev` running in another window:
 - **PostgreSQL 15**
 - **Git** (for repository archiving)
 - **Python 3 + yt-dlp** (for video archiving)
-- **Python 3 + gallery-dl** (for photo posts and mixed photo/video carousels)
+- **Python 3 + gallery-dl** (for photo posts and mixed photo/video carousels) —
+  must be installed into the **same Python environment as yt-dlp**, which it
+  imports as a module (see Platform routing below)
 - **Python 3 + itch-dl** (for itch.io game archiving)
+- **ffmpeg** (yt-dlp merges separate video and audio streams with it; without
+  it every DASH source, reddit included, archives without sound)
 - **Playwright + Chromium** (for MHTML and screenshots)
 
 ## Project Structure
@@ -325,6 +329,41 @@ served from `/thumb/{shortid}[/{type}]`.
   with a short `max-age` so a refresh picks up the real one. Callers can render
   a card unconditionally.
 
+### Platform routing
+
+`utils.GetArchiveTypes` decides which archivers a URL gets, and
+`utils.IsSocialMediaPostURL` is the single source of truth for "this is a
+social post, not an ordinary page". Keep them consistent: a URL that earns a
+yt-dlp or gallery-dl item but is not recognized is served as a plain page
+capture, and a recognized URL that earns no media item must produce an explicit
+API failure instead of a green MHTML/screenshot-only archive. The full matrix
+is pinned in `internal/utils/routing_matrix_test.go`.
+
+Platform quirks worth knowing before changing a route:
+
+- **gallery-dl imports yt-dlp as a Python module** for every `ytdl:` URL it
+  produces — reddit videos, Instagram DASH manifests, TikTok audio. A separate
+  pipx/uv install of yt-dlp is invisible to it no matter what `PATH` says: it
+  logs `Cannot import yt-dlp or youtube-dl` and downloads nothing. The archiver
+  watches for that line and fails with an actionable message.
+- **reddit** (`v.redd.it`) is DASH with the audio in a separate stream. Arker
+  pins `extractor.reddit.videos=ytdl` so yt-dlp's own reddit extractor supplies
+  the format list (DASH + HLS + fallback) and merges audio; the default `dash`
+  setting can only use what reddit's manifest happens to list.
+- **Vimeo** main-site URLs are login-only as of yt-dlp 2026.08.04. The archiver
+  fetches `player.vimeo.com/video/<id>` instead (`utils.YtDlpFetchURL`),
+  carrying the unlisted-video hash. Player pages carry less metadata: no upload
+  date and no engagement counts.
+- **TikTok** photo posts (`/photo/`) go to gallery-dl — yt-dlp cannot download a
+  slideshow. Videos and `vm`/`vt`/`t` short links stay on yt-dlp; a short link
+  that resolves to a photo post fails explicitly rather than being resolved at
+  routing time, which would mean a network call from a pure function.
+- **Bluesky** videos come back as the poster's original atproto blob, so the
+  archive is the source file, byte for byte.
+- **Login-only sites** (Instagram feed posts, X, Pinterest) get no gallery-dl
+  item without a cookie jar: the run cannot succeed and would spend rate limit
+  proving it. The API reports `authentication_required` for those.
+
 ### Database Changes
 1. Update models in `internal/models/models.go`
 2. Add migration logic to `cmd/main.go` (AutoMigrate call)
@@ -335,7 +374,8 @@ served from `/thumb/{shortid}[/{type}]`.
 ### Common Issues
 - **Playwright fails**: Ensure Chromium is installed (`playwright install chromium`)
 - **yt-dlp not found**: Install with `pip install yt-dlp`
-- **gallery-dl not found**: Install with `pip install gallery-dl`. Install it into the *same* Python environment as yt-dlp: gallery-dl's default Instagram video path hands DASH manifests to yt-dlp as an importable module, and silently falls back to lower-quality pre-merged MP4 otherwise.
+- **gallery-dl not found**: Install with `pip install gallery-dl`. Install it into the *same* Python environment as yt-dlp: gallery-dl hands DASH manifests and reddit videos to yt-dlp as an importable module. Instagram silently falls back to a lower-quality pre-merged MP4 without it; reddit videos fail outright, logging `Cannot import yt-dlp or youtube-dl`.
+- **Reddit videos archive without sound**: check ffmpeg is installed (yt-dlp merges the separate DASH audio stream with it) and that gallery-dl can `import yt_dlp` from its own interpreter.
 - **Database connection**: Check PostgreSQL is running and credentials match
 - **Permission errors**: Ensure storage/cache directories are writable
 - **Browser leaks**: Check `/status/browser` endpoint for monitoring data
