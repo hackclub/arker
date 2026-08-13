@@ -329,6 +329,15 @@ func TestTikTokImageEntriesDefensiveShapes(t *testing.T) {
 		{"images objects", map[string]any{"images": []any{map[string]any{"url": "https://cdn/a.jpg"}}}, 1},
 		{"image_urls", map[string]any{"image_urls": []any{"https://cdn/a.jpg"}}, 1},
 		{"display_image object", map[string]any{"images": []any{map[string]any{"display_image": "https://cdn/a.jpg"}}}, 1},
+		// TikTok's own item struct nests two levels deep, and url_list is a
+		// mirror list for one image rather than several images.
+		{"nested image_post_info", map[string]any{"image_post_info": map[string]any{"images": []any{
+			map[string]any{"display_image": map[string]any{"url_list": []any{"https://cdn/a-mirror1.jpg", "https://cdn/a-mirror2.jpg"}}},
+			map[string]any{"display_image": map[string]any{"url_list": []any{"https://cdn/b-mirror1.jpg", "https://cdn/b-mirror2.jpg"}}},
+		}}}, 2},
+		{"url_list mirrors count once", map[string]any{"images": []any{
+			map[string]any{"url_list": []any{"https://cdn/a1.jpg", "https://cdn/a2.jpg", "https://cdn/a3.jpg"}},
+		}}, 1},
 		{"duplicates collapse", map[string]any{
 			"carousel_images": []any{"https://cdn/a.jpg"},
 			"images":          []any{"https://cdn/a.jpg"},

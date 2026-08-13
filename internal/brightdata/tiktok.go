@@ -295,15 +295,17 @@ func tiktokVideoURLs(record map[string]any) []string {
 
 // tiktokImageEntries resolves a photo post's stills.
 //
-// The live photo-post record shape is unverified, so every field TikTok's
-// dataset plausibly uses is read, and object entries are unwrapped through the
-// usual url/url_list shapes. Ordering follows the field list, which keeps the
-// slideshow order stable for a given record shape.
+// The live photo-post record shape is unverified, so every field the dataset
+// plausibly uses is read, in both the flattened form Bright Data often
+// produces (carousel_images: [url, ...]) and the nested form TikTok's own item
+// struct uses (image_post_info.images[].display_image.url_list[]). Ordering
+// follows the field list, which keeps the slideshow order stable.
 func tiktokImageEntries(record map[string]any) []mediaEntry {
 	var entries []mediaEntry
 	seen := map[string]bool{}
 	for _, key := range []string{"carousel_images", "images", "image_urls", "photos", "image_post_info"} {
-		for _, u := range stringsFromField(record, key, "url", "image_url", "display_image", "url_list") {
+		for _, still := range tiktokImageList(record[key]) {
+			u := firstImageURL(still, 4)
 			if u == "" || seen[u] {
 				continue
 			}
@@ -312,6 +314,57 @@ func tiktokImageEntries(record map[string]any) []mediaEntry {
 		}
 	}
 	return entries
+}
+
+// tiktokImageList normalizes a field that is either the list of stills itself
+// or an object wrapping one.
+func tiktokImageList(value any) []any {
+	switch typed := value.(type) {
+	case []any:
+		return typed
+	case map[string]any:
+		for _, key := range []string{"images", "image_list", "url_list"} {
+			if list, ok := typed[key].([]any); ok {
+				return list
+			}
+		}
+		return []any{typed}
+	case string:
+		return []any{typed}
+	}
+	return nil
+}
+
+// firstImageURL picks the one URL that represents a single still.
+//
+// It is deliberately first-match rather than collect-all: url_list is a list of
+// CDN mirrors for the SAME image, so collecting every entry would turn a
+// three-slide post into a nine-slide one and make the completeness count
+// meaningless. Depth is bounded because a provider record is untrusted input.
+func firstImageURL(value any, depth int) string {
+	if depth <= 0 {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
+			return trimmed
+		}
+	case []any:
+		for _, child := range typed {
+			if u := firstImageURL(child, depth-1); u != "" {
+				return u
+			}
+		}
+	case map[string]any:
+		for _, key := range []string{"url", "url_list", "image_url", "display_image", "display_url", "thumbnail", "origin_cover"} {
+			if u := firstImageURL(typed[key], depth-1); u != "" {
+				return u
+			}
+		}
+	}
+	return ""
 }
 
 // tiktokPageURL is the page a browser session opens before fetching. An in-page

@@ -61,15 +61,9 @@ func SetBrightDataMediaFallback(supports func(rawURL, itemType string) bool) {
 	brightDataMediaFallback.Store(mediaFallbackSupport{supports: supports})
 }
 
-// BrightDataMediaFallbackEnabled reports whether a paid second chance exists
-// at all.
-func BrightDataMediaFallbackEnabled() bool {
-	support, _ := brightDataMediaFallback.Load().(mediaFallbackSupport)
-	return support.supports != nil
-}
-
 // BrightDataCanRescue reports whether the configured fallback covers this URL
-// and archive type.
+// and archive type. An unconfigured fallback covers nothing, which is also the
+// zero value's answer.
 func BrightDataCanRescue(rawURL, itemType string) bool {
 	support, _ := brightDataMediaFallback.Load().(mediaFallbackSupport)
 	return support.supports != nil && support.supports(rawURL, itemType)
