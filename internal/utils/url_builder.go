@@ -10,6 +10,12 @@ import (
 func BuildFullURL(c *gin.Context, path string) string {
 	scheme := "https"
 	if c.Request.TLS == nil {
+		if strings.EqualFold(strings.Split(c.Request.Host, ":")[0], "archive.hackclub.com") {
+			// Cloudflare-to-Traefik traffic currently reaches Gin with
+			// X-Forwarded-Proto=http. The public production origin is always
+			// HTTPS, so it takes precedence over that internal-hop header.
+			return "https://" + c.Request.Host + "/" + path
+		}
 		// Check for forwarded protocol header (common in reverse proxies)
 		if proto := c.GetHeader("X-Forwarded-Proto"); proto != "" {
 			scheme = strings.TrimSpace(strings.Split(proto, ",")[0])
@@ -18,11 +24,6 @@ func BuildFullURL(c *gin.Context, path string) string {
 		} else if visitor := strings.ToLower(c.GetHeader("CF-Visitor")); strings.Contains(visitor, `"scheme":"https"`) {
 			// Cloudflare supplies CF-Visitor even when an intermediate reverse
 			// proxy does not preserve X-Forwarded-Proto.
-			scheme = "https"
-		} else if strings.EqualFold(strings.Split(c.Request.Host, ":")[0], "archive.hackclub.com") {
-			// Production can sit behind Cloudflare and Traefik configurations
-			// that strip every scheme header before Gin sees the request. Public
-			// production host is HTTPS even when those headers are absent.
 			scheme = "https"
 		} else {
 			scheme = "http"
