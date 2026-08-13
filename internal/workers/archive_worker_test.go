@@ -190,6 +190,58 @@ func TestProcessArchiveJobStoresVideoMetadataSidecars(t *testing.T) {
 	}
 }
 
+// completenessArchiver reports a completeness verdict the way the social
+// archivers do.
+type completenessArchiver struct{ state string }
+
+func (a completenessArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (archivers.Result, error) {
+	return archivers.Result{
+		Data:         bytes.NewReader([]byte("zip-data")),
+		Extension:    ".zip",
+		ContentType:  "application/zip",
+		Completeness: a.state,
+	}, nil
+}
+
+// The completeness verdict has to reach the row, or the API cannot tell a
+// salvaged partial capture from a whole one without opening the artifact.
+func TestProcessArchiveJobStoresCompleteness(t *testing.T) {
+	for name, tc := range map[string]struct{ reported, want string }{
+		"partial":                   {archivers.CompletenessPartial, archivers.CompletenessPartial},
+		"complete":                  {archivers.CompletenessComplete, archivers.CompletenessComplete},
+		"unknown":                   {archivers.CompletenessUnknown, archivers.CompletenessUnknown},
+		"unrecognized fails closed": {"totally-fine", archivers.CompletenessUnknown},
+		// Archivers that cannot speak to completeness leave the column empty
+		// rather than asserting anything about a non-social artifact.
+		"silent archiver": {"", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := newWorkerTestDB(t)
+			url := models.ArchivedURL{Original: "https://www.instagram.com/p/" + name + "/"}
+			db.Create(&url)
+			capture := models.Capture{ArchivedURLID: url.ID, Timestamp: time.Now(), ShortID: "c" + name[:4]}
+			db.Create(&capture)
+			item := models.ArchiveItem{CaptureID: capture.ID, Type: "gallery-dl", Status: "processing"}
+			db.Create(&item)
+
+			m := map[string]archivers.Archiver{"gallery-dl": completenessArchiver{state: tc.reported}}
+			args := ArchiveJobArgs{ShortID: capture.ShortID, Type: "gallery-dl", URL: url.Original}
+			if err := processArchiveJob(context.Background(), args, &item, storage.NewMemoryStorage(), db, m); err != nil {
+				t.Fatalf("processArchiveJob: %v", err)
+			}
+
+			var got models.ArchiveItem
+			db.First(&got, item.ID)
+			if got.Status != "completed" {
+				t.Fatalf("status = %q, want completed", got.Status)
+			}
+			if got.Completeness != tc.want {
+				t.Errorf("completeness = %q, want %q", got.Completeness, tc.want)
+			}
+		})
+	}
+}
+
 // closeTrackingReader reports whether the worker closed it.
 type closeTrackingReader struct {
 	io.Reader
