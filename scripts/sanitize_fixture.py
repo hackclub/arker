@@ -77,6 +77,31 @@ DROP_KEYS = {"automatic_captions", "subtitles", "requested_subtitles"}
 MAX_STRING = 400
 
 
+def sanitize_path_pairs(path):
+    """Redact YouTube-style /key/value/ pairs embedded in a URL path.
+
+    HLS manifest URLs do not use a query string at all -- googlevideo puts
+    expire, ip, sig, lsig, bui and spc in the path as alternating segments:
+
+        /api/manifest/hls_playlist/expire/17866.../ip/1.2.3.4/.../sig/AE0s2JY...
+
+    A sanitizer that only walks query parameters leaves every one of those
+    intact. That is a live blind spot in Arker's own SanitizeJSON (see the
+    G13 test in internal/archivers/contract_social_test.go); it must not also
+    be one here, or the fixture would carry a genuine signature.
+    """
+    original = path.split("/")
+    segments = list(original)
+    # Key detection reads `original`, never `segments`: a placeholder written
+    # into segments[i+1] would otherwise be read back as the next key and
+    # cascade down the rest of the path.
+    for i in range(len(original) - 1):
+        name = original[i].lower()
+        if name in SIGNED_PARAMS or SIGNED_PARAM_RE.search(name):
+            segments[i + 1] = synth(name)
+    return "/".join(segments)
+
+
 def sanitize_url(value):
     """Rewrite a URL so no signature, token, or address survives."""
     if "://" not in value:
@@ -85,6 +110,7 @@ def sanitize_url(value):
     # Strip embedded credentials: scheme://user:pass@host -> scheme://host
     head = re.sub(r"://[^/@]+@", "://", head)
     head = IP_RE.sub(FAKE_IP, head)
+    head = sanitize_path_pairs(head)
     if not query:
         return head
     parts = []
