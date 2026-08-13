@@ -34,7 +34,7 @@ curl -sS -b "$JAR" -c "$JAR" -o /dev/null -X POST "$BASE/login" \
   -d "username=$ADMIN_USER&password=$ADMIN_PASS"
 KEY_JSON=$(curl -sS -b "$JAR" -X POST "$BASE/admin/api-keys" \
   -H 'Content-Type: application/json' \
-  -d '{"username":"e2e","app_name":"contract-e2e","environment":"test"}')
+  -d "{\"username\":\"e2e\",\"app_name\":\"contract-e2e-$(date +%s)\",\"environment\":\"test\"}")
 API_KEY=$(echo "$KEY_JSON" | jq -r '.api_key // .key // empty')
 if [ -z "$API_KEY" ]; then echo "Could not create API key: $KEY_JSON"; exit 1; fi
 AUTH=(-H "Authorization: Bearer $API_KEY")
