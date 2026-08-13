@@ -169,31 +169,61 @@ func TestWithFallbackReturnsPrimaryWhenDisabled(t *testing.T) {
 	}
 }
 
+// The coverage table is load-bearing twice over: it decides when money may be
+// spent, and routing consults it before creating a gallery item for a
+// login-only site, so a row that changes here changes what Arker archives.
 func TestClientSupportsFallback(t *testing.T) {
-	igOnly := &Client{cfg: Config{APIKey: "k"}}
+	datasetOnly := &Client{cfg: Config{APIKey: "k"}}
 	full := &Client{cfg: Config{APIKey: "k", CustomerID: "c", BrowserZone: "z", BrowserZonePassword: "p"}}
 
 	cases := []struct {
+		name     string
 		client   *Client
 		url, typ string
 		want     bool
 	}{
-		{igOnly, "https://www.instagram.com/reel/X/", utils.ArchiveTypeYtDlp, true},
-		{igOnly, "https://www.instagram.com/p/X/", utils.ArchiveTypeGalleryDl, true},
-		// YouTube needs browser credentials.
-		{igOnly, "https://www.youtube.com/watch?v=abc123def45", utils.ArchiveTypeYtDlp, false},
-		{full, "https://www.youtube.com/watch?v=abc123def45", utils.ArchiveTypeYtDlp, true},
-		{full, "https://youtu.be/abc123def45", utils.ArchiveTypeYtDlp, true},
-		// No fallback exists for other platforms or types.
-		{full, "https://vimeo.com/1234", utils.ArchiveTypeYtDlp, false},
-		{full, "https://www.tiktok.com/@u/video/1", utils.ArchiveTypeYtDlp, false},
-		{full, "https://x.com/u/status/1", utils.ArchiveTypeGalleryDl, false},
-		{full, "https://www.youtube.com/watch?v=abc123def45", utils.ArchiveTypeMHTML, false},
+		{"instagram reel", datasetOnly, "https://www.instagram.com/reel/X/", utils.ArchiveTypeYtDlp, true},
+		{"instagram post", datasetOnly, "https://www.instagram.com/p/X/", utils.ArchiveTypeGalleryDl, true},
+
+		// YouTube and TikTok video bytes are IP-locked to the resolver, so
+		// they are only rescuable with browser credentials.
+		{"youtube without browser", datasetOnly, "https://www.youtube.com/watch?v=abc123def45", utils.ArchiveTypeYtDlp, false},
+		{"youtube with browser", full, "https://www.youtube.com/watch?v=abc123def45", utils.ArchiveTypeYtDlp, true},
+		{"youtu.be", full, "https://youtu.be/abc123def45", utils.ArchiveTypeYtDlp, true},
+		{"tiktok video without browser", datasetOnly, "https://www.tiktok.com/@u/video/1", utils.ArchiveTypeYtDlp, false},
+		{"tiktok video with browser", full, "https://www.tiktok.com/@u/video/1", utils.ArchiveTypeYtDlp, true},
+		{"tiktok short link", full, "https://vm.tiktok.com/ZMabcdef/", utils.ArchiveTypeYtDlp, true},
+
+		// TikTok stills download directly; the browser is only the fallback.
+		{"tiktok photo post", datasetOnly, "https://www.tiktok.com/@u/photo/1", utils.ArchiveTypeGalleryDl, true},
+
+		// Reddit and X media download from Arker's own connection.
+		{"reddit comments", datasetOnly, "https://www.reddit.com/r/aww/comments/abc/title/", utils.ArchiveTypeGalleryDl, true},
+		{"redd.it short link", datasetOnly, "https://redd.it/abc123", utils.ArchiveTypeGalleryDl, true},
+		{"x status", datasetOnly, "https://x.com/u/status/1", utils.ArchiveTypeGalleryDl, true},
+		{"twitter status", datasetOnly, "https://twitter.com/u/status/1", utils.ArchiveTypeGalleryDl, true},
+
+		// Wrong archive type for the platform, or no fallback at all.
+		{"reddit as video", full, "https://www.reddit.com/r/aww/comments/abc/title/", utils.ArchiveTypeYtDlp, false},
+		{"x as video", full, "https://x.com/u/status/1", utils.ArchiveTypeYtDlp, false},
+		{"subreddit page", full, "https://www.reddit.com/r/aww/", utils.ArchiveTypeGalleryDl, false},
+		{"x profile", full, "https://x.com/someone", utils.ArchiveTypeGalleryDl, false},
+		{"vimeo", full, "https://vimeo.com/1234", utils.ArchiveTypeYtDlp, false},
+		{"pinterest", full, "https://www.pinterest.com/pin/1/", utils.ArchiveTypeGalleryDl, false},
+		{"mhtml", full, "https://www.youtube.com/watch?v=abc123def45", utils.ArchiveTypeMHTML, false},
 	}
 	for _, c := range cases {
-		if got := c.client.SupportsFallback(c.url, c.typ); got != c.want {
-			t.Errorf("SupportsFallback(%s, %s) = %v; want %v", c.url, c.typ, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.client.SupportsFallback(c.url, c.typ); got != c.want {
+				t.Errorf("SupportsFallback(%s, %s) = %v; want %v", c.url, c.typ, got, c.want)
+			}
+		})
+	}
+
+	// A client with no API key never spends, whatever the URL.
+	disabled := &Client{}
+	if disabled.SupportsFallback("https://www.reddit.com/r/aww/comments/abc/x/", utils.ArchiveTypeGalleryDl) {
+		t.Error("an unconfigured client claimed it could rescue a URL")
 	}
 }
 

@@ -59,8 +59,8 @@ func assertArchiveTypes(t *testing.T, url string, want ...string) {
 // login-only capture.
 func TestArchiveTypeMatrixWithoutCookies(t *testing.T) {
 	configureMediaCookies(t, false)
-	SetBrightDataMediaFallback(false)
-	t.Cleanup(func() { SetBrightDataMediaFallback(false) })
+	SetBrightDataMediaFallback(nil)
+	t.Cleanup(func() { SetBrightDataMediaFallback(nil) })
 
 	base := []string{ArchiveTypeMHTML, ArchiveTypeScreenshot}
 	withYtDlp := append(append([]string{}, base...), ArchiveTypeYtDlp)

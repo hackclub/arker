@@ -27,9 +27,24 @@ type Backend interface {
 }
 
 // SupportsFallback reports whether this client can plausibly rescue a failed
-// native run for the URL and archive type. Only Instagram and YouTube are
-// covered: they are the two platforms whose native failures are positional
-// (login walls, throttles, geo-blocks) rather than content that is truly gone.
+// native run for the URL and archive type.
+//
+// The covered platforms are the ones whose native failures are positional —
+// login walls, throttles, geo-blocks, datacenter-range bans, IP-locked media —
+// rather than content that is genuinely gone. Nothing else belongs here: a
+// fallback that cannot beat the native failure only spends money to fail
+// twice.
+//
+//	Instagram  reel/feed post   yt-dlp, gallery-dl   dataset + direct CDN
+//	YouTube    video            yt-dlp               browser session (IP-locked)
+//	TikTok     video            yt-dlp               dataset + browser session (IP-locked)
+//	TikTok     photo post       gallery-dl           dataset + direct CDN, browser fallback
+//	Reddit     post             gallery-dl           dataset + direct CDN (muxed MP4)
+//	X          status           gallery-dl           dataset + direct CDN
+//
+// This is also the answer routing asks before creating a gallery item for a
+// login-only site (utils.ShouldCreateGalleryDLItem), so a platform added here
+// starts getting items the moment the client is configured.
 func (c *Client) SupportsFallback(url, itemType string) bool {
 	if !c.Enabled() {
 		return false
@@ -39,9 +54,20 @@ func (c *Client) SupportsFallback(url, itemType string) bool {
 		if utils.IsInstagramURL(url) {
 			return true
 		}
-		return utils.IsYouTubeURL(url) && c.BrowserReady()
+		// YouTube and TikTok both sign their media against the resolving IP,
+		// so their bytes can only be fetched from inside a browser session.
+		if utils.IsYouTubeURL(url) || utils.IsTikTokURL(url) {
+			return c.BrowserReady()
+		}
+		return false
 	case utils.ArchiveTypeGalleryDl:
-		return utils.IsInstagramURL(url)
+		if utils.IsInstagramURL(url) || utils.IsRedditPostURL(url) || utils.IsXPostURL(url) {
+			return true
+		}
+		// TikTok stills are ordinary CDN images: the browser session is only
+		// the fallback for the ones our own IP is refused, so a client without
+		// browser credentials is still worth trying.
+		return utils.IsTikTokPhotoPostURL(url)
 	}
 	return false
 }
@@ -49,11 +75,17 @@ func (c *Client) SupportsFallback(url, itemType string) bool {
 // ArchiveFallback dispatches to the platform flow.
 func (c *Client) ArchiveFallback(ctx context.Context, url, itemType string, logWriter io.Writer, db *gorm.DB, itemID uint) (archivers.Result, error) {
 	shortID := shortIDForItem(db, itemID)
-	if utils.IsInstagramURL(url) {
+	switch {
+	case utils.IsInstagramURL(url):
 		return c.archiveInstagram(ctx, url, itemType, logWriter, db, itemID, shortID)
-	}
-	if utils.IsYouTubeURL(url) {
+	case utils.IsYouTubeURL(url):
 		return c.archiveYouTube(ctx, url, logWriter, db, itemID, shortID)
+	case utils.IsTikTokURL(url) || utils.IsTikTokPhotoPostURL(url):
+		return c.archiveTikTok(ctx, url, itemType, logWriter, db, itemID, shortID)
+	case utils.IsRedditPostURL(url):
+		return c.archiveReddit(ctx, url, itemType, logWriter, db, itemID, shortID)
+	case utils.IsXPostURL(url):
+		return c.archiveX(ctx, url, itemType, logWriter, db, itemID, shortID)
 	}
 	return archivers.Result{}, fmt.Errorf("no Bright Data fallback for %s", url)
 }

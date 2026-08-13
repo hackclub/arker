@@ -170,9 +170,10 @@ func TestIsGalleryDLURLRejectsBareHosts(t *testing.T) {
 	}
 }
 
-// A login-only Instagram URL without cookies is only worth an archive item
-// when the Bright Data fallback gives the guaranteed-to-fail native run a real
-// path to success. Other login-only sites have no fallback and stay excluded.
+// A login-only URL without cookies is only worth an archive item when the
+// Bright Data fallback gives the guaranteed-to-fail native run a real path to
+// success. Coverage is the fallback client's own answer, per URL and archive
+// type: a login-only site it does not cover stays excluded.
 func TestShouldCreateGalleryDLItemWithBrightDataFallback(t *testing.T) {
 	if MediaCookiesConfigured() {
 		t.Skip("test requires no cookie jar configured")
@@ -180,18 +181,28 @@ func TestShouldCreateGalleryDLItemWithBrightDataFallback(t *testing.T) {
 
 	const igPost = "https://www.instagram.com/p/ABC123/"
 	const xPost = "https://x.com/user/status/123"
+	const pinterestPin = "https://www.pinterest.com/pin/1234567890/"
 
-	SetBrightDataMediaFallback(false)
-	t.Cleanup(func() { SetBrightDataMediaFallback(false) })
-	if ShouldCreateGalleryDLItem(igPost) {
-		t.Error("cookie-less Instagram item created with no fallback configured")
+	SetBrightDataMediaFallback(nil)
+	t.Cleanup(func() { SetBrightDataMediaFallback(nil) })
+	for _, rawURL := range []string{igPost, xPost, pinterestPin} {
+		if ShouldCreateGalleryDLItem(rawURL) {
+			t.Errorf("cookie-less item created for %s with no fallback configured", rawURL)
+		}
 	}
 
-	SetBrightDataMediaFallback(true)
+	// Stands in for the real client's coverage table (brightdata.Client.
+	// SupportsFallback), which covers Instagram and X but not Pinterest.
+	SetBrightDataMediaFallback(func(rawURL, itemType string) bool {
+		return itemType == ArchiveTypeGalleryDl && (IsInstagramURL(rawURL) || IsXPostURL(rawURL))
+	})
 	if !ShouldCreateGalleryDLItem(igPost) {
 		t.Error("cookie-less Instagram item not created despite Bright Data fallback")
 	}
-	if ShouldCreateGalleryDLItem(xPost) {
-		t.Error("cookie-less X item created; Bright Data fallback does not cover X")
+	if !ShouldCreateGalleryDLItem(xPost) {
+		t.Error("cookie-less X item not created despite Bright Data fallback")
+	}
+	if ShouldCreateGalleryDLItem(pinterestPin) {
+		t.Error("cookie-less Pinterest item created; the fallback does not cover Pinterest")
 	}
 }

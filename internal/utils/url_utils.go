@@ -197,6 +197,40 @@ func IsTikTokShortLinkURL(rawURL string) bool {
 		strings.HasPrefix(strings.ToLower(parsed.Path), "/t/")
 }
 
+// IsRedditPostURL reports whether a URL is a Reddit post: a comments permalink
+// on reddit.com or a redd.it short link. Subreddit and profile pages are not
+// posts and must never match — archiving one would pull down a feed.
+//
+// Host and path are matched against the parsed URL, not by substring, for the
+// same reason IsGalleryDLURL does it: a substring match on "reddit.com" would
+// route any URL that merely mentions Reddit in a query parameter.
+func IsRedditPostURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	path := strings.ToLower(parsed.Path)
+	if hostMatches(hostname, "redd.it") {
+		return len(strings.Trim(path, "/")) > 0
+	}
+	return hostMatches(hostname, "reddit.com") && strings.Contains(path, "/comments/")
+}
+
+// IsXPostURL reports whether a URL is a single X/Twitter post (a /status/
+// permalink on either domain, including the mobile hosts).
+func IsXPostURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	if !hostMatches(hostname, "x.com") && !hostMatches(hostname, "twitter.com") {
+		return false
+	}
+	return strings.Contains(strings.ToLower(parsed.Path), "/status/")
+}
+
 // Check if URL is a Facebook video URL (reels, watch, and page videos)
 func IsFacebookURL(url string) bool {
 	lowerURL := strings.ToLower(url)
@@ -347,15 +381,13 @@ func ShouldCreateGalleryDLItem(rawURL string) bool {
 		return false
 	}
 	if GalleryDLURLRequiresCookies(rawURL) && !MediaCookiesConfigured() {
-		// Without cookies the native run is guaranteed to fail, but for
-		// Instagram a configured Bright Data fallback gives the item a real
-		// path to success, so it is worth creating (and paying for) after the
-		// native attempt fails. Other login-only sites have no fallback and
-		// stay excluded.
-		if BrightDataMediaFallbackEnabled() && IsInstagramURL(rawURL) {
-			return true
-		}
-		return false
+		// Without cookies the native run is guaranteed to fail, but a
+		// configured Bright Data fallback gives the item a real path to
+		// success, so it is worth creating (and paying for) after the native
+		// attempt fails. The fallback client answers for itself which sites it
+		// covers — Instagram and X today — so a login-only site it cannot
+		// rescue stays excluded rather than queueing a certain failure.
+		return BrightDataCanRescue(rawURL, ArchiveTypeGalleryDl)
 	}
 	return true
 }
