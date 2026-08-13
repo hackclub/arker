@@ -1,0 +1,33 @@
+{
+  "_arker_fixture": "constructed-fixture: shape documented in internal/archivers, values invented",
+  "album": {
+    "account": {
+      "id": 27958845,
+      "username": "arkerfixture"
+    },
+    "date": "2026-08-07 14:32:03",
+    "description": "a three image album",
+    "favorite_count": 0,
+    "id": "zJjxIyO",
+    "image_count": 3,
+    "point_count": 342,
+    "score": 0,
+    "title": "The Baroness",
+    "upvote_count": 366,
+    "url": "https://imgur.com/a/zJjxIyO"
+  },
+  "category": "imgur",
+  "count": 3,
+  "date": "2026-08-07 14:32:03",
+  "description": "",
+  "extension": "jpg",
+  "height": 2048,
+  "id": "kKu3U52",
+  "num": 2,
+  "size": 481920,
+  "subcategory": "album",
+  "title": "",
+  "type": "image/jpeg",
+  "url": "https://i.imgur.com/kKu3U52.jpg",
+  "width": 1537
+}

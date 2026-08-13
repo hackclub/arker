@@ -1,0 +1,115 @@
+{
+  "category": "flickr",
+  "comments": 0,
+  "date": "2026-08-13 03:30:50",
+  "dates": {
+    "lastupdate": "1786591850",
+    "posted": "1786591850",
+    "taken": "2026-08-10 20:09:46",
+    "takengranularity": 0,
+    "takenunknown": "0"
+  },
+  "dateuploaded": "1786591850",
+  "description": "",
+  "editability": {
+    "canaddmeta": 0,
+    "cancomment": 0
+  },
+  "extension": "jpg",
+  "farm": 66,
+  "filename": "55459534522_1c17145c7e_b",
+  "height": 506,
+  "id": 55459534522,
+  "isfavorite": 0,
+  "label": "Large",
+  "license": "0",
+  "license_name": "All Rights Reserved",
+  "media": "photo",
+  "notes": {
+    "note": []
+  },
+  "originalformat": "jpg",
+  "originalsecret": "SYNTHETIC-ORIGINALSECRET-NOT-A-REAL-SECRET",
+  "owner": {
+    "gift": {
+      "eligible_durations": [
+        "year",
+        "month",
+        "week"
+      ],
+      "gift_eligible": true,
+      "new_flow": true
+    },
+    "iconfarm": 66,
+    "iconserver": "65535",
+    "is_ad_free": 0,
+    "ispro": 0,
+    "location": "Buffalo, New York, United States, United States",
+    "noindexfollow": 0,
+    "nsid": "45218841@N07",
+    "path_alias": null,
+    "realname": "SM Hasanuzzaman",
+    "username": "ZAMAN'S IMAGE"
+  },
+  "people": {
+    "haspeople": 0
+  },
+  "publiceditability": {
+    "canaddmeta": 0,
+    "cancomment": 1
+  },
+  "rotation": 0,
+  "safe": 0,
+  "safety_level": "0",
+  "secret": "SYNTHETIC-SECRET-NOT-A-REAL-SECRET",
+  "server": "65535",
+  "subcategory": "image",
+  "tags": [],
+  "title": "",
+  "url": "https://live.staticflickr.com/65535/55459534522_1c17145c7e_b.jpg",
+  "urls": {
+    "url": [
+      {
+        "_content": "https://www.flickr.com/photos/45218841@N07/55459534522/",
+        "type": "photopage"
+      }
+    ]
+  },
+  "usage": {
+    "canblog": 0,
+    "candownload": 1,
+    "canshare": 1
+  },
+  "user": {
+    "gift": {
+      "eligible_durations": [
+        "year",
+        "month",
+        "week"
+      ],
+      "gift_eligible": true,
+      "new_flow": true
+    },
+    "iconfarm": 66,
+    "iconserver": "65535",
+    "is_ad_free": 0,
+    "ispro": 0,
+    "location": "Buffalo, New York, United States, United States",
+    "noindexfollow": 0,
+    "nsid": "45218841@N07",
+    "path_alias": null,
+    "realname": "SM Hasanuzzaman",
+    "username": "ZAMAN'S IMAGE"
+  },
+  "views": 0,
+  "visibility": {
+    "content_type": "0",
+    "hidden": 0,
+    "isfamily": 0,
+    "isfriend": 0,
+    "ispublic": 1,
+    "moderation_mode": "0",
+    "safety_level": "0"
+  },
+  "width": 1024
+}

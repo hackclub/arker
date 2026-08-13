@@ -1,0 +1,43 @@
+{
+  "_arker_fixture": "constructed-fixture: shape documented in internal/archivers, values invented",
+  "_type": "video",
+  "acodec": "mp4a.40.2",
+  "age_limit": 0,
+  "aspect_ratio": 1.78,
+  "categories": [
+    "Documentary"
+  ],
+  "channel": "Vimeo Staff",
+  "channel_id": "staff",
+  "comment_count": 118,
+  "description": "Vimeo's player, rebuilt. This fixture stands in for a credentialed Vimeo extraction.",
+  "display_id": "76979871",
+  "duration": 63.0,
+  "ext": "mp4",
+  "extractor": "vimeo",
+  "extractor_key": "Vimeo",
+  "format": "download-1 - 1080x1920",
+  "format_id": "download-1",
+  "fps": 30,
+  "height": 1080,
+  "id": "76979871",
+  "like_count": 9312,
+  "protocol": "https",
+  "resolution": "1920x1080",
+  "tags": [
+    "vimeo",
+    "player"
+  ],
+  "tbr": 2412.5,
+  "timestamp": 1382140800,
+  "title": "The New Vimeo Player (You Know, For Videos)",
+  "upload_date": "20131019",
+  "uploader": "Vimeo Staff",
+  "uploader_id": "staff",
+  "uploader_url": "https://vimeo.com/staff",
+  "url": "https://vod-progressive.akamaized.net/exp/video.mp4?token=SYNTHETIC-TOKEN-NOT-A-REAL-SECRET",
+  "vcodec": "avc1.640028",
+  "view_count": 402118,
+  "webpage_url": "https://vimeo.com/76979871",
+  "width": 1920
+}
