@@ -629,9 +629,18 @@ func TestGalleryRawSidecarsAreSanitizedAtRest(t *testing.T) {
 	}
 
 	// The fixture's video slide carries a cdninstagram URL with a signed
-	// parameter, exactly like a real one.
-	if !strings.Contains(string(sidecar), "SYNTHETIC-OH") {
-		t.Skip("fixture no longer carries a signed sidecar URL; nothing to prove here")
+	// parameter ("SYNTHETIC-OH..."), exactly like a real one. The stored copy
+	// must not: the bundle is publicly downloadable, so sanitization has to
+	// happen at rest, not just on the /gallery/:id/raw serving path (G12).
+	if strings.Contains(string(sidecar), "SYNTHETIC-OH") {
+		t.Error("G12: stored sidecar still carries the signed URL parameter")
 	}
-	t.Skip("contract-pending: G12 — gallery sidecars are stored unsanitized; enable at integration")
+	// Query-string redactions come back percent-encoded (%5BREDACTED%5D), so
+	// match the placeholder's core token rather than its literal spelling.
+	if !strings.Contains(string(sidecar), "REDACTED") {
+		t.Error("G12: stored sidecar shows no redaction placeholder; was the URL dropped instead of sanitized?")
+	}
+	if !json.Valid(sidecar) {
+		t.Error("G12: sanitized sidecar is no longer valid JSON")
+	}
 }

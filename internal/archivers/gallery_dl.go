@@ -990,6 +990,27 @@ func addGalleryFileToZip(zipWriter *zip.Writer, dir, name string, method uint16)
 	if err != nil {
 		return err
 	}
+
+	// Raw extractor sidecars are sanitized BEFORE they are stored (G12): the
+	// bundle is publicly downloadable, and Instagram/X sidecars carry signed
+	// CDN URLs and session-derived fields. The /gallery/:id/raw endpoint
+	// sanitizes on the way out too, but the copy at rest must already be safe.
+	// Media bytes pass through untouched.
+	if strings.HasSuffix(name, ".json") && name != galleryMetadataFilename {
+		raw, err := io.ReadAll(io.LimitReader(file, 16<<20))
+		if err != nil {
+			return err
+		}
+		sanitized, sanitizeErr := SanitizeJSON(raw, utils.MediaProxyRedactionSecrets())
+		if sanitizeErr != nil {
+			// An unparseable sidecar still gets secret-string redaction rather
+			// than being stored verbatim or dropped.
+			sanitized = []byte(utils.RedactSecrets(string(raw), utils.MediaProxyRedactionSecrets()))
+		}
+		_, err = writer.Write(sanitized)
+		return err
+	}
+
 	_, err = io.Copy(writer, file)
 	return err
 }
