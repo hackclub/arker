@@ -16,11 +16,11 @@ Rule: fetch origin/main before every integration; agents never push; manager nev
 | agent/fulfillment-completeness | (pending) | G1 G2 G7 G11 + viewer badge | spawning |
 | agent/platform-routing | (pending) | G3a-d + recognition + matrix updates | spawning |
 | agent/contract-tests | (pending) | fixtures corpus + fake-binary harness + contract tests | spawning |
-| agent/canaries | (pending) | G9 canary system (not activated) | spawning |
+| agent/canaries | D 5504a31d | G9 canary system (activation = manager step) | MERGED @ manager review passed, suite green |
 | agent/canonical-identity | (pending) | G5 + find-or-create races | spawning |
 
 ## Integrated into fulfill-social-contract
-(none yet)
+- agent/canaries (9 commits): canary_runs table, internal/canary pkg (probes/validate/budget/history/runner/job), workers inline runner, /admin/canaries + /health degraded field, docs/canaries.md. Manager-reviewed: native-only map snapshot verified in cmd/main.go, PaidFallbackEnabled fail-closed check, dedicated 1-worker queue, periodic job only when CANARY_SCHEDULE set. Full tests green post-merge.
 
 ## AUTHORIZATION UPDATE (2026-08-12 ~23:20 ET, Zach, after risk disclosure)
 12-hour shipping window through ~2026-08-13 10:50 ET:
