@@ -1,0 +1,24 @@
+{
+  "_arker_fixture": "constructed-fixture: shape documented in internal/archivers, values invented",
+  "category": "instagram",
+  "count": 1,
+  "date": "2026-08-04 18:12:03",
+  "description": "one photo, no carousel #coding",
+  "extension": "jpg",
+  "fullname": "Agent Verse",
+  "height": 1350,
+  "likes": 42311,
+  "num": 1,
+  "post_date": "2026-08-04 18:12:03",
+  "post_id": "3955281333542808000",
+  "post_shortcode": "DbkSINGLEim",
+  "post_url": "https://www.instagram.com/p/DbkSINGLEim/",
+  "sidecar_media_id": "3955281333542808000",
+  "subcategory": "post",
+  "tags": [
+    "coding",
+    "devops"
+  ],
+  "username": "agentverseinsta",
+  "width": 1080
+}

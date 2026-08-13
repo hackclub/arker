@@ -1,0 +1,43 @@
+{
+  "_arker_fixture": "constructed-fixture: shape documented in internal/archivers, values invented",
+  "author": {
+    "id": 44196397,
+    "name": "arkerfixture",
+    "nick": "Arker Fixture",
+    "protected": false,
+    "verified": false
+  },
+  "bitrate": 2176000,
+  "category": "twitter",
+  "content": "a video post on x",
+  "conversation_id": 1929384756102938112,
+  "count": 1,
+  "date": "2026-05-02 15:04:11",
+  "date_original": "2026-05-02 15:04:11",
+  "duration": 34.6,
+  "extension": "mp4",
+  "favorite_count": 8123,
+  "filename": "Gm1",
+  "hashtags": [
+    "archiving"
+  ],
+  "height": 720,
+  "lang": "en",
+  "mentions": [],
+  "num": 1,
+  "quote_count": 91,
+  "quote_id": 0,
+  "reply_count": 204,
+  "reply_id": 0,
+  "retweet_count": 1180,
+  "retweet_id": 0,
+  "subcategory": "tweet",
+  "tweet_id": 1929384756102938112,
+  "type": "video",
+  "user": {
+    "id": 44196397,
+    "name": "arkerfixture",
+    "nick": "Arker Fixture"
+  },
+  "width": 1280
+}
