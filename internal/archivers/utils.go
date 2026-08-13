@@ -567,19 +567,27 @@ func waitForCustomNetworkIdleWithContext(ctx context.Context, page playwright.Pa
 }
 
 // setupBrowserForArchiving is a helper to reduce boilerplate in Playwright-based archivers.
-func setupBrowserForArchiving(logWriter io.Writer, pageOpts ...playwright.BrowserNewPageOptions) (*PWBundle, playwright.Page, error) {
+func setupBrowserForArchiving(logWriter io.Writer, contextOpts ...playwright.BrowserNewContextOptions) (*PWBundle, playwright.Page, error) {
+	if len(contextOpts) > 1 {
+		return nil, nil, fmt.Errorf("expected at most one browser context options value, got %d", len(contextOpts))
+	}
+
 	bundle, err := NewPWBundle(logWriter)
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to create PWBundle: %v\n", err)
 		return nil, nil, err
 	}
 
-	if err := bundle.CreateBrowser(); err != nil {
+	contextOptions := playwright.BrowserNewContextOptions{}
+	if len(contextOpts) == 1 {
+		contextOptions = contextOpts[0]
+	}
+	if err := bundle.CreateBrowser(contextOptions); err != nil {
 		bundle.Cleanup() // Cleanup on error
 		return nil, nil, err
 	}
 
-	if err := bundle.CreatePage(pageOpts...); err != nil {
+	if err := bundle.CreatePage(); err != nil {
 		// Return bundle for cleanup by the worker, as browser exists.
 		return bundle, nil, err
 	}

@@ -22,7 +22,7 @@ type ScreenshotArchiver struct {
 func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (Result, error) {
 	fmt.Fprintf(logWriter, "Starting screenshot archive for: %s\n", url)
 
-	pageOpts := playwright.BrowserNewPageOptions{
+	contextOpts := playwright.BrowserNewContextOptions{
 		Viewport: &playwright.Size{
 			Width:  1500,
 			Height: 1080,
@@ -30,7 +30,7 @@ func (a *ScreenshotArchiver) Archive(ctx context.Context, url string, logWriter 
 		DeviceScaleFactor: playwright.Float(2.0), // Retina quality
 	}
 
-	bundle, page, err := setupBrowserForArchiving(logWriter, pageOpts)
+	bundle, page, err := setupBrowserForArchiving(logWriter, contextOpts)
 	if err != nil {
 		return Result{Bundle: bundle}, err
 	}

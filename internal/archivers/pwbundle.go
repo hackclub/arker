@@ -49,8 +49,13 @@ func NewPWBundle(logWriter io.Writer) (*PWBundle, error) {
 	return bundle, nil
 }
 
-// CreateBrowser creates a browser instance within this bundle
-func (b *PWBundle) CreateBrowser() error {
+const archiveUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+
+// CreateBrowser creates a browser instance and isolated context within this
+// bundle. Viewport and device emulation belong to the context in Playwright, so
+// callers must supply them here rather than when creating a page in the already
+// existing context.
+func (b *PWBundle) CreateBrowser(contextOptions playwright.BrowserNewContextOptions) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -104,8 +109,8 @@ func (b *PWBundle) CreateBrowser() error {
 
 	// Create a new browser context for isolation
 	// Each context is like an incognito window with its own storage
-	contextOptions := playwright.BrowserNewContextOptions{
-		UserAgent: playwright.String("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"),
+	if contextOptions.UserAgent == nil {
+		contextOptions.UserAgent = playwright.String(archiveUserAgent)
 	}
 
 	context, err := browser.NewContext(contextOptions)
@@ -121,7 +126,7 @@ func (b *PWBundle) CreateBrowser() error {
 }
 
 // CreatePage creates a page instance within this bundle
-func (b *PWBundle) CreatePage(options ...playwright.BrowserNewPageOptions) error {
+func (b *PWBundle) CreatePage() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
