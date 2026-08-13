@@ -346,6 +346,73 @@
                     metaEl.appendChild(authorEl);
 		}
 
+                const sub = [];
+                if (meta.extractor) sub.push(meta.extractor);
+                if (meta.date) sub.push(meta.date);
+                if (typeof meta.likes === 'number') sub.push(`${meta.likes.toLocaleString()} likes`);
+                if (meta.file_count) sub.push(`${meta.file_count} file${meta.file_count === 1 ? '' : 's'}`);
+                if (sub.length) {
+                    const subEl = document.createElement('div');
+                    subEl.className = 'gallery-sub';
+                    subEl.textContent = sub.join(' · ');
+                    metaEl.appendChild(subEl);
+                }
+
+                const caption = meta.description || meta.title;
+                if (caption) {
+                    const capEl = document.createElement('div');
+                    capEl.className = 'gallery-caption';
+                    capEl.textContent = caption;
+                    metaEl.appendChild(capEl);
+                }
+                if (!metaEl.childNodes.length) metaEl.style.display = 'none';
+
+                const files = data.files || [];
+                if (!files.length) {
+                    itemsEl.textContent = 'No media files in this archive.';
+                    return;
+                }
+
+                itemsEl.innerHTML = '';
+                files.forEach((file, index) => {
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'gallery-item';
+
+                    const type = file.content_type || '';
+                    let media;
+                    if (type.startsWith('video/')) {
+                        media = document.createElement('video');
+                        media.controls = true;
+                        media.preload = 'metadata';
+                    } else if (type.startsWith('image/')) {
+                        media = document.createElement('img');
+                        media.loading = 'lazy';
+                        media.alt = `Slide ${index + 1}`;
+                    } else {
+                        media = document.createElement('a');
+                        media.textContent = `Download ${file.name}`;
+                    }
+                    if (media.tagName === 'A') {
+                        media.href = file.url;
+                    } else {
+                        media.src = file.url;
+                    }
+                    wrapper.appendChild(media);
+
+                    if (files.length > 1) {
+                        const badge = document.createElement('span');
+                        badge.className = 'gallery-index';
+                        badge.textContent = `${index + 1}/${files.length}`;
+                        wrapper.appendChild(badge);
+                    }
+                    itemsEl.appendChild(wrapper);
+                });
+            } catch (error) {
+                console.error('Error loading gallery:', error);
+                itemsEl.textContent = 'Could not load media from this archive.';
+            }
+        }
+
 		// Renders the normalized post record for native yt-dlp and Bright Data
 		// captures. Legacy archives explicitly report that metadata is absent;
 		// nothing is guessed from the URL or historical logs.
@@ -426,73 +493,6 @@
 				metaEl.textContent = 'Could not load post information for this video.';
 			}
 		}
-
-                const sub = [];
-                if (meta.extractor) sub.push(meta.extractor);
-                if (meta.date) sub.push(meta.date);
-                if (typeof meta.likes === 'number') sub.push(`${meta.likes.toLocaleString()} likes`);
-                if (meta.file_count) sub.push(`${meta.file_count} file${meta.file_count === 1 ? '' : 's'}`);
-                if (sub.length) {
-                    const subEl = document.createElement('div');
-                    subEl.className = 'gallery-sub';
-                    subEl.textContent = sub.join(' · ');
-                    metaEl.appendChild(subEl);
-                }
-
-                const caption = meta.description || meta.title;
-                if (caption) {
-                    const capEl = document.createElement('div');
-                    capEl.className = 'gallery-caption';
-                    capEl.textContent = caption;
-                    metaEl.appendChild(capEl);
-                }
-                if (!metaEl.childNodes.length) metaEl.style.display = 'none';
-
-                const files = data.files || [];
-                if (!files.length) {
-                    itemsEl.textContent = 'No media files in this archive.';
-                    return;
-                }
-
-                itemsEl.innerHTML = '';
-                files.forEach((file, index) => {
-                    const wrapper = document.createElement('div');
-                    wrapper.className = 'gallery-item';
-
-                    const type = file.content_type || '';
-                    let media;
-                    if (type.startsWith('video/')) {
-                        media = document.createElement('video');
-                        media.controls = true;
-                        media.preload = 'metadata';
-                    } else if (type.startsWith('image/')) {
-                        media = document.createElement('img');
-                        media.loading = 'lazy';
-                        media.alt = `Slide ${index + 1}`;
-                    } else {
-                        media = document.createElement('a');
-                        media.textContent = `Download ${file.name}`;
-                    }
-                    if (media.tagName === 'A') {
-                        media.href = file.url;
-                    } else {
-                        media.src = file.url;
-                    }
-                    wrapper.appendChild(media);
-
-                    if (files.length > 1) {
-                        const badge = document.createElement('span');
-                        badge.className = 'gallery-index';
-                        badge.textContent = `${index + 1}/${files.length}`;
-                        wrapper.appendChild(badge);
-                    }
-                    itemsEl.appendChild(wrapper);
-                });
-            } catch (error) {
-                console.error('Error loading gallery:', error);
-                itemsEl.textContent = 'Could not load media from this archive.';
-            }
-        }
 
         async function refreshLogs() {
             try {
