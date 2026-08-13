@@ -206,3 +206,43 @@ func TestShouldCreateGalleryDLItemWithBrightDataFallback(t *testing.T) {
 		t.Error("cookie-less Pinterest item created; the fallback does not cover Pinterest")
 	}
 }
+
+// The Bright Data fallback dispatches on these, so a URL that matches the
+// wrong one buys the wrong dataset — or a subreddit feed instead of a post.
+func TestIsRedditPostURL(t *testing.T) {
+	cases := map[string]bool{
+		"https://www.reddit.com/r/aww/comments/1vjt9lo/meet_roxy/": true,
+		"https://reddit.com/r/aww/comments/abc/":                   true,
+		"https://old.reddit.com/r/aww/comments/abc/title/":         true,
+		"https://redd.it/1vjt9lo":                                  true,
+		"https://www.reddit.com/r/aww/":                            false,
+		"https://www.reddit.com/":                                  false,
+		"https://www.reddit.com/user/someone":                      false,
+		"https://redd.it/":                                         false,
+		"https://notreddit.com/r/aww/comments/abc/":                false,
+		"https://example.com/?ref=reddit.com/comments/abc":         false,
+	}
+	for rawURL, want := range cases {
+		if got := IsRedditPostURL(rawURL); got != want {
+			t.Errorf("IsRedditPostURL(%s) = %v; want %v", rawURL, got, want)
+		}
+	}
+}
+
+func TestIsXPostURL(t *testing.T) {
+	cases := map[string]bool{
+		"https://x.com/SpaceX/status/2057952539417461045":       true,
+		"https://twitter.com/BarackObama/status/266031293945":   true,
+		"https://mobile.twitter.com/someone/status/1":           true,
+		"https://www.x.com/someone/status/1?s=20":               true,
+		"https://x.com/someone":                                 false,
+		"https://x.com/":                                        false,
+		"https://netflix.com/status/1":                          false,
+		"https://example.com/?u=https://x.com/someone/status/1": false,
+	}
+	for rawURL, want := range cases {
+		if got := IsXPostURL(rawURL); got != want {
+			t.Errorf("IsXPostURL(%s) = %v; want %v", rawURL, got, want)
+		}
+	}
+}

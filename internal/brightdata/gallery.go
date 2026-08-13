@@ -250,6 +250,12 @@ func stringsFromField(record map[string]any, key string, urlKeys ...string) []st
 	values, ok := record[key].([]any)
 	if !ok {
 		// A provider that returns a single value where the schema says list.
+		if single, ok := record[key].(map[string]any); ok {
+			if u := stringField(single, urlKeys...); u != "" {
+				return []string{u}
+			}
+			return nil
+		}
 		if single := stringField(record, key); single != "" {
 			return []string{single}
 		}
