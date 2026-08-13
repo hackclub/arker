@@ -19,6 +19,11 @@ func BuildFullURL(c *gin.Context, path string) string {
 			// Cloudflare supplies CF-Visitor even when an intermediate reverse
 			// proxy does not preserve X-Forwarded-Proto.
 			scheme = "https"
+		} else if strings.EqualFold(strings.Split(c.Request.Host, ":")[0], "archive.hackclub.com") {
+			// Production can sit behind Cloudflare and Traefik configurations
+			// that strip every scheme header before Gin sees the request. Public
+			// production host is HTTPS even when those headers are absent.
+			scheme = "https"
 		} else {
 			scheme = "http"
 		}

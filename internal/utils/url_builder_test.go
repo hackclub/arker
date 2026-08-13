@@ -23,3 +23,15 @@ func TestBuildFullURLProxySchemes(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildFullURLDefaultsPublicDNSHostsToHTTPS(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "http://archive.hackclub.com/result", nil)
+	if got := BuildFullURL(c, "abc12"); got != "https://archive.hackclub.com/abc12" {
+		t.Fatalf("got %q", got)
+	}
+	c.Request = httptest.NewRequest("GET", "http://localhost:8080/result", nil)
+	if got := BuildFullURL(c, "abc12"); got != "http://localhost:8080/abc12" {
+		t.Fatalf("local got %q", got)
+	}
+}
