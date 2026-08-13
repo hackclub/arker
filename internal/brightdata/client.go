@@ -33,6 +33,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -86,6 +87,33 @@ type Client struct {
 	// without a remote browser or a live signed URL. Nil means the real
 	// Browser API (see openBrowserSession).
 	openBrowser func(ctx context.Context, country, pageURL string, logWriter io.Writer) (browserSession, error)
+
+	// policyBlocked remembers hosts Bright Data's compliance layer refused this
+	// process lifetime (account-level KYC gates, e.g. tiktok.com). River retries
+	// a failed job three times; without this memory every retry would buy a new
+	// browser session for a refusal that cannot change until the ACCOUNT does.
+	// Cleared only by restart, which is also when a completed KYC would take
+	// effect.
+	policyBlockedMu sync.Mutex
+	policyBlocked   map[string]bool
+}
+
+// markPolicyBlocked records a compliance refusal for a host.
+func (c *Client) markPolicyBlocked(host string) {
+	c.policyBlockedMu.Lock()
+	defer c.policyBlockedMu.Unlock()
+	if c.policyBlocked == nil {
+		c.policyBlocked = make(map[string]bool)
+	}
+	c.policyBlocked[host] = true
+}
+
+// isPolicyBlocked reports whether a host was refused by the compliance layer
+// earlier in this process's lifetime.
+func (c *Client) isPolicyBlocked(host string) bool {
+	c.policyBlockedMu.Lock()
+	defer c.policyBlockedMu.Unlock()
+	return c.policyBlocked[host]
 }
 
 // New builds a client and resolves the missing credentials it can. It never

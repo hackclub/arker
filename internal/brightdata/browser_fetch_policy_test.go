@@ -1,7 +1,9 @@
 package brightdata
 
 import (
+	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -21,5 +23,33 @@ func TestCompliancePolicyErrorsAreRecognized(t *testing.T) {
 		if compliancePolicyError(transient) {
 			t.Fatalf("%v misclassified as a policy error", transient)
 		}
+	}
+}
+
+// A policy-blocked host must not open (and bill) further sessions this
+// process lifetime: River's retries would otherwise buy the same refusal
+// three times per URL.
+func TestPolicyBlockedHostSkipsSessions(t *testing.T) {
+	c := &Client{}
+	c.markPolicyBlocked("www.tiktok.com")
+	opened := 0
+	c.openBrowser = func(ctx context.Context, country, pageURL string, logWriter io.Writer) (browserSession, error) {
+		opened++
+		return nil, errors.New("should not be reached")
+	}
+	var log strings.Builder
+	_, err := c.fetchThroughBrowser(context.Background(), browserFetchRequest{
+		PageURL:   "https://www.tiktok.com/@user/video/1",
+		MediaURLs: []string{"https://v16.example/video.mp4"},
+		LogWriter: &log,
+	})
+	if err == nil || !strings.Contains(err.Error(), "KYC") {
+		t.Fatalf("expected a KYC-labelled refusal, got %v", err)
+	}
+	if opened != 0 {
+		t.Fatalf("a blocked host opened %d sessions; the cache exists to make this 0", opened)
+	}
+	if c.isPolicyBlocked("www.youtube.com") {
+		t.Fatal("unrelated host must not be blocked")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	neturl "net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -188,6 +189,15 @@ func (c *Client) fetchThroughBrowser(ctx context.Context, req browserFetchReques
 		return browserFetchResult{}, fmt.Errorf("no media URL to fetch through the browser")
 	}
 
+	// A compliance-policy refusal earlier in this process means every further
+	// session against the same host is a guaranteed billed failure until the
+	// account completes KYC and the process restarts. Skip before spending.
+	if host := hostOf(req.PageURL); host != "" && c.isPolicyBlocked(host) {
+		fmt.Fprintf(req.LogWriter, "Bright Data compliance policy already refused %s this process lifetime; "+
+			"skipping the browser session (account KYC approval required: https://brightdata.com/cp/kyc)\n", host)
+		return browserFetchResult{}, fmt.Errorf("bright data compliance policy blocks %s (account KYC approval required)", host)
+	}
+
 	var out browserFetchResult
 	var lastErr error
 	for _, country := range countries {
@@ -209,11 +219,26 @@ func (c *Client) fetchThroughBrowser(ctx context.Context, req browserFetchReques
 			return out, nil
 		}
 		lastErr = err
+		if compliancePolicyError(err) {
+			if host := hostOf(req.PageURL); host != "" {
+				c.markPolicyBlocked(host)
+			}
+			break
+		}
 		if ctx.Err() != nil || req.Retryable == nil || !req.Retryable(err) {
 			break
 		}
 	}
 	return out, lastErr
+}
+
+// hostOf returns the lowercase hostname of a URL, or "" when unparseable.
+func hostOf(rawURL string) string {
+	parsed, err := neturl.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(parsed.Hostname())
 }
 
 // browserFetchSession runs one session: connect, navigate, then try each
