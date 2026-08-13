@@ -220,3 +220,118 @@ func TestCreateCaptureAliasAllowsPendingItems(t *testing.T) {
 		t.Fatal("in-flight (pending/processing) items should still allow aliasing")
 	}
 }
+
+func setItemUpdatedAt(t *testing.T, db *gorm.DB, shortID, typ string, updatedAt time.Time) {
+	t.Helper()
+	if err := db.Model(&models.ArchiveItem{}).
+		Where("capture_id = (SELECT id FROM captures WHERE short_id = ?) AND type = ?", shortID, typ).
+		UpdateColumn("updated_at", updatedAt).Error; err != nil {
+		t.Fatalf("set item completion time: %v", err)
+	}
+}
+
+func TestFindOrCreateReturnsOldSuccessfulCapture(t *testing.T) {
+	db := newQueueTestDB(t)
+	url := "https://example.com/old"
+	seedCapture(t, db, url, "oldok", 365*24*time.Hour, map[string]string{"mhtml": "completed", "screenshot": "completed"})
+
+	got, err := FindOrCreateCapture(t.Context(), db, nil, url, []string{"mhtml", "screenshot"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != FindOrCreateFound || got.ShortID != "oldok" || got.Status != "completed" {
+		t.Fatalf("result = %+v", got)
+	}
+}
+
+func TestFindOrCreateNewestCompletionWins(t *testing.T) {
+	db := newQueueTestDB(t)
+	url := "https://example.com/newest"
+	seedCapture(t, db, url, "created-later", time.Hour, map[string]string{"mhtml": "completed"})
+	seedCapture(t, db, url, "finished-later", 2*time.Hour, map[string]string{"mhtml": "completed"})
+	setItemUpdatedAt(t, db, "created-later", "mhtml", time.Now().Add(-30*time.Minute))
+	setItemUpdatedAt(t, db, "finished-later", "mhtml", time.Now().Add(-5*time.Minute))
+
+	got, err := FindOrCreateCapture(t.Context(), db, nil, url, []string{"mhtml"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ShortID != "finished-later" || got.Action != FindOrCreateFound {
+		t.Fatalf("result = %+v", got)
+	}
+}
+
+func TestFindOrCreateRejectsIncompleteAndFailedSuccesses(t *testing.T) {
+	db := newQueueTestDB(t)
+	url := "https://example.com/bad"
+	seedCapture(t, db, url, "missing", time.Hour, map[string]string{"mhtml": "completed"})
+	seedCapture(t, db, url, "failed", 2*time.Hour, map[string]string{"mhtml": "completed", "screenshot": "failed"})
+
+	got, err := FindOrCreateCapture(t.Context(), db, nil, url, []string{"mhtml", "screenshot"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != FindOrCreateCreated || got.Status != "pending" {
+		t.Fatalf("result = %+v", got)
+	}
+}
+
+func TestFindOrCreateJoinsInProgressCapture(t *testing.T) {
+	db := newQueueTestDB(t)
+	url := "https://example.com/working"
+	seedCapture(t, db, url, "working", time.Hour, map[string]string{"mhtml": "completed", "screenshot": "processing"})
+
+	got, err := FindOrCreateCapture(t.Context(), db, nil, url, []string{"mhtml", "screenshot"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != FindOrCreateInProgress || got.ShortID != "working" || got.Status != "processing" {
+		t.Fatalf("result = %+v", got)
+	}
+	var captures int64
+	db.Model(&models.Capture{}).Count(&captures)
+	if captures != 1 {
+		t.Fatalf("created duplicate capture; count = %d", captures)
+	}
+}
+
+func TestFindOrCreateRequiresRequestedTypeCoverage(t *testing.T) {
+	db := newQueueTestDB(t)
+	url := "https://example.com/types"
+	seedCapture(t, db, url, "mhtml-only", time.Hour, map[string]string{"mhtml": "completed"})
+
+	got, err := FindOrCreateCapture(t.Context(), db, nil, url, []string{"mhtml", "screenshot"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != FindOrCreateCreated {
+		t.Fatalf("result = %+v", got)
+	}
+	var items []models.ArchiveItem
+	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").Where("captures.short_id = ?", got.ShortID).Find(&items).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("new capture has %d items, want 2", len(items))
+	}
+}
+
+func TestFindOrCreateIgnoresAliases(t *testing.T) {
+	db := newQueueTestDB(t)
+	url := "https://example.com/alias-find"
+	canonical := seedCapture(t, db, url, "canonical", 48*time.Hour, map[string]string{"mhtml": "completed"})
+	var u models.ArchivedURL
+	db.Where("original = ?", url).First(&u)
+	alias := models.Capture{ArchivedURLID: u.ID, Timestamp: time.Now(), ShortID: "alias-new", AliasOfID: &canonical.ID}
+	if err := db.Create(&alias).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := FindOrCreateCapture(t.Context(), db, nil, url, []string{"mhtml"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ShortID != canonical.ShortID || got.Action != FindOrCreateFound {
+		t.Fatalf("result = %+v", got)
+	}
+}

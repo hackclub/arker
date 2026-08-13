@@ -127,6 +127,48 @@
 
         <div class="endpoint">
             <h3>
+                <span class="method method-post">POST</span>
+                /archive/find-or-create
+            </h3>
+            <p>Given a URL, return the latest successful usable archive if one exists; otherwise ensure an archive is being created and return its handle.</p>
+
+            <h4>Request</h4>
+            <p>Authentication and validation are identical to <code>POST /archive</code>. Send a URL and, optionally, the archive types that must be available. When <code>types</code> is omitted, Arker uses its normal URL-based type detection.</p>
+            <div class="code-block"><code>{
+  "url": "https://example.com",
+  "types": ["mhtml", "screenshot"]
+}</code></div>
+
+            <h4>Exact reuse semantics</h4>
+            <ul>
+                <li>There is no freshness limit. A completed archive can be reused regardless of age.</li>
+                <li>Only canonical captures for the exact URL identity are considered. Aliases are resolved by considering their canonical target, and this endpoint does not create a new alias.</li>
+                <li>A successful result must contain every requested or auto-detected type, and every required item must have status <code>completed</code>. Failed, missing, pending, or processing items are not successful.</li>
+                <li>If several successful captures qualify, the one that completed most recently is returned.</li>
+                <li>If no success qualifies, a matching canonical capture whose required items are pending, processing, or completed is joined. A capture containing a failed or otherwise incomplete required item is not joined.</li>
+                <li>Only when neither case applies does Arker create and queue a new canonical capture.</li>
+            </ul>
+
+            <h4>Completed response (200)</h4>
+            <div class="success"><div class="code-block"><code>{
+  "action": "found",
+  "short_id": "a1b2c",
+  "result_url": "https://{{.baseURL}}/a1b2c",
+  "status": "completed"
+}</code></div></div>
+
+            <h4>In-progress or created response (202)</h4>
+            <div class="success"><div class="code-block"><code>{
+  "action": "in_progress",
+  "short_id": "a1b2c",
+  "result_url": "https://{{.baseURL}}/a1b2c",
+  "status": "processing"
+}</code></div></div>
+            <p><code>action</code> is <code>in_progress</code> when existing work is joined and <code>created</code> when new work is queued. <code>status</code> is <code>pending</code> or <code>processing</code>. Every successful response includes a <code>Location</code> header equal to <code>result_url</code>.</p>
+        </div>
+
+        <div class="endpoint">
+            <h3>
                 <span class="method method-get">GET</span>
                 /past-archives
             </h3>

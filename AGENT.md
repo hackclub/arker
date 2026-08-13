@@ -144,6 +144,7 @@ When using Amp with `make dev` running in another window:
   ```json
   {"url": "https://example.com", "types": ["mhtml", "screenshot"]}
   ```
+- `POST /api/v1/archive/find-or-create` - Reuse the latest completed canonical archive, join a matching capture in progress, or queue a new capture
 - `GET /api/v1/past-archives?url=...` - Get past archives for URL
 
 ### Public Access

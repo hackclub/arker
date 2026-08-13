@@ -671,6 +671,9 @@ func main() {
 	})
 	r.GET("/docs", handlers.DocsGet)
 	r.POST("/api/v1/archive", handlers.RequireAPIKey(db), func(c *gin.Context) { handlers.ApiArchive(c, db, riverClient) })
+	r.POST("/api/v1/archive/find-or-create", handlers.RequireAPIKey(db), func(c *gin.Context) {
+		handlers.ApiFindOrCreateArchive(c, db, riverClient)
+	})
 	r.GET("/api/v1/archive/:shortid", handlers.RequireAPIKey(db), func(c *gin.Context) { handlers.ApiArchiveResult(c, storageInstance, db) })
 	r.GET("/api/v1/past-archives", handlers.RequireAPIKey(db), func(c *gin.Context) { handlers.ApiPastArchives(c, db) })
 	r.GET("/web/past-archives", func(c *gin.Context) { handlers.WebPastArchives(c, db) })

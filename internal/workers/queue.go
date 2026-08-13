@@ -13,6 +13,20 @@ import (
 	"arker/internal/utils"
 )
 
+const (
+	FindOrCreateFound      = "found"
+	FindOrCreateInProgress = "in_progress"
+	FindOrCreateCreated    = "created"
+)
+
+// FindOrCreateResult describes the canonical capture selected or created by
+// FindOrCreateCapture.
+type FindOrCreateResult struct {
+	Action  string
+	ShortID string
+	Status  string
+}
+
 // QueueCapture creates an ArchivedURL (if needed), a capture, and queues
 // archive jobs.
 //
@@ -46,9 +60,20 @@ func QueueCapture(ctx context.Context, db *gorm.DB, riverClient *river.Client[pg
 		return shortID, nil
 	}
 
-	// Enqueue jobs in River (after successful DB transaction)
-	jobsEnqueued := 0
+	jobsEnqueued := enqueueCaptureJobs(ctx, riverClient, shortID, url, types)
 
+	slog.Info("Queued new capture",
+		"short_id", shortID,
+		"url", url,
+		"types", types,
+		"items_created", createdItems,
+		"jobs_enqueued", jobsEnqueued)
+
+	return shortID, nil
+}
+
+func enqueueCaptureJobs(ctx context.Context, riverClient *river.Client[pgx.Tx], shortID, url string, types []string) int {
+	jobsEnqueued := 0
 	for _, t := range types {
 		args := ArchiveJobArgs{
 			CaptureID: 0, // Will be looked up by short_id and type
@@ -76,15 +101,140 @@ func QueueCapture(ctx context.Context, db *gorm.DB, riverClient *river.Client[pg
 			jobsEnqueued++
 		}
 	}
+	return jobsEnqueued
+}
 
-	slog.Info("Queued new capture",
-		"short_id", shortID,
-		"url", url,
-		"types", types,
-		"items_created", createdItems,
-		"jobs_enqueued", jobsEnqueued)
+// FindOrCreateCapture returns the newest completed canonical capture that
+// covers types, joins a canonical in-flight capture when possible, or creates
+// and queues a new canonical capture. Unlike QueueCapture's compatibility
+// aliasing behavior, this operation has no freshness window and never creates
+// an alias.
+func FindOrCreateCapture(ctx context.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx], url string, types []string, apiKeyID *uint) (FindOrCreateResult, error) {
+	if len(types) == 0 {
+		types = utils.GetArchiveTypes(url)
+	} else {
+		types = utils.NormalizeArchiveTypes(types)
+	}
 
-	return shortID, nil
+	var result FindOrCreateResult
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if tx.Dialector.Name() == "postgres" {
+			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", url).Error; err != nil {
+				return err
+			}
+		}
+
+		var archivedURL models.ArchivedURL
+		err := tx.Where("original = ?", url).First(&archivedURL).Error
+		if err != nil && err != gorm.ErrRecordNotFound {
+			return err
+		}
+		if err == nil {
+			capture, status, findErr := findFindOrCreateCandidate(tx, archivedURL.ID, types)
+			if findErr != nil {
+				return findErr
+			}
+			if capture != nil {
+				result = FindOrCreateResult{Action: FindOrCreateFound, ShortID: capture.ShortID, Status: status}
+				if status != "completed" {
+					result.Action = FindOrCreateInProgress
+				}
+				return nil
+			}
+		} else {
+			archivedURL = models.ArchivedURL{Original: url}
+			if err := tx.Create(&archivedURL).Error; err != nil {
+				return err
+			}
+		}
+
+		capture := models.Capture{ArchivedURLID: archivedURL.ID, Timestamp: time.Now(), ShortID: utils.GenerateShortID(tx), APIKeyID: apiKeyID}
+		if err := tx.Create(&capture).Error; err != nil {
+			return err
+		}
+		for _, typ := range types {
+			if err := tx.Create(&models.ArchiveItem{CaptureID: capture.ID, Type: typ, Status: "pending"}).Error; err != nil {
+				return err
+			}
+		}
+		result = FindOrCreateResult{Action: FindOrCreateCreated, ShortID: capture.ShortID, Status: "pending"}
+		return nil
+	})
+	if err != nil {
+		return FindOrCreateResult{}, err
+	}
+	if result.Action == FindOrCreateCreated {
+		if riverClient != nil { // nil is useful for transaction-focused unit tests.
+			enqueueCaptureJobs(ctx, riverClient, result.ShortID, url, types)
+		}
+	}
+	return result, nil
+}
+
+// findFindOrCreateCandidate deliberately has no age or row limit. Completion
+// time is the latest UpdatedAt among the required items; this is when the
+// requested set became usable, and is distinct from capture creation time.
+func findFindOrCreateCandidate(tx *gorm.DB, archivedURLID uint, types []string) (*models.Capture, string, error) {
+	var candidates []models.Capture
+	if err := tx.Where("archived_url_id = ? AND alias_of_id IS NULL", archivedURLID).
+		Preload("ArchiveItems").Find(&candidates).Error; err != nil {
+		return nil, "", err
+	}
+
+	var newestCompleted *models.Capture
+	var newestCompletedAt time.Time
+	var newestInProgress *models.Capture
+	for i := range candidates {
+		status, completedAt, ok := captureStatusForTypes(&candidates[i], types)
+		if !ok {
+			continue
+		}
+		if status == "completed" {
+			if newestCompleted == nil || completedAt.After(newestCompletedAt) {
+				newestCompleted, newestCompletedAt = &candidates[i], completedAt
+			}
+		} else if newestInProgress == nil || candidates[i].Timestamp.After(newestInProgress.Timestamp) {
+			newestInProgress = &candidates[i]
+		}
+	}
+	if newestCompleted != nil {
+		return newestCompleted, "completed", nil
+	}
+	if newestInProgress != nil {
+		status, _, _ := captureStatusForTypes(newestInProgress, types)
+		return newestInProgress, status, nil
+	}
+	return nil, "", nil
+}
+
+func captureStatusForTypes(c *models.Capture, types []string) (string, time.Time, bool) {
+	byType := make(map[string]models.ArchiveItem, len(c.ArchiveItems))
+	for _, item := range c.ArchiveItems {
+		byType[utils.NormalizeArchiveType(item.Type)] = item
+	}
+	status := "completed"
+	var completedAt time.Time
+	for _, typ := range types {
+		item, ok := byType[utils.NormalizeArchiveType(typ)]
+		if !ok {
+			return "", time.Time{}, false
+		}
+		switch item.Status {
+		case "completed":
+			if item.UpdatedAt.After(completedAt) {
+				completedAt = item.UpdatedAt
+			}
+		case "processing":
+			status = "processing"
+		case "pending":
+			if status != "processing" {
+				status = "pending"
+			}
+		default:
+			return "", time.Time{}, false
+		}
+	}
+	return status, completedAt, true
 }
 
 // createCapture runs the capture-creation transaction: find-or-create the

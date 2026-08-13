@@ -104,3 +104,42 @@ func archiveQueuedResponse(c *gin.Context, shortID string) gin.H {
 		"result_url": utils.BuildFullURL(c, "api/v1/archive/"+shortID),
 	}
 }
+
+// ApiFindOrCreateArchive returns a reusable canonical archive, joins work
+// already underway, or starts a new capture.
+func ApiFindOrCreateArchive(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
+	var req utils.ArchiveRequest
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		return
+	}
+	if err := req.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	apiKey, ok := c.Get("api_key")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "API key required"})
+		return
+	}
+	apiKeyID := apiKey.(*models.APIKey).ID
+	result, err := workers.FindOrCreateCapture(c.Request.Context(), db, riverClient, req.URL, req.Types, &apiKeyID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find or create capture"})
+		return
+	}
+
+	resultURL := utils.BuildFullURL(c, result.ShortID)
+	c.Header("Location", resultURL)
+	statusCode := http.StatusAccepted
+	if result.Action == workers.FindOrCreateFound {
+		statusCode = http.StatusOK
+	}
+	c.JSON(statusCode, gin.H{
+		"action":     result.Action,
+		"short_id":   result.ShortID,
+		"result_url": resultURL,
+		"status":     result.Status,
+	})
+}
