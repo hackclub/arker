@@ -58,12 +58,29 @@ type Result struct {
 	// sidecars and for legacy test archivers.
 	Metadata    *Sidecar
 	RawMetadata *Sidecar
+	// Extras are additional durable artifacts stored beside the main one under
+	// the same key base — subtitle tracks today. They are bytes for the same
+	// reason sidecars are: they are small, and they must outlive the archiver's
+	// temp directory, which is swept the moment Archive returns.
+	Extras []ExtraArtifact
 	// Completeness is the archiver's claim about whether it stored every
 	// obtainable source asset: one of CompletenessComplete, CompletenessPartial
 	// or CompletenessUnknown. Empty means the archiver does not speak to
 	// completeness (mhtml, screenshot, git, itch), and is stored as-is so those
 	// types stay distinguishable from a social capture that answered "unknown".
 	Completeness string
+}
+
+// ExtraArtifact is one additional stored object belonging to an archive item.
+//
+// NameSuffix is appended to the item's storage key base, so an artifact's
+// location is derivable from the item and recorded in the normalized metadata.
+// An extra is never load-bearing: failing to store one must not fail or degrade
+// the archive it belongs to.
+type ExtraArtifact struct {
+	NameSuffix  string
+	ContentType string
+	Data        []byte
 }
 
 // Archiver captures a URL into a single stored artifact.

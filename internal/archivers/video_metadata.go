@@ -40,10 +40,17 @@ type VideoMetadata struct {
 	Engagement           VideoEngagement `json:"engagement"`
 	Tags                 []string        `json:"tags,omitempty"`
 	Media                VideoMedia      `json:"media"`
-	YtDlpVersion         string          `json:"yt_dlp_version,omitempty"`
-	ArchivedAt           string          `json:"archived_at"`
-	Provenance           string          `json:"provenance"`
-	Provider             string          `json:"provider,omitempty"`
+	// Subtitles lists the stored caption tracks, and Transcript is the readable
+	// text derived from the best of them. Both are additive and both are
+	// absent for most posts: a platform that exposes no captions is a fact
+	// about the post, not a failure of the capture, and must never affect
+	// whether the archive reads fulfilled.
+	Subtitles    []SubtitleTrack `json:"subtitles,omitempty"`
+	Transcript   *Transcript     `json:"transcript,omitempty"`
+	YtDlpVersion string          `json:"yt_dlp_version,omitempty"`
+	ArchivedAt   string          `json:"archived_at"`
+	Provenance   string          `json:"provenance"`
+	Provider     string          `json:"provider,omitempty"`
 }
 
 // VideoEngagement holds counts without treating a missing value as zero.
@@ -165,6 +172,31 @@ func MarshalVideoMetadata(metadata *VideoMetadata) ([]byte, error) {
 		return nil, fmt.Errorf("video metadata is nil")
 	}
 	return json.MarshalIndent(metadata, "", "  ")
+}
+
+// SetSubtitleStorageKeys records where each subtitle track was actually stored.
+//
+// The archiver knows a track's language and its key suffix, but only the worker
+// knows the item's key base, so the sidecar is finished after the extras are
+// written. Tracks are matched by suffix; a metadata record with no subtitles is
+// returned untouched.
+func SetSubtitleStorageKeys(metadataJSON []byte, keysBySuffix map[string]string) ([]byte, error) {
+	if len(keysBySuffix) == 0 {
+		return metadataJSON, nil
+	}
+	var metadata VideoMetadata
+	if err := json.Unmarshal(metadataJSON, &metadata); err != nil {
+		return nil, fmt.Errorf("decode normalized metadata: %w", err)
+	}
+	if len(metadata.Subtitles) == 0 {
+		return metadataJSON, nil
+	}
+	for i := range metadata.Subtitles {
+		if key, ok := keysBySuffix[metadata.Subtitles[i].ArtifactSuffix]; ok {
+			metadata.Subtitles[i].StorageKey = key
+		}
+	}
+	return MarshalVideoMetadata(&metadata)
 }
 
 // SanitizeJSON recursively redacts sensitive keys and credential-bearing URL

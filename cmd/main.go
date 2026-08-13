@@ -81,6 +81,10 @@ type Config struct {
 	YtDlpCookiesB64  string `envconfig:"YTDLP_COOKIES_B64"`  // Base64-encoded cookies.txt content (used when no file path is set)
 	YtDlpProxy       string `envconfig:"YTDLP_PROXY"`        // Optional proxy (e.g. residential); Instagram throttles datacenter IPs
 	YtDlpImpersonate string `envconfig:"YTDLP_IMPERSONATE"`  // Optional yt-dlp --impersonate target (Docker defaults to chrome)
+	// SubtitleLangs overrides which caption tracks are fetched. Empty computes
+	// the default per video: its own language plus English. Passed to yt-dlp's
+	// --sub-langs verbatim, so "all,-live_chat" hoards every translation.
+	SubtitleLangs string `envconfig:"ARKER_SUB_LANGS"`
 
 	// gallery-dl Configuration (photo posts and mixed photo/video carousels)
 	GalleryDlUserAgent    string `envconfig:"GALLERYDL_USER_AGENT"`    // Optional UA override; empty keeps gallery-dl's per-site defaults
@@ -439,6 +443,9 @@ func main() {
 	if impersonate := utils.InitYtDlpImpersonate(cfg.YtDlpImpersonate); impersonate != "" {
 		slog.Info("yt-dlp browser impersonation configured", "target", impersonate)
 	}
+	if langs := utils.InitYtDlpSubtitleLangs(cfg.SubtitleLangs); langs != "" {
+		slog.Info("Subtitle language override configured", "sub_langs", langs)
+	}
 	if userAgent := utils.InitGalleryDlUserAgent(cfg.GalleryDlUserAgent); userAgent != "" {
 		slog.Info("gallery-dl user agent override configured", "user_agent", userAgent)
 	}
@@ -685,6 +692,8 @@ func main() {
 	// long-lived /archive/:shortid/yt-dlp media URL.
 	r.GET("/video/:shortid/manifest", func(c *gin.Context) { handlers.ServeVideoManifest(c, storageInstance, db) })
 	r.GET("/video/:shortid/raw", func(c *gin.Context) { handlers.ServeVideoRawMetadata(c, storageInstance, db) })
+	r.GET("/video/:shortid/transcript", func(c *gin.Context) { handlers.ServeVideoTranscript(c, storageInstance, db) })
+	r.GET("/video/:shortid/subtitle/:name", func(c *gin.Context) { handlers.ServeVideoSubtitle(c, storageInstance, db) })
 
 	// Thumbnail routes - MUST come before /:shortid/:type catch-all.
 	// HEAD is registered alongside GET, matching /archive/:shortid/:type:

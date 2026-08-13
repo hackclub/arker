@@ -70,11 +70,17 @@ type socialPostResult struct {
 	Completeness *socialCompleteness `json:"completeness"`
 	Post         *normalizedPost     `json:"post"`
 	Media        []normalizedMedia   `json:"media"`
-	BundleURL    *string             `json:"bundle_url"`
-	RawMetadata  []rawMetadataLink   `json:"raw_metadata"`
-	Provenance   socialProvenance    `json:"provenance"`
-	Warnings     []socialWarning     `json:"warnings"`
-	Failure      *socialFailure      `json:"failure"`
+	// Subtitles and Transcript are present only when the platform exposed
+	// captions. Their absence says nothing about whether the archive is
+	// complete: most posts have none, and requiring them would make almost
+	// every archive read degraded.
+	Subtitles   []socialSubtitle  `json:"subtitles,omitempty"`
+	Transcript  *socialTranscript `json:"transcript,omitempty"`
+	BundleURL   *string           `json:"bundle_url"`
+	RawMetadata []rawMetadataLink `json:"raw_metadata"`
+	Provenance  socialProvenance  `json:"provenance"`
+	Warnings    []socialWarning   `json:"warnings"`
+	Failure     *socialFailure    `json:"failure"`
 }
 
 // socialCompleteness reports how much of the post this archive holds.
@@ -132,6 +138,29 @@ type normalizedMedia struct {
 type rawMetadataLink struct {
 	Provider string `json:"provider"`
 	URL      string `json:"url"`
+}
+
+// socialSubtitle is one stored caption track. Kind distinguishes a
+// human-authored track from speech recognition, which matters to anyone
+// quoting the archive.
+type socialSubtitle struct {
+	Lang      string `json:"lang"`
+	Kind      string `json:"kind"`
+	Format    string `json:"format"`
+	SizeBytes int64  `json:"size_bytes,omitempty"`
+	URL       string `json:"url"`
+}
+
+// socialTranscript is the readable text derived from the best subtitle track.
+// The track itself remains the primary record; this is a convenience, and it
+// says so when it had to be cut short.
+type socialTranscript struct {
+	Lang       string `json:"lang"`
+	Source     string `json:"source"`
+	Characters int    `json:"characters"`
+	Truncated  bool   `json:"truncated,omitempty"`
+	Text       string `json:"text"`
+	URL        string `json:"url"`
 }
 
 // socialProvenance records how the artifact was obtained, including what it
@@ -661,6 +690,24 @@ func buildVideoSocial(c *gin.Context, store storage.Storage, shortID string, ite
 		out.Media[0].DurationSeconds = meta.DurationSeconds
 		out.Media[0].Quality = meta.Media.QualityLabel
 	}
+	for _, track := range meta.Subtitles {
+		if track.Lang == "" {
+			continue
+		}
+		out.Subtitles = append(out.Subtitles, socialSubtitle{
+			Lang: track.Lang, Kind: track.Kind, Format: track.Format, SizeBytes: track.SizeBytes,
+			URL: fullPath(c, fmt.Sprintf("video/%s/subtitle/%s", shortID, url.PathEscape(subtitleRequestName(track)))),
+		})
+	}
+	if meta.Transcript != nil && meta.Transcript.Text != "" {
+		out.Transcript = &socialTranscript{
+			Lang: meta.Transcript.Lang, Source: meta.Transcript.Source,
+			Characters: len([]rune(meta.Transcript.Text)), Truncated: meta.Transcript.Truncated,
+			Text: meta.Transcript.Text,
+			URL:  fullPath(c, fmt.Sprintf("video/%s/transcript", shortID)),
+		}
+	}
+
 	// Fulfilled promises the raw provider record is still there, so check the
 	// object rather than trusting the key column. A storage error counts as not
 	// retrievable: the claim has to be provable, and failing closed only costs

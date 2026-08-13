@@ -187,10 +187,29 @@ func saveArchiveResult(result archivers.Result, keyBase string, store storage.St
 		return err
 	}
 
+	// Extras go down before the normalized metadata, because the metadata
+	// records where they landed — and before the item is marked completed, so a
+	// completed item never advertises an artifact that is not there.
+	extraKeys := make(map[string]string, len(result.Extras))
+	for _, extra := range result.Extras {
+		if extra.NameSuffix == "" || len(extra.Data) == 0 {
+			continue
+		}
+		extraKey := keyBase + extra.NameSuffix
+		if err := writeExtraArtifact(store, extraKey, extra.Data); err != nil {
+			return fmt.Errorf("failed to store %s: %w", extra.NameSuffix, err)
+		}
+		extraKeys[extra.NameSuffix] = extraKey
+	}
+
 	metadataKey := ""
 	if result.Metadata != nil {
+		metadataData, err := archivers.SetSubtitleStorageKeys(result.Metadata.Data, extraKeys)
+		if err != nil {
+			return fmt.Errorf("failed to record extra artifact keys: %w", err)
+		}
 		metadataKey = keyBase + ".metadata.json"
-		if err := writeJSONSidecar(store, metadataKey, result.Metadata.Data); err != nil {
+		if err := writeJSONSidecar(store, metadataKey, metadataData); err != nil {
 			return fmt.Errorf("failed to store normalized metadata: %w", err)
 		}
 	}
@@ -221,6 +240,18 @@ func saveArchiveResult(result archivers.Result, keyBase string, store storage.St
 		updates["completeness"] = archivers.NormalizeCompletenessState(result.Completeness)
 	}
 	return db.Model(item).Updates(updates).Error
+}
+
+func writeExtraArtifact(store storage.Storage, key string, data []byte) error {
+	w, err := store.Writer(key)
+	if err != nil {
+		return err
+	}
+	_, writeErr := io.Copy(w, bytes.NewReader(data))
+	if closeErr := w.Close(); closeErr != nil && writeErr == nil {
+		writeErr = closeErr
+	}
+	return writeErr
 }
 
 func writeJSONSidecar(store storage.Storage, key string, data []byte) error {
