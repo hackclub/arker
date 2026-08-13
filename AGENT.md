@@ -169,9 +169,11 @@ When using Amp with `make dev` running in another window:
 - `POST /admin/api-keys` - Create new API key
 - `POST /admin/url/:id/capture` - Request new capture
 - `GET /admin/item/:id/log` - View capture logs
+- `GET /admin/canaries` - Canary health per platform/post-type, recent history, probe set, schedule state
+- `POST /admin/canaries/run` - Run canaries by hand (`?platform=` to narrow, `?wait=1` to block)
 
 ### Health & Monitoring
-- `GET /health` - Application health check
+- `GET /health` - Application health check. Additive `canaries` and `degraded` fields report canary status; the HTTP status deliberately stays 200 so a platform-side breakage cannot restart the container
 - `GET /metrics/browser` - Browser monitoring metrics
 - `GET /status/browser` - Browser status (leak detection)
 
@@ -197,6 +199,8 @@ git clone https://archive.hackclub.com/git/{shortid}
 - `YTDLP_IMPERSONATE` - Optional yt-dlp `--impersonate` target for Instagram/TikTok/Facebook video URLs. Docker images default to `chrome` and install `curl-cffi`; set empty to disable for manual installs without curl-cffi.
 - `GALLERYDL_USER_AGENT` - Optional `--user-agent` override for gallery-dl. Leave unset: gallery-dl sets a per-site User-Agent already (Instagram gets a current Chrome UA because it serves lower-quality video to anything else), and this replaces those defaults everywhere.
 - `GALLERYDL_SLEEP_REQUEST` - Optional `--sleep-request` override (`"1"`, `"0.5-1.5"`). Leave unset. gallery-dl ships per-site request intervals (Instagram waits a randomized 6-12s between API calls); because `--sleep-request` is a root config key it *replaces* those rather than acting as a floor, so any value below a site's own default makes throttling more likely, not less. Set it only to slow gallery-dl down further.
+
+- `CANARY_SCHEDULE` - Interval for production canaries as a Go duration (`6h`). **Empty (the default) disables them entirely**: no River periodic job is registered and no sweep can start. Minimum `15m`. Canaries archive a small set of known-good public posts and validate the full social archive contract on the result; they run native-only and cannot spend money. Companion variables (`CANARY_PROBES`, `CANARY_PROBE_URL_<SLOT>`, `CANARY_PROBE_TIMEOUT`, `CANARY_ALLOW_PAID_FALLBACK`, `CANARY_MAX_COST_USD_PER_RUN`, `CANARY_MAX_COST_USD_PER_DAY`) and the activation/rotation runbook live in `docs/canaries.md`.
 
 - `LOGIN_TEXT` - Text to display under login form
 
@@ -353,6 +357,12 @@ served from `/thumb/{shortid}[/{type}]`.
 ### Health Monitoring
 - Startup health checks verify yt-dlp, gallery-dl, and Playwright availability
 - Browser process monitoring with leak detection
+- Production canaries (`internal/canary`, disabled by default) archive known-good
+  public posts on a schedule and validate the full contract on the result —
+  media bytes, normalized metadata, raw provider record, native provenance.
+  They hold a native-only archiver map, so a probe cannot reach the paid
+  fallback; a native failure is reported as a native failure rather than
+  rescued. See `docs/canaries.md`.
 
 - Automatic log cleanup (30 days for completed items)
 
