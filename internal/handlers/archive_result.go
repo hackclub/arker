@@ -192,7 +192,7 @@ func buildArchiveResultCost(db *gorm.DB, items []models.ArchiveItem) (archiveRes
 	ids := make([]uint, 0, len(items))
 	for _, item := range items {
 		ids = append(ids, item.ID)
-		if item.Status == "completed" {
+		if item.Status == "completed" && item.Source != models.ArchiveSourceBrightData {
 			cost.Breakdown[0].Successes++
 		}
 	}
