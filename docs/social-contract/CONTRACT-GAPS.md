@@ -104,6 +104,18 @@ Given a social-media URL, Arker creates a durable true archive with:
 - **G11 (multi-item social)**: buildSocialPost picks first yt-dlp-or-gallery-dl item
   (archive_result.go:230-235); prefer the media item that matches the URL's routed
   type; if both exist prefer completed one.
+- **G13 (metadata maximalism — Zach, 2026-08-12 ~23:57 ET)**: "I give you a social
+  media post, you get me everything you can from it within reason." Priority order:
+  (a) YouTube: transcripts + subtitles — manual subs + auto-captions (original
+  language + English; env-tunable langs), stored as durable artifacts, exposed in
+  normalized metadata + unified API (subtitle links + plain-text transcript);
+  chapters and other info.json extras surfaced where present. (b) Other yt-dlp
+  platforms (TikTok, Vimeo, Facebook): same mechanism, gracefully absent when the
+  extractor exposes none. (c) Instagram Reels: attempt subs natively (usually not
+  exposed); check Bright Data reels dataset for transcript fields and map when
+  present; explicitly OK to report "not obtainable". (d) gallery platforms:
+  surface per-file alt text in normalized metadata where extractors provide it.
+  Never fail an archive over missing subtitles; absence is recorded, not red.
 - **G12 (raw sidecar sanitization at rest)**: /gallery/:id/raw sanitizes at serve
   time (gallery_dl_serve.go:266) but the public zip bundle stores gallery-dl
   sidecars UNsanitized (gallery_dl.go writeGalleryZip) while yt-dlp raw is
