@@ -75,6 +75,16 @@ type ArchiveItem struct {
 	RawMetadataKey string
 	Logs           string `gorm:"type:text"`
 	RetryCount     int
+	// Completeness records whether this item stored every obtainable source
+	// asset for the post: "complete", "partial", or "unknown". It is only
+	// written by archivers that can speak to it (the social extractors); every
+	// other type leaves it empty.
+	//
+	// Empty means the row predates completeness tracking, so it must be read as
+	// unknown and never as complete. Deliberately un-indexed: the column is read
+	// through an already-loaded capture, and AutoMigrate adding a bare nullable
+	// column to archive_items is a metadata-only change on existing prod rows.
+	Completeness string
 	// Source records which flow produced the stored artifact: "" or "native"
 	// for the regular archivers, "brightdata" when the Bright Data fallback
 	// rescued a failed native run. Provenance matters here: fallback artifacts

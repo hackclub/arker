@@ -58,6 +58,12 @@ type Result struct {
 	// sidecars and for legacy test archivers.
 	Metadata    *Sidecar
 	RawMetadata *Sidecar
+	// Completeness is the archiver's claim about whether it stored every
+	// obtainable source asset: one of CompletenessComplete, CompletenessPartial
+	// or CompletenessUnknown. Empty means the archiver does not speak to
+	// completeness (mhtml, screenshot, git, itch), and is stored as-is so those
+	// types stay distinguishable from a social capture that answered "unknown".
+	Completeness string
 }
 
 // Archiver captures a URL into a single stored artifact.

@@ -213,6 +213,13 @@ func saveArchiveResult(result archivers.Result, keyBase string, store storage.St
 	if result.Source != "" {
 		updates["source"] = result.Source
 	}
+	// Only archivers that can speak to completeness write the column, so an
+	// mhtml item stays distinguishable from a social capture that genuinely
+	// answered "unknown". Normalizing here means an unrecognized value can never
+	// be stored as something the API might later read as complete.
+	if result.Completeness != "" {
+		updates["completeness"] = archivers.NormalizeCompletenessState(result.Completeness)
+	}
 	return db.Model(item).Updates(updates).Error
 }
 

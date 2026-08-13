@@ -200,6 +200,11 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 		Source:      "native",
 		Metadata:    &Sidecar{Data: metadataJSON},
 		RawMetadata: &Sidecar{Data: sanitizedRaw},
+		// A single video is structurally one asset: --no-playlist caps the run
+		// at one, and reaching here means the muxed file and both sidecars
+		// exist. There is nothing else to have missed, so this is the one place
+		// completeness needs no count from the extractor.
+		Completeness: CompletenessComplete,
 	}, nil
 }
 
