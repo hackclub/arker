@@ -36,7 +36,18 @@ type APIKey struct {
 type ArchivedURL struct {
 	gorm.Model
 	Original string `gorm:"unique"`
-	Captures []Capture
+	// CanonicalURL is the platform-canonical identity of Original
+	// (utils.CanonicalizeArchiveURL): one value shared by every spelling of the
+	// same social post, and equal to Original for ordinary URLs. Find-or-create
+	// and capture aliasing look up and lock on this; Original is what gets
+	// stored, displayed, and handed to the archivers, and is never rewritten.
+	//
+	// Deliberately indexed but NOT unique. Several rows share one identity by
+	// design — each spelling a caller submits keeps its own row so the URL they
+	// sent is the URL they see — and a unique constraint would also have to be
+	// added to a production table whose existing rows already collide.
+	CanonicalURL string `gorm:"index"`
+	Captures     []Capture
 }
 
 // Capture represents a snapshot of an archived URL at a specific time
