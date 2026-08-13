@@ -189,6 +189,19 @@
         }
         .gallery-meta .gallery-author { font-weight: 600; }
         .gallery-meta .gallery-sub { color: #666; font-size: 13px; margin-top: 2px; }
+        /* Shown only when the archive is not the whole post. An incomplete
+           capture that looks identical to a complete one is the thing this
+           page must never do. */
+        .gallery-meta .gallery-completeness {
+            display: inline-block;
+            margin-top: 8px;
+            padding: 3px 8px;
+            border: 1px solid #ffe08a;
+            border-radius: 3px;
+            background: #fff3cd;
+            color: #7a5b00;
+            font-size: 12px;
+        }
 		.gallery-meta .gallery-caption {
             margin-top: 10px;
             white-space: pre-wrap;
@@ -356,6 +369,27 @@
                     subEl.className = 'gallery-sub';
                     subEl.textContent = sub.join(' · ');
                     metaEl.appendChild(subEl);
+                }
+
+                // Say so when this is not the whole post. A bundle with no
+                // completeness record predates the field; the API reports that
+                // as unknown, and the viewer stays quiet rather than flagging
+                // every archive captured before it existed.
+                const completeness = meta.completeness;
+                if (completeness && completeness.state && completeness.state !== 'complete') {
+                    const noteEl = document.createElement('div');
+                    noteEl.className = 'gallery-completeness';
+                    if (completeness.state === 'partial') {
+                        const stored = typeof completeness.stored === 'number'
+                            ? completeness.stored
+                            : (data.files || []).length;
+                        noteEl.textContent = completeness.expected
+                            ? `Incomplete archive — ${stored} of ${completeness.expected} media files were captured`
+                            : 'Incomplete archive — the extractor failed partway, so some media is missing';
+                    } else {
+                        noteEl.textContent = 'Completeness unknown — nothing recorded how many media files this post has';
+                    }
+                    metaEl.appendChild(noteEl);
                 }
 
                 const caption = meta.description || meta.title;
