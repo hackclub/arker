@@ -13,14 +13,20 @@ Rule: fetch origin/main before every integration; agents never push; manager nev
 ## Worker branches (Opus 5 agents, worktrees off origin/main)
 | Branch | Agent | Scope | State |
 |---|---|---|---|
-| agent/fulfillment-completeness | (pending) | G1 G2 G7 G11 + viewer badge | spawning |
-| agent/platform-routing | (pending) | G3a-d + recognition + matrix updates | spawning |
-| agent/contract-tests | (pending) | fixtures corpus + fake-binary harness + contract tests | spawning |
+| agent/fulfillment-completeness | A 078db3e9 | G1 G2 G7 G11 + G13 transcripts | working (timebox 02:00 ET) |
+| agent/platform-routing | B 4cd989f0 | G3a-e + recognition | MERGED + manager Vimeo DRM followup (80f2f26) |
+| agent/contract-tests | C eabdff17 | fixtures + harness + 250 tests | MERGED; found G14 (fixed by manager ed08670) |
 | agent/canaries | D 5504a31d | G9 canary system (activation = manager step) | MERGED @ manager review passed, suite green |
-| agent/canonical-identity | (pending) | G5 + find-or-create races | spawning |
+| agent/canonical-identity | E 3a66266a | G5 + races + AutoMigrate finding | MERGED + dedupe reconcile; postgres/race suites pass |
 
 ## Integrated into fulfill-social-contract
 - agent/canaries (9 commits): canary_runs table, internal/canary pkg (probes/validate/budget/history/runner/job), workers inline runner, /admin/canaries + /health degraded field, docs/canaries.md. Manager-reviewed: native-only map snapshot verified in cmd/main.go, PaidFallbackEnabled fail-closed check, dedicated 1-worker queue, periodic job only when CANARY_SCHEDULE set. Full tests green post-merge.
+
+## Cross-cutting findings during integration
+- E: AutoMigrate silently no-ops on EXISTING prod tables (driver bug) — every new column needs explicit ADD COLUMN IF NOT EXISTS DDL; A warned; verify at A integration.
+- C: G14 path-embedded googlevideo secrets in raw metadata — FIXED (ed08670), test enabled.
+- Manager: Vimeo DRM per-video — scoped --check-formats (80f2f26); probes use non-DRM 22439234.
+- Reddit WAF throttles this egress IP under burst; retest with cooldown; UA experiment only if defaults fail (prod parity first).
 
 ## AUTHORIZATION UPDATE (2026-08-12 ~23:20 ET, Zach, after risk disclosure)
 12-hour shipping window through ~2026-08-13 10:50 ET:
