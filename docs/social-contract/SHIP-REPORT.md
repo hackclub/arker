@@ -1,8 +1,15 @@
 # Social-archive contract — overnight ship report (2026-08-13)
 
-**Shipped and live.** Production (archive.hackclub.com) runs main `97b2ff0`
-(74 commits tonight: 5 Opus 5 agent branches + manager integration fixes),
-deployed via the normal Coolify flow, zero crash loops, migrations verified.
+**Shipped and live.** Production (archive.hackclub.com) runs main `2fca7b1`
+(~116 commits tonight across two phases: 7 Opus 5 agent branches + manager
+integration), deployed via the normal Coolify flow, zero crash loops.
+
+**Prod matrix v2 (final, live on 2fca7b1):** Reddit ✅ fulfilled via BD rescue
+($0.0015, muxed audio verified) · X ✅ native · Pinterest ✅ native (previously
+no media item at all) · Facebook video ✅ native · FB photo post ⚠ honest
+partial (newly claimed shape) · TikTok ❌ explicit pending your BD KYC (one
+billed session, policy-cached) · everything from matrix v1 still green ·
+canary sweep 5/5 on the final SHA. Total BD spend: ~$0.23 of $10.
 
 ## ⚠️ Morning actions for Zach
 
