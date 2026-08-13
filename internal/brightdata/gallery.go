@@ -127,13 +127,45 @@ func closeResultData(result archivers.Result) {
 }
 
 // verifyGalleryMedia rejects a download that is not what the entry claimed to
-// be. Only MP4/MOV containers are checkable this cheaply (both are ISO base
-// media, so "ftyp" at offset 4 identifies them); images are left alone, since a
-// broken one is visible rather than silently counted as the post's video.
+// be. Only MP4/MOV containers are checkable by format this cheaply (both are
+// ISO base media, so "ftyp" at offset 4 identifies them).
+//
+// Every entry is additionally checked for being an HTML document, because that
+// is the one non-media body a CDN hands back with a 200: a login wall, an error
+// page, or — on Facebook, where an attachment's `url` is sometimes the post's
+// own page rather than its image — the post itself. Stored unchecked it would
+// be a .jpg holding a web page, counted towards completeness as if the slide
+// had been archived. Image formats themselves are not decoded: a decoder that
+// does not know WEBP or HEIC would reject real media, which is a worse failure
+// than the one it prevents.
 func verifyGalleryMedia(entry mediaEntry, path string) error {
+	if err := rejectHTMLDocument(path); err != nil {
+		return err
+	}
 	switch entry.extension() {
 	case ".mp4", ".mov":
 		return verifyMP4(path)
+	}
+	return nil
+}
+
+// rejectHTMLDocument fails when a downloaded media file is really a web page.
+func rejectHTMLDocument(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	header := make([]byte, 512)
+	n, err := f.Read(header)
+	if err != nil && n == 0 {
+		return fmt.Errorf("downloaded media is empty")
+	}
+	prefix := strings.ToLower(strings.TrimSpace(string(header[:n])))
+	for _, marker := range []string{"<!doctype html", "<html", "<head", "<?xml"} {
+		if strings.HasPrefix(prefix, marker) {
+			return fmt.Errorf("downloaded media is an HTML document, not the post's media")
+		}
 	}
 	return nil
 }

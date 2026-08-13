@@ -204,13 +204,32 @@ func TestClientSupportsFallback(t *testing.T) {
 		{"x status", datasetOnly, "https://x.com/u/status/1", utils.ArchiveTypeGalleryDl, true},
 		{"twitter status", datasetOnly, "https://twitter.com/u/status/1", utils.ArchiveTypeGalleryDl, true},
 
+		// Pinterest's i.pinimg.com assets download from Arker's own connection.
+		{"pinterest pin", datasetOnly, "https://www.pinterest.com/pin/1/", utils.ArchiveTypeGalleryDl, true},
+
+		// Facebook arrives on both routes, and neither needs a browser: its
+		// video.fbcdn.net and scontent assets are not IP-locked.
+		{"facebook reel", datasetOnly, "https://www.facebook.com/reel/1/", utils.ArchiveTypeYtDlp, true},
+		{"facebook page video", datasetOnly, "https://www.facebook.com/NASA/videos/1/", utils.ArchiveTypeYtDlp, true},
+		{"facebook watch", datasetOnly, "https://www.facebook.com/watch/?v=1", utils.ArchiveTypeYtDlp, true},
+		{"fb.watch short link", datasetOnly, "https://fb.watch/abc123/", utils.ArchiveTypeYtDlp, true},
+		{"facebook photo post", datasetOnly, "https://www.facebook.com/photo/?fbid=1", utils.ArchiveTypeGalleryDl, true},
+		{"facebook page photo", datasetOnly, "https://www.facebook.com/NASA/photos/1/", utils.ArchiveTypeGalleryDl, true},
+		{"facebook post permalink", datasetOnly, "https://www.facebook.com/NASA/posts/pfbid02abc/", utils.ArchiveTypeGalleryDl, true},
+
 		// Wrong archive type for the platform, or no fallback at all.
 		{"reddit as video", full, "https://www.reddit.com/r/aww/comments/abc/title/", utils.ArchiveTypeYtDlp, false},
 		{"x as video", full, "https://x.com/u/status/1", utils.ArchiveTypeYtDlp, false},
 		{"subreddit page", full, "https://www.reddit.com/r/aww/", utils.ArchiveTypeGalleryDl, false},
 		{"x profile", full, "https://x.com/someone", utils.ArchiveTypeGalleryDl, false},
 		{"vimeo", full, "https://vimeo.com/1234", utils.ArchiveTypeYtDlp, false},
-		{"pinterest", full, "https://www.pinterest.com/pin/1/", utils.ArchiveTypeGalleryDl, false},
+		{"pinterest as video", full, "https://www.pinterest.com/pin/1/", utils.ArchiveTypeYtDlp, false},
+		{"pinterest board", full, "https://www.pinterest.com/someone/some-board/", utils.ArchiveTypeGalleryDl, false},
+		// Routing never pairs a Facebook URL with both item types, so neither
+		// should the coverage table.
+		{"facebook video as gallery", full, "https://www.facebook.com/NASA/videos/1/", utils.ArchiveTypeGalleryDl, false},
+		{"facebook photo post as video", full, "https://www.facebook.com/photo/?fbid=1", utils.ArchiveTypeYtDlp, false},
+		{"facebook page", full, "https://www.facebook.com/zuck", utils.ArchiveTypeGalleryDl, false},
 		{"mhtml", full, "https://www.youtube.com/watch?v=abc123def45", utils.ArchiveTypeMHTML, false},
 	}
 	for _, c := range cases {

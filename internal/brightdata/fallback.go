@@ -41,6 +41,9 @@ type Backend interface {
 //	TikTok     photo post       gallery-dl           dataset + direct CDN, browser fallback
 //	Reddit     post             gallery-dl           dataset + direct CDN (muxed MP4)
 //	X          status           gallery-dl           dataset + direct CDN
+//	Pinterest  pin              gallery-dl           dataset + direct CDN
+//	Facebook   video permalink  yt-dlp               dataset + direct CDN
+//	Facebook   photo/post       gallery-dl           dataset + direct CDN
 //
 // This is also the answer routing asks before creating a gallery item for a
 // login-only site (utils.ShouldCreateGalleryDLItem), so a platform added here
@@ -51,7 +54,9 @@ func (c *Client) SupportsFallback(url, itemType string) bool {
 	}
 	switch itemType {
 	case utils.ArchiveTypeYtDlp:
-		if utils.IsInstagramURL(url) {
+		// Facebook's video.fbcdn.net assets are not IP-locked, so a video
+		// permalink needs only the dataset record.
+		if utils.IsInstagramURL(url) || utils.IsFacebookURL(url) {
 			return true
 		}
 		// YouTube and TikTok both sign their media against the resolving IP,
@@ -61,7 +66,10 @@ func (c *Client) SupportsFallback(url, itemType string) bool {
 		}
 		return false
 	case utils.ArchiveTypeGalleryDl:
-		if utils.IsInstagramURL(url) || utils.IsRedditPostURL(url) || utils.IsXPostURL(url) {
+		// Pinterest's i.pinimg.com assets are as portable as Reddit's and X's:
+		// the pin costs a dataset record and the bytes cost nothing.
+		if utils.IsInstagramURL(url) || utils.IsRedditPostURL(url) || utils.IsXPostURL(url) ||
+			utils.IsPinterestPinURL(url) || utils.IsFacebookPostURL(url) {
 			return true
 		}
 		// TikTok stills are ordinary CDN images: the browser session is only
@@ -86,6 +94,10 @@ func (c *Client) ArchiveFallback(ctx context.Context, url, itemType string, logW
 		return c.archiveReddit(ctx, url, itemType, logWriter, db, itemID, shortID)
 	case utils.IsXPostURL(url):
 		return c.archiveX(ctx, url, itemType, logWriter, db, itemID, shortID)
+	case utils.IsPinterestPinURL(url):
+		return c.archivePinterest(ctx, url, itemType, logWriter, db, itemID, shortID)
+	case utils.IsFacebookURL(url) || utils.IsFacebookPostURL(url):
+		return c.archiveFacebook(ctx, url, itemType, logWriter, db, itemID, shortID)
 	}
 	return archivers.Result{}, fmt.Errorf("no Bright Data fallback for %s", url)
 }
