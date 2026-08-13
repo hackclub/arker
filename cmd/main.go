@@ -227,6 +227,43 @@ func migrateLegacyArchiveTypes(db *gorm.DB) error {
 	})
 }
 
+// ensureCanonicalURLSchema creates archived_urls.canonical_url and its index
+// explicitly, instead of trusting AutoMigrate to have done it.
+//
+// This is not belt-and-braces. With this repo's gorm.io/driver/postgres + pgx
+// pairing, AutoMigrate fails with "insufficient arguments" against any table
+// that already exists — it dies probing column types with
+// `SELECT * FROM "archived_urls" LIMIT 1`, before it would emit any ALTER. That
+// is why startup logs "Continuing startup despite AutoMigrate error" and keeps
+// going. A fresh database is unaffected (table creation works), so the failure
+// only shows up where it matters most: an existing production database.
+//
+// Without this, canonical_url would never appear in production, and every
+// find-or-create lookup would then reference a column that does not exist and
+// fail the request outright. It is the same explicit-DDL approach already used
+// below for the archive_items status/created_at index.
+//
+// Both statements are additive and idempotent. ADD COLUMN with no default is a
+// catalog-only change in PostgreSQL 11+, so it does not rewrite the table and
+// does not depend on row count. The index build takes a brief ACCESS EXCLUSIVE
+// lock, which on a table of this size is milliseconds and happens before the
+// server accepts traffic.
+func ensureCanonicalURLSchema(db *gorm.DB) error {
+	if db.Dialector.Name() != "postgres" {
+		// Other dialects only appear in tests, where AutoMigrate builds the
+		// table from the model and the column is already present.
+		return nil
+	}
+	if err := db.Exec(`ALTER TABLE archived_urls ADD COLUMN IF NOT EXISTS canonical_url text`).Error; err != nil {
+		return fmt.Errorf("add archived_urls.canonical_url: %w", err)
+	}
+	// Not UNIQUE: several spellings of one post share an identity by design.
+	if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_archived_urls_canonical_url ON archived_urls (canonical_url)`).Error; err != nil {
+		return fmt.Errorf("index archived_urls.canonical_url: %w", err)
+	}
+	return nil
+}
+
 // canonicalURLBackfillBatch bounds how many rows one transaction rewrites.
 // Small enough that no statement holds row locks on a meaningful slice of the
 // table, large enough that 50k rows is 50 round trips rather than 50k.
@@ -413,7 +450,9 @@ func main() {
 	} else {
 		slog.Info("Archive log schema and legacy backfill completed successfully")
 	}
-	if err := backfillCanonicalURLs(db); err != nil {
+	if err := ensureCanonicalURLSchema(db); err != nil {
+		slog.Error("Canonical URL schema configuration failed", "error", err)
+	} else if err := backfillCanonicalURLs(db); err != nil {
 		// Not fatal: find-or-create still matches un-backfilled rows on
 		// original, which is exactly its pre-canonicalization behavior.
 		slog.Error("Canonical URL backfill failed", "error", err)
