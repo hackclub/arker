@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -80,8 +81,10 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 	refererArgs := utils.YtDlpRefererArgsForURL(fetchURL)
 	refererArgs = append(refererArgs, utils.YtDlpFormatFallbackArgsForURL(fetchURL)...)
 
-	// Prepare command arguments
-	testArgs := []string{"--print", "title,duration,uploader"}
+	// Prepare command arguments. The language is printed last and on its own so
+	// the subtitle filter can be built from the video's actual language rather
+	// than guessed; yt-dlp prints "NA" when it does not know.
+	testArgs := []string{"--print", "title,duration,uploader", "--print", "%(language)s"}
 
 	// First, test if yt-dlp can access the video
 	fmt.Fprintf(logWriter, "Testing video accessibility with yt-dlp...\n")
@@ -98,6 +101,10 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 		return Result{}, fmt.Errorf("yt-dlp cannot access video: %v", err)
 	}
 	fmt.Fprintf(redactedLog, "Video info:\n%s\n", string(testOutput))
+	detectedLang := detectedLanguageFromProbe(string(testOutput))
+	if detectedLang != "" {
+		fmt.Fprintf(logWriter, "Detected video language: %s\n", detectedLang)
+	}
 
 	// Check context before main download
 	select {
@@ -119,6 +126,7 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 	outputTemplate := tempBase + ".%(ext)s"
 	cmd := exec.CommandContext(ctx, "yt-dlp")
 	cmd.Args = append(cmd.Args, ytDlpDownloadArgs(outputTemplate)...)
+	cmd.Args = append(cmd.Args, utils.YtDlpSubtitleArgs(detectedLang)...)
 	cmd.Args = append(cmd.Args, utils.YtDlpImpersonateArgsForURL(url)...)
 	cmd.Args = append(cmd.Args, refererArgs...)
 	cmd.Args = append(cmd.Args, cookieArgs...)
@@ -185,6 +193,14 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 		fmt.Fprintf(logWriter, "Failed to normalize yt-dlp info JSON: %v\n", err)
 		return Result{}, err
 	}
+	// Captions are read here, before the deferred cleanup sweeps the temp
+	// directory. A platform that exposes none is the normal case and must not
+	// disturb the capture, so every failure below is logged and dropped.
+	extras, tracks, contents := collectSubtitleArtifacts(tempBase, rawInfo, logWriter)
+	metadata.Subtitles = tracks
+	metadata.Transcript = BuildTranscript(tracks, contents, detectedLang)
+	logSubtitleOutcome(logWriter, metadata)
+
 	metadataJSON, err := MarshalVideoMetadata(metadata)
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to encode normalized video metadata: %v\n", err)
@@ -212,7 +228,169 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 		Source:      "native",
 		Metadata:    &Sidecar{Data: metadataJSON},
 		RawMetadata: &Sidecar{Data: sanitizedRaw},
+		Extras:      extras,
+		// A single video is structurally one asset: --no-playlist caps the run
+		// at one, and reaching here means the muxed file and both sidecars
+		// exist. There is nothing else to have missed, so this is the one place
+		// completeness needs no count from the extractor.
+		Completeness: CompletenessComplete,
 	}, nil
+}
+
+// detectedLanguageFromProbe reads the video's language off the probe output.
+//
+// The language is the last thing printed, on its own line, so a title
+// containing newlines cannot be mistaken for it. An unusable value yields an
+// empty string, which makes the subtitle filter fall back to English only.
+func detectedLanguageFromProbe(output string) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return utils.NormalizeSubtitleLang(line)
+		}
+	}
+	return ""
+}
+
+// subtitleFileExtensions are the caption formats yt-dlp may write. VTT is asked
+// for first, but a track offered only in another format is still worth storing.
+var subtitleFileExtensions = []string{".vtt", ".srt", ".ttml", ".srv1", ".srv2", ".srv3", ".json3"}
+
+// maxSubtitleArtifactBytes caps one stored track. Real caption files are tens
+// of kilobytes; anything past this is a live-chat replay or a pathological
+// track, and is skipped rather than allowed to bloat the archive.
+const maxSubtitleArtifactBytes = 8 << 20
+
+// collectSubtitleArtifacts loads the caption tracks yt-dlp wrote beside the
+// video and turns them into storable artifacts.
+//
+// Returns empty results for the common case of a post with no captions. Nothing
+// here can fail the archive: the video is the product, and captions are a bonus
+// the platform may simply not offer.
+func collectSubtitleArtifacts(tempBase string, rawInfo []byte, logWriter io.Writer) ([]ExtraArtifact, []SubtitleTrack, map[string]string) {
+	matches, err := filepath.Glob(tempBase + ".*")
+	if err != nil {
+		return nil, nil, nil
+	}
+	kinds := subtitleKindsFromInfo(rawInfo)
+
+	var extras []ExtraArtifact
+	var tracks []SubtitleTrack
+	contents := make(map[string]string)
+	seen := make(map[string]bool)
+
+	sort.Strings(matches)
+	for _, path := range matches {
+		ext := strings.ToLower(filepath.Ext(path))
+		if !isSubtitleExtension(ext) {
+			continue
+		}
+		lang := SubtitleLangFromFilename(path, tempBase)
+		if lang == "" {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.Size() == 0 {
+			continue
+		}
+		if info.Size() > maxSubtitleArtifactBytes {
+			fmt.Fprintf(logWriter, "Skipping oversized subtitle track %s (%d bytes)\n", filepath.Base(path), info.Size())
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(logWriter, "Could not read subtitle track %s: %v\n", filepath.Base(path), err)
+			continue
+		}
+
+		format := strings.TrimPrefix(ext, ".")
+		suffix := SubtitleArtifactSuffix(lang, format)
+		if seen[suffix] {
+			continue
+		}
+		seen[suffix] = true
+
+		kind := kinds[lang]
+		if kind == "" {
+			kind = SubtitleKindAuto
+		}
+		tracks = append(tracks, SubtitleTrack{
+			Lang: lang, Kind: kind, Format: format,
+			ArtifactSuffix: suffix, SizeBytes: info.Size(),
+		})
+		extras = append(extras, ExtraArtifact{
+			NameSuffix:  suffix,
+			ContentType: subtitleContentType(format),
+			Data:        data,
+		})
+		contents[suffix] = string(data)
+	}
+	return extras, tracks, contents
+}
+
+func isSubtitleExtension(ext string) bool {
+	for _, candidate := range subtitleFileExtensions {
+		if ext == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func subtitleContentType(format string) string {
+	switch format {
+	case "vtt":
+		return "text/vtt; charset=utf-8"
+	case "srt":
+		return "application/x-subrip; charset=utf-8"
+	case "ttml":
+		return "application/ttml+xml"
+	case "json3":
+		return "application/json"
+	default:
+		return "text/plain; charset=utf-8"
+	}
+}
+
+// subtitleKindsFromInfo reads which languages had a human-authored track.
+//
+// yt-dlp writes one file per language, preferring the manual track when both
+// exist, so the info record's own "subtitles" map is what distinguishes a
+// reviewed transcript from speech recognition. Languages listed only under
+// automatic_captions are automatic; anything unlisted is assumed automatic,
+// which is the conservative claim.
+func subtitleKindsFromInfo(rawInfo []byte) map[string]string {
+	kinds := make(map[string]string)
+	info, err := decodeJSONObject(rawInfo)
+	if err != nil {
+		return kinds
+	}
+	for _, source := range subtitleKindSources {
+		langs, ok := info[source.field].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for lang := range langs {
+			kinds[lang] = source.kind
+		}
+	}
+	return kinds
+}
+
+func logSubtitleOutcome(logWriter io.Writer, metadata *VideoMetadata) {
+	if len(metadata.Subtitles) == 0 {
+		fmt.Fprintf(logWriter, "No subtitles available for this video\n")
+		return
+	}
+	for _, track := range metadata.Subtitles {
+		fmt.Fprintf(logWriter, "Stored %s subtitle track %s (%s, %d bytes)\n",
+			track.Kind, track.Lang, track.Format, track.SizeBytes)
+	}
+	if metadata.Transcript != nil {
+		fmt.Fprintf(logWriter, "Derived %s transcript from the %s %s track (%d characters)\n",
+			map[bool]string{true: "truncated", false: "full"}[metadata.Transcript.Truncated],
+			metadata.Transcript.Source, metadata.Transcript.Lang, len(metadata.Transcript.Text))
+	}
 }
 
 func ytDlpDownloadArgs(outputTemplate string) []string {

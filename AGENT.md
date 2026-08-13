@@ -162,6 +162,8 @@ When using Amp with `make dev` running in another window:
 - `GET /gallery/:shortid/file/*filepath` - Stream one media file out of a gallery-dl archive
 - `GET /video/:shortid/manifest` - Video capture status, normalized post metadata, and archived media URL
 - `GET /video/:shortid/raw` - Sanitized raw yt-dlp/Bright Data provider record
+- `GET /video/:shortid/subtitle/:name` - One stored caption track (`name` is `<lang>.<format>`, e.g. `en.vtt`); only tracks the archive's own metadata records are servable
+- `GET /video/:shortid/transcript` - Plain-text transcript derived from the best caption track
 - `GET|HEAD /thumb/:shortid` - Preview image for a capture (480x270 JPEG); falls back to an SVG placeholder and queues generation
 - `GET|HEAD /thumb/:shortid/:type` - Preview image for one archive type
 
@@ -205,7 +207,7 @@ git clone https://archive.hackclub.com/git/{shortid}
 - `GALLERYDL_SLEEP_REQUEST` - Optional `--sleep-request` override (`"1"`, `"0.5-1.5"`). Leave unset. gallery-dl ships per-site request intervals (Instagram waits a randomized 6-12s between API calls); because `--sleep-request` is a root config key it *replaces* those rather than acting as a floor, so any value below a site's own default makes throttling more likely, not less. Set it only to slow gallery-dl down further.
 
 - `CANARY_SCHEDULE` - Interval for production canaries as a Go duration (`6h`). **Empty (the default) disables them entirely**: no River periodic job is registered and no sweep can start. Minimum `15m`. Canaries archive a small set of known-good public posts and validate the full social archive contract on the result; they run native-only and cannot spend money. Companion variables (`CANARY_PROBES`, `CANARY_PROBE_URL_<SLOT>`, `CANARY_PROBE_TIMEOUT`, `CANARY_ALLOW_PAID_FALLBACK`, `CANARY_MAX_COST_USD_PER_RUN`, `CANARY_MAX_COST_USD_PER_DAY`) and the activation/rotation runbook live in `docs/canaries.md`.
-
+- `ARKER_SUB_LANGS` - Optional override for which subtitle tracks yt-dlp fetches, passed to `--sub-langs` verbatim. Leave unset: the default is computed per video as its own language plus English, using **exact** codes. Do not "improve" it to `en.*` — yt-dlp matches these as anchored regexes and YouTube names machine-translated auto-captions `<target>-<source>`, so `en.*` also matches `en-de` ("English from German"); on a video offering ~150 translations that fetched three tracks and earned an HTTP 429. Use `all,-live_chat` to deliberately hoard every translation.
 - `LOGIN_TEXT` - Text to display under login form
 
 ### Authentication

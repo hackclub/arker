@@ -121,6 +121,11 @@ func (c *Client) archiveYouTube(ctx context.Context, targetURL string, logWriter
 				Source:      models.ArchiveSourceBrightData,
 				Metadata:    metadata,
 				RawMetadata: rawMetadata,
+				// One video, stored with both sidecars. Fidelity is a separate
+				// question from completeness: the fallback is capped at the
+				// progressive stream, which the normalized metadata records as
+				// its quality label.
+				Completeness: archivers.CompletenessComplete,
 			}, nil
 		}
 

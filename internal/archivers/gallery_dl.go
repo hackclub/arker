@@ -52,18 +52,27 @@ type GalleryMetadata struct {
 	Tags        []string      `json:"tags,omitempty"`
 	FileCount   int           `json:"file_count"`
 	Files       []GalleryFile `json:"files"`
-	ToolVersion string        `json:"gallery_dl_version,omitempty"`
-	ArchivedAt  string        `json:"archived_at"`
+	// Completeness answers whether FileCount is all of the post or only what
+	// survived. gallery-dl keeps partial downloads, so file_count alone cannot
+	// distinguish a 3-slide post from 3 slides of a 10-slide carousel. Nil on
+	// archives written before this was recorded, which reads as unknown.
+	Completeness *Completeness `json:"completeness,omitempty"`
+	ToolVersion  string        `json:"gallery_dl_version,omitempty"`
+	ArchivedAt   string        `json:"archived_at"`
 }
 
 // GalleryFile describes one downloaded media file inside the ZIP.
 type GalleryFile struct {
-	Name         string `json:"name"`
-	Size         int64  `json:"size"`
-	ContentType  string `json:"content_type,omitempty"`
-	IsVideo      bool   `json:"is_video"`
-	Width        int    `json:"width,omitempty"`
-	Height       int    `json:"height,omitempty"`
+	Name        string `json:"name"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"content_type,omitempty"`
+	IsVideo     bool   `json:"is_video"`
+	Width       int    `json:"width,omitempty"`
+	Height      int    `json:"height,omitempty"`
+	// AltText is the poster's own description of this image, where the
+	// extractor exposes it. It is part of the post as published — often the
+	// only text describing an image-only post — so it is worth keeping.
+	AltText      string `json:"alt_text,omitempty"`
 	MetadataFile string `json:"metadata_file,omitempty"`
 }
 
@@ -187,7 +196,14 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 			runErr, describeGalleryDlExit(runErr), len(media))
 	}
 
+	// A kept partial download is the whole reason this exists: without a
+	// recorded completeness the stored archive claims to be the post, and a
+	// 3-of-10 carousel reads exactly like a 3-slide one.
+	completeness := galleryCompleteness(tmpDir, media, sidecars, runErr != nil, logWriter)
+	logGalleryCompleteness(logWriter, completeness)
+
 	metadata := buildGalleryMetadata(tmpDir, url, version, media, sidecars, logWriter)
+	metadata.Completeness = &completeness
 	metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to encode gallery metadata: %v\n", err)
@@ -230,11 +246,146 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 	}()
 
 	return Result{
-		Data:        pipeReader,
-		Extension:   ".zip",
-		ContentType: "application/zip",
-		Thumbnail:   thumb,
+		Data:         pipeReader,
+		Extension:    ".zip",
+		ContentType:  "application/zip",
+		Thumbnail:    thumb,
+		Completeness: completeness.State,
 	}, nil
+}
+
+// galleryCompleteness decides whether the files on disk are the whole post.
+//
+// gallery-dl exits non-zero for a partial download and the archiver keeps that
+// output, so the only way to tell a complete post from a salvaged one is to
+// compare what landed against what the extractor said was there.
+func galleryCompleteness(dir string, media []string, sidecars map[string]string, runFailed bool, logWriter io.Writer) Completeness {
+	expected := galleryExpectedCount(dir, media, sidecars, logWriter)
+	result := CompletenessFromCounts(expected, len(media), runFailed)
+	if result.State == CompletenessPartial && expected != nil {
+		result.MissingIndices = galleryMissingIndices(*expected, media)
+	}
+	return result
+}
+
+func logGalleryCompleteness(logWriter io.Writer, completeness Completeness) {
+	switch {
+	case completeness.Expected != nil:
+		fmt.Fprintf(logWriter, "Completeness: %s (%d of %d expected file(s) stored)\n",
+			completeness.State, completeness.Stored, *completeness.Expected)
+	case completeness.State == CompletenessPartial:
+		fmt.Fprintf(logWriter, "Completeness: partial (%d file(s) stored; the run reported a failure and the post's file count is unknown)\n",
+			completeness.Stored)
+	default:
+		fmt.Fprintf(logWriter, "Completeness: unknown (%d file(s) stored; no extractor field reported how many the post has)\n",
+			completeness.Stored)
+	}
+	if len(completeness.MissingIndices) > 0 {
+		fmt.Fprintf(logWriter, "Missing slide(s): %v\n", completeness.MissingIndices)
+	}
+}
+
+// galleryExpectedCountKeys name the field an extractor uses for "how many files
+// this post has". gallery-dl's own convention is "count" (it is what the
+// {count} format key reads), but extractors that predate it, or that model a
+// post as an album, use their own name. Order matters only in that the generic
+// key is checked first; galleryInt also searches the container objects, which
+// is what finds Imgur's album.image_count.
+var galleryExpectedCountKeys = []string{
+	"count",
+	"media_count",
+	"image_count",
+	"page_count",
+	"photo_count",
+	"carousel_media_count",
+}
+
+// maxGalleryExpectedCount rejects an implausible value. These keys are resolved
+// by name across ~300 extractors, so a site that uses one of them for something
+// else (a follower count, a view count) would otherwise mark every capture
+// partial forever. A post with more media than this does not exist on the sites
+// Arker archives.
+const maxGalleryExpectedCount = 1000
+
+// galleryExpectedCount reads the post's file count out of the sidecars.
+//
+// gallery-dl merges post-level metadata into every file's dict, so any sidecar
+// carries it — which matters, because the sidecar of a slide that failed to
+// download does not exist. Scanning in order finds the count from whichever
+// slide did make it.
+func galleryExpectedCount(dir string, media []string, sidecars map[string]string, logWriter io.Writer) *int {
+	for _, name := range media {
+		sidecar, ok := sidecars[name]
+		if !ok {
+			continue
+		}
+		raw := readGalleryJSON(filepath.Join(dir, sidecar), logWriter)
+		if raw == nil {
+			continue
+		}
+		if count := galleryCountFrom(raw); count != nil {
+			return count
+		}
+	}
+	return nil
+}
+
+func galleryCountFrom(raw map[string]interface{}) *int {
+	value := galleryInt(raw, galleryExpectedCountKeys...)
+	if value == nil || *value <= 0 || *value > maxGalleryExpectedCount {
+		return nil
+	}
+	count := int(*value)
+	return &count
+}
+
+// galleryMissingIndices names which slides are gone.
+//
+// The archiver forces "{num:>03}.{extension}" filenames, so the stored names
+// carry gallery-dl's own 1-based slide numbers and a gap in them is the missing
+// slide. Returns nil when the names do not parse, rather than reporting every
+// index as missing.
+func galleryMissingIndices(expected int, media []string) []int {
+	present := make(map[int]bool, len(media))
+	for _, name := range media {
+		if index := galleryFileIndex(name); index > 0 {
+			present[index] = true
+		}
+	}
+	if len(present) == 0 {
+		return nil
+	}
+	var missing []int
+	for index := 1; index <= expected && len(missing) < maxCompletenessMissingIndices; index++ {
+		if !present[index] {
+			missing = append(missing, index)
+		}
+	}
+	return missing
+}
+
+// galleryFileIndex reads the leading slide number off a stored filename.
+// Returns 0 for any name that is not numbered, so a Bright Data or legacy
+// layout degrades to "cannot tell which are missing" instead of guessing.
+func galleryFileIndex(name string) int {
+	base := name
+	if dot := strings.Index(base, "."); dot >= 0 {
+		base = base[:dot]
+	}
+	if base == "" {
+		return 0
+	}
+	index := 0
+	for _, r := range base {
+		if r < '0' || r > '9' {
+			return 0
+		}
+		index = index*10 + int(r-'0')
+		if index > maxGalleryExpectedCount {
+			return 0
+		}
+	}
+	return index
 }
 
 // galleryThumbnail previews a post using its first still image.
@@ -535,12 +686,30 @@ func buildGalleryMetadata(dir, sourceURL, version string, media []string, sideca
 				if h := galleryInt(perFile, "height"); h != nil {
 					file.Height = int(*h)
 				}
+				file.AltText = galleryAltText(perFile, meta.Extractor)
 			}
 		}
 		meta.Files = append(meta.Files, file)
 	}
 
 	return meta
+}
+
+// galleryAltText reads the poster's description of one image.
+//
+// The explicit keys are unambiguous wherever an extractor provides them. The
+// Bluesky special case is not: it stores the post body under "text" and the
+// image's alt text under "description", so "description" is alt text there and
+// the caption everywhere else — reading it generically would stamp Instagram's
+// caption onto every slide as if it were alt text.
+func galleryAltText(perFile map[string]interface{}, extractor string) string {
+	if alt := galleryString(perFile, "alt_text", "ext_alt_text", "alt", "altText", "media_alt"); alt != "" {
+		return alt
+	}
+	if strings.EqualFold(extractor, "bluesky") {
+		return galleryString(perFile, "description")
+	}
+	return ""
 }
 
 func readGalleryJSON(path string, logWriter io.Writer) map[string]interface{} {

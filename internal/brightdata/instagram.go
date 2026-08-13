@@ -119,6 +119,9 @@ func (c *Client) instagramVideo(ctx context.Context, targetURL string, logWriter
 			Source:      models.ArchiveSourceBrightData,
 			Metadata:    metadata,
 			RawMetadata: rawMetadata,
+			// One reel is one video: the muxed MP4 and both sidecars are stored,
+			// so there is no second asset this could have missed.
+			Completeness: archivers.CompletenessComplete,
 		}, nil
 	}
 	if lastErr == nil {
@@ -208,14 +211,17 @@ func (c *Client) instagramGallery(ctx context.Context, targetURL string, logWrit
 
 	meta := galleryMetadataFromRecord(record, targetURL)
 	var totalBytes int64
+	var missing []int
 	for i, entry := range entries {
 		name := fmt.Sprintf("%03d%s", i+1, entry.extension())
 		fmt.Fprintf(logWriter, "Downloading %s from Instagram CDN...\n", name)
 		size, err := c.downloadToPath(ctx, entry.URL, filepath.Join(tmpDir, name))
 		if err != nil {
 			// A carousel with one dead slide is still worth archiving, but a
-			// post where nothing downloads is not.
+			// post where nothing downloads is not. Record which slide was lost
+			// so the archive says so instead of looking like a shorter post.
 			fmt.Fprintf(logWriter, "Failed to download %s: %v\n", name, err)
+			missing = append(missing, i+1)
 			continue
 		}
 		totalBytes += size
@@ -233,6 +239,13 @@ func (c *Client) instagramGallery(ctx context.Context, targetURL string, logWrit
 		return archivers.Result{}, err
 	}
 	meta.FileCount = len(meta.Files)
+	// The dataset record lists every asset in the post, so a dead CDN slide is
+	// a knowable gap rather than an invisible one: expected is what Bright Data
+	// said the post holds, stored is what actually downloaded.
+	expected := len(entries)
+	completeness := archivers.CompletenessFromCounts(&expected, len(meta.Files), false)
+	completeness.MissingIndices = missing
+	meta.Completeness = &completeness
 
 	logInstagramMetadata(logWriter, record)
 	fmt.Fprintf(logWriter, "Downloaded %d of %d media file(s), %d bytes total\n", len(meta.Files), len(entries), totalBytes)
@@ -256,11 +269,12 @@ func (c *Client) instagramGallery(ctx context.Context, targetURL string, logWrit
 		return archivers.Result{}, err
 	}
 	return archivers.Result{
-		Data:        reader,
-		Extension:   ".zip",
-		ContentType: "application/zip",
-		Thumbnail:   thumb,
-		Source:      models.ArchiveSourceBrightData,
+		Data:         reader,
+		Extension:    ".zip",
+		ContentType:  "application/zip",
+		Thumbnail:    thumb,
+		Source:       models.ArchiveSourceBrightData,
+		Completeness: completeness.State,
 	}, nil
 }
 

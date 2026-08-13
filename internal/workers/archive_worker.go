@@ -187,10 +187,35 @@ func saveArchiveResult(result archivers.Result, keyBase string, store storage.St
 		return err
 	}
 
+	// Extras go down before the normalized metadata, because the metadata
+	// records where they landed — and before the item is marked completed, so a
+	// completed item never advertises an artifact that is not there.
+	// An extra is a bonus, never the product: a caption track that will not
+	// store must not fail a video that downloaded perfectly. The track is
+	// dropped from the metadata instead, so the archive describes exactly what
+	// it holds rather than advertising a file that is not there.
+	extraKeys := make(map[string]string, len(result.Extras))
+	for _, extra := range result.Extras {
+		if extra.NameSuffix == "" || len(extra.Data) == 0 {
+			continue
+		}
+		extraKey := keyBase + extra.NameSuffix
+		if err := writeExtraArtifact(store, extraKey, extra.Data); err != nil {
+			slog.Warn("Failed to store extra archive artifact",
+				"key", extraKey, "suffix", extra.NameSuffix, "error", err)
+			continue
+		}
+		extraKeys[extra.NameSuffix] = extraKey
+	}
+
 	metadataKey := ""
 	if result.Metadata != nil {
+		metadataData, err := archivers.SetSubtitleStorageKeys(result.Metadata.Data, extraKeys)
+		if err != nil {
+			return fmt.Errorf("failed to record extra artifact keys: %w", err)
+		}
 		metadataKey = keyBase + ".metadata.json"
-		if err := writeJSONSidecar(store, metadataKey, result.Metadata.Data); err != nil {
+		if err := writeJSONSidecar(store, metadataKey, metadataData); err != nil {
 			return fmt.Errorf("failed to store normalized metadata: %w", err)
 		}
 	}
@@ -213,7 +238,26 @@ func saveArchiveResult(result archivers.Result, keyBase string, store storage.St
 	if result.Source != "" {
 		updates["source"] = result.Source
 	}
+	// Only archivers that can speak to completeness write the column, so an
+	// mhtml item stays distinguishable from a social capture that genuinely
+	// answered "unknown". Normalizing here means an unrecognized value can never
+	// be stored as something the API might later read as complete.
+	if result.Completeness != "" {
+		updates["completeness"] = archivers.NormalizeCompletenessState(result.Completeness)
+	}
 	return db.Model(item).Updates(updates).Error
+}
+
+func writeExtraArtifact(store storage.Storage, key string, data []byte) error {
+	w, err := store.Writer(key)
+	if err != nil {
+		return err
+	}
+	_, writeErr := io.Copy(w, bytes.NewReader(data))
+	if closeErr := w.Close(); closeErr != nil && writeErr == nil {
+		writeErr = closeErr
+	}
+	return writeErr
 }
 
 func writeJSONSidecar(store storage.Storage, key string, data []byte) error {
