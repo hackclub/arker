@@ -341,7 +341,7 @@ func TestArchiveTikTokVideoBrowserFailureRecordsUsage(t *testing.T) {
 // first, and only the refused ones cost a browser session — one session for the
 // whole post, not one per slide.
 func TestArchiveTikTokPhotoPost(t *testing.T) {
-	image := fakePNG(t)
+	image := fakeJPEG(t)
 	record := map[string]any{
 		"post_id":          "7412345678901234567",
 		"url":              "https://www.tiktok.com/@someone/photo/7412345678901234567",
@@ -414,7 +414,7 @@ func TestArchiveTikTokPhotoPost(t *testing.T) {
 // A photo post whose stills all download directly must not open a browser
 // session at all: the session is the fallback, not the path.
 func TestArchiveTikTokPhotoPostSkipsBrowserWhenDirectWorks(t *testing.T) {
-	image := fakePNG(t)
+	image := fakeJPEG(t)
 	record := map[string]any{
 		"post_id":   "1",
 		"url":       "https://www.tiktok.com/@someone/photo/1",
@@ -517,7 +517,7 @@ func TestTikTokSessionCountries(t *testing.T) {
 // Without browser credentials a refused still cannot be rescued, and the
 // archive must not be billed for the session that could not be opened.
 func TestArchiveTikTokPhotoPostWithoutBrowserCredentials(t *testing.T) {
-	image := fakePNG(t)
+	image := fakeJPEG(t)
 	record := map[string]any{
 		"post_id":   "1",
 		"url":       "https://www.tiktok.com/@someone/photo/1",
@@ -554,7 +554,7 @@ func TestArchiveTikTokPhotoPostWithoutBrowserCredentials(t *testing.T) {
 // the archive as a whole survives as partial: the browser row has to say the
 // paid work delivered nothing.
 func TestArchiveTikTokPhotoPostBrowserDeliveredNothing(t *testing.T) {
-	image := fakePNG(t)
+	image := fakeJPEG(t)
 	record := map[string]any{
 		"post_id":   "1",
 		"url":       "https://www.tiktok.com/@someone/photo/1",

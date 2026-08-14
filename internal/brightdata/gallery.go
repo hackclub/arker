@@ -66,12 +66,17 @@ func (c *Client) buildGalleryArchive(ctx context.Context, entries []mediaEntry, 
 			missing = append(missing, i+1)
 			continue
 		}
+		canonicalName, contentType, err := canonicalizeDownloadedGalleryMedia(tmpDir, name, logWriter)
+		if err != nil {
+			return archivers.Result{}, archivers.Completeness{}, totalBytes, err
+		}
+		name = canonicalName
 		totalBytes += size
 		meta.Files = append(meta.Files, archivers.GalleryFile{
 			Name:        name,
 			Size:        size,
-			ContentType: entry.contentType(),
-			IsVideo:     entry.isVideo(),
+			ContentType: contentType,
+			IsVideo:     strings.HasPrefix(contentType, "video/"),
 		})
 	}
 	if len(meta.Files) == 0 {
@@ -107,6 +112,25 @@ func (c *Client) buildGalleryArchive(ctx context.Context, entries []mediaEntry, 
 		Source:       models.ArchiveSourceBrightData,
 		Completeness: completeness.State,
 	}, completeness, totalBytes, nil
+}
+
+// canonicalizeDownloadedGalleryMedia makes Bright Data's numbered internal
+// filename describe the bytes that actually arrived from the provider. The
+// raw provider record remains raw; metadata.json and ZIP entries use the
+// canonical name returned here.
+func canonicalizeDownloadedGalleryMedia(dir, name string, logWriter io.Writer) (string, string, error) {
+	canonicalName, contentType, err := archivers.InspectGalleryMediaFile(dir, name)
+	if err != nil {
+		return "", "", fmt.Errorf("inspect downloaded media %s: %w", name, err)
+	}
+	if canonicalName == name {
+		return name, contentType, nil
+	}
+	if err := os.Rename(filepath.Join(dir, name), filepath.Join(dir, canonicalName)); err != nil {
+		return "", "", fmt.Errorf("rename downloaded media %s to %s: %w", name, canonicalName, err)
+	}
+	fmt.Fprintf(logWriter, "Normalized gallery media filename %s to %s based on its bytes\n", name, canonicalName)
+	return canonicalName, contentType, nil
 }
 
 // directFetch downloads one entry over Arker's own connection. It is the

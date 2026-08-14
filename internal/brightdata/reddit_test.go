@@ -133,7 +133,7 @@ func TestArchiveRedditVideoPost(t *testing.T) {
 // A gallery that loses a slide is archived, but it is archived as partial: the
 // record said how many images the post has, so the gap is knowable.
 func TestArchiveRedditGalleryReportsMissingSlides(t *testing.T) {
-	image := fakePNG(t)
+	image := fakeJPEG(t)
 	record := map[string]any{
 		"post_id":        "t3_gallery",
 		"url":            "https://www.reddit.com/r/pics/comments/gallery/",

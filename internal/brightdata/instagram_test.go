@@ -2,13 +2,18 @@ package brightdata
 
 import (
 	"archive/zip"
+	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"arker/internal/archivers"
+	"arker/internal/models"
+	"arker/internal/utils"
 )
 
 // loadRecord loads a captured real Bright Data snapshot record. These fixtures
@@ -83,6 +88,88 @@ func TestPostMediaEntriesPrefersPostContentOrder(t *testing.T) {
 	if entries[1].extension() != ".mp4" {
 		t.Errorf("video extension = %q; want .mp4", entries[1].extension())
 	}
+}
+
+func TestInstagramGalleryFallbackCanonicalizesMisleadingHEICNames(t *testing.T) {
+	targetURL := "https://www.instagram.com/p/L9YP9/"
+	mediaURLs := []string{
+		"https://scontent.example/first.heic",
+		"https://scontent.example/second.heic",
+	}
+	record := map[string]any{
+		"shortcode":   "L9YP9",
+		"url":         targetURL,
+		"user_posted": "fixture-user",
+		"post_content": []any{
+			map[string]any{"index": float64(0), "type": "Photo", "url": mediaURLs[0]},
+			map[string]any{"index": float64(1), "type": "Photo", "url": mediaURLs[1]},
+		},
+	}
+	network := newFakeNetwork(record)
+	jpegBytes := fakeJPEG(t)
+	for _, mediaURL := range mediaURLs {
+		network.serve(mediaURL, jpegBytes)
+	}
+	client, db := newTestClient(t, network)
+
+	result, err := client.ArchiveFallback(context.Background(), targetURL, utils.ArchiveTypeGalleryDl, io.Discard, db, 42)
+	if err != nil {
+		t.Fatalf("ArchiveFallback: %v", err)
+	}
+	if result.Source != models.ArchiveSourceBrightData {
+		t.Errorf("result source = %q, want %q", result.Source, models.ArchiveSourceBrightData)
+	}
+	if result.Completeness != archivers.CompletenessComplete {
+		t.Errorf("result completeness = %q, want complete", result.Completeness)
+	}
+
+	reader := resultZip(t, result)
+	names := zipNames(reader)
+	for _, want := range []string{"metadata.json", "brightdata.json", "001.jpg", "002.jpg"} {
+		if !containsString(names, want) {
+			t.Errorf("ZIP entries = %v, missing %s", names, want)
+		}
+	}
+	for _, unwanted := range []string{"001.heic", "002.heic"} {
+		if containsString(names, unwanted) {
+			t.Errorf("ZIP retains misleading filename %s: %v", unwanted, names)
+		}
+	}
+	if body := zipEntry(t, reader, "001.jpg"); !bytes.HasPrefix(body, []byte{0xff, 0xd8, 0xff}) {
+		t.Errorf("001.jpg does not contain JPEG bytes: %x", body[:min(8, len(body))])
+	}
+
+	meta := galleryMetadataFromZip(t, reader)
+	if meta.FileCount != 2 || len(meta.Files) != 2 {
+		t.Fatalf("metadata files = %d/%d, want 2/2", meta.FileCount, len(meta.Files))
+	}
+	for i, file := range meta.Files {
+		wantName := []string{"001.jpg", "002.jpg"}[i]
+		if file.Name != wantName || file.ContentType != "image/jpeg" || file.IsVideo {
+			t.Errorf("metadata file %d = %+v, want %s as image/jpeg", i, file, wantName)
+		}
+	}
+	if meta.Completeness == nil || meta.Completeness.State != archivers.CompletenessComplete ||
+		meta.Completeness.Expected == nil || *meta.Completeness.Expected != 2 || meta.Completeness.Stored != 2 {
+		t.Errorf("metadata completeness = %+v, want complete 2 of 2", meta.Completeness)
+	}
+
+	// brightdata.json is the sanitized provider record, not an internal file
+	// manifest. It keeps the provider's original .heic URLs while metadata.json
+	// and ZIP entry names consistently describe the JPEG bytes Arker stored.
+	raw := zipEntry(t, reader, "brightdata.json")
+	if !bytes.Contains(raw, []byte(".heic")) {
+		t.Errorf("raw provider record lost its original media URLs: %s", raw)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestFirstVideoFromPost(t *testing.T) {

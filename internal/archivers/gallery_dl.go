@@ -624,7 +624,7 @@ func canonicalizeGalleryFiles(dir string, media []string, sidecars map[string]st
 	canonicalSidecars := make(map[string]string, len(sidecars))
 
 	for _, name := range media {
-		canonicalName, _, err := inspectGalleryMediaFile(dir, name)
+		canonicalName, _, err := InspectGalleryMediaFile(dir, name)
 		if err != nil {
 			return nil, nil, fmt.Errorf("inspect %s: %w", name, err)
 		}
@@ -1018,10 +1018,10 @@ func galleryContentType(name string) string {
 	return "application/octet-stream"
 }
 
-// inspectGalleryMediaFile detects a gallery asset's actual media type from its
+// InspectGalleryMediaFile detects a gallery asset's actual media type from its
 // leading bytes and returns the canonical filename and MIME type. Unknown
 // formats retain their original extension-based type rather than guessing.
-func inspectGalleryMediaFile(dir, name string) (canonicalName, contentType string, err error) {
+func InspectGalleryMediaFile(dir, name string) (canonicalName, contentType string, err error) {
 	file, err := os.Open(filepath.Join(dir, name))
 	if err != nil {
 		return "", "", err

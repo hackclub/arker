@@ -129,7 +129,7 @@ func TestStringsFromFieldShapes(t *testing.T) {
 // provider record beside it, and media stored uncompressed.
 func TestBuildGalleryArchiveLayout(t *testing.T) {
 	client, _ := newTestClient(t, newFakeNetwork())
-	image := fakePNG(t)
+	image := fakeJPEG(t)
 	entries := []mediaEntry{
 		{URL: "https://cdn.example/a.jpg", Type: "Photo"},
 		{URL: "https://cdn.example/b.jpg", Type: "Photo"},

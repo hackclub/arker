@@ -19,7 +19,7 @@ const (
 func TestArchiveXPhotoPost(t *testing.T) {
 	record := loadRecords(t, "x_post.json")[0]
 	network := newFakeNetwork(record)
-	image := fakePNG(t)
+	image := fakeJPEG(t)
 	network.serve("https://pbs.twimg.com/media/A7EiDWcCYAAZT1D.jpg", image)
 
 	client, db := newTestClient(t, network)

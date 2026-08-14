@@ -16,7 +16,7 @@ const pinterestPinURL = "https://www.pinterest.com/pin/1123648175807513296"
 func TestArchivePinterestImagePin(t *testing.T) {
 	record := loadRecords(t, "pinterest_posts.json")[0]
 	network := newFakeNetwork(record)
-	image := fakePNG(t)
+	image := fakeJPEG(t)
 	network.serve("https://i.pinimg.com/originals/99/d9/39/99d939a31478dd6cb9a6859113e204d3.jpg", image)
 
 	client, db := newTestClient(t, network)

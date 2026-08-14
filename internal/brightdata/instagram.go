@@ -225,12 +225,18 @@ func (c *Client) instagramGallery(ctx context.Context, targetURL string, logWrit
 			missing = append(missing, i+1)
 			continue
 		}
+		name, contentType, err := canonicalizeDownloadedGalleryMedia(tmpDir, name, logWriter)
+		if err != nil {
+			usage.Detail = truncate(err.Error(), 500)
+			c.recordUsage(db, usage)
+			return archivers.Result{}, err
+		}
 		totalBytes += size
 		meta.Files = append(meta.Files, archivers.GalleryFile{
 			Name:        name,
 			Size:        size,
-			ContentType: entry.contentType(),
-			IsVideo:     entry.isVideo(),
+			ContentType: contentType,
+			IsVideo:     strings.HasPrefix(contentType, "video/"),
 		})
 	}
 	if len(meta.Files) == 0 {
@@ -334,28 +340,6 @@ func (e mediaEntry) extension() string {
 		return ".mp4"
 	}
 	return ".jpg"
-}
-
-func (e mediaEntry) contentType() string {
-	switch e.extension() {
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".png":
-		return "image/png"
-	case ".webp":
-		return "image/webp"
-	case ".gif":
-		return "image/gif"
-	case ".heic":
-		return "image/heic"
-	case ".mp4":
-		return "video/mp4"
-	case ".mov":
-		return "video/quicktime"
-	case ".webm":
-		return "video/webm"
-	}
-	return "application/octet-stream"
 }
 
 // postMediaEntries extracts the ordered media list from a posts-dataset record.
