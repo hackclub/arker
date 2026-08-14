@@ -22,8 +22,10 @@ import (
 // and cdn_link, but both are signed for Bright Data's own resolver and answer
 // Arker's IP with 403 (verified) — the same shape as YouTube's googlevideo
 // URLs. So the video is fetched inside a Bright Data Browser API session, with
-// the in-page ranged fetch machinery in browser_fetch.go; unlike YouTube there
-// is no in-page resolution step, because the dataset already produced the URL.
+// the in-page ranged fetch machinery in browser_fetch.go. The dataset and
+// Browser API use separate workers, though: when the dataset URL is signed to
+// its worker and answers the browser with 403, the browser refreshes the media
+// URL from the already-loaded post page and consumes it in that same session.
 //
 // preview_image, by contrast, downloads fine from Arker's own connection, so
 // the poster costs nothing extra.
@@ -74,6 +76,11 @@ func (c *Client) tiktokVideo(ctx context.Context, targetURL string, logWriter io
 		TempPattern: "arker-bd-tt-*.mp4",
 		LogWriter:   logWriter,
 		Retryable:   tiktokRetryableElsewhere,
+		// Dataset URLs are resolved by a different Bright Data worker and can be
+		// signed to that worker's IP. If TikTok refuses them, observe the URL the
+		// post page loaded for this exact browser session and fetch it without
+		// closing the session in between.
+		RefreshMediaURLs: refreshTikTokMediaURLs,
 	})
 	finishBrowserUsage := func(success bool, detail string) {
 		browserUsage.BytesTransferred, browserUsage.CostUSD = c.browserSessionCost(fetch.Size, fetch.Sessions)
@@ -291,6 +298,102 @@ func tiktokVideoURLs(record map[string]any) []string {
 		urls = append(urls, u)
 	}
 	return urls
+}
+
+// resolveTikTokMediaURLsJS observes the video URL selected by the TikTok post
+// page. The browser page and the subsequent ranged fetch share one Bright Data
+// session and therefore one network position, unlike URLs returned by the
+// separate Web Scraper dataset worker.
+//
+// TikTok sometimes exposes the URL directly on <video>, and sometimes only in
+// a resource timing entry or the page's hydration JSON. The bounded poll gives
+// its client-side app time to attach the player without leaving a paid browser
+// session waiting indefinitely.
+const resolveTikTokMediaURLsJS = `
+async () => {
+  const found = [];
+  const seen = new Set();
+  const looksLikeVideo = (raw) => {
+    if (typeof raw !== 'string' || !/^https?:\/\//i.test(raw)) return false;
+    try {
+      const u = new URL(raw);
+      const host = u.hostname.toLowerCase();
+      const mediaHost = host.includes('tiktokcdn') ||
+        host.endsWith('.byteoversea.com') || host.endsWith('.ibytedtos.com') ||
+        host.endsWith('.muscdn.com') || host.endsWith('.akamaized.net') ||
+        ((host.endsWith('.tiktok.com') || host.endsWith('.tiktokv.com')) &&
+          (/^v\d/.test(host) || host.startsWith('video-')));
+      if (!mediaHost) return false;
+      const videoNamedHost = /^v\d/.test(host) || host.startsWith('video-');
+      return u.searchParams.get('mime_type') === 'video_mp4' ||
+        u.pathname.includes('/video/') ||
+        (videoNamedHost && /\.mp4$/i.test(u.pathname));
+    } catch (_) {
+      return false;
+    }
+  };
+  const add = (raw) => {
+    if (looksLikeVideo(raw) && !seen.has(raw)) {
+      seen.add(raw);
+      found.push(raw);
+    }
+  };
+  let hydrationScanned = false;
+  const collect = () => {
+    for (const video of document.querySelectorAll('video')) {
+      add(video.currentSrc);
+      add(video.src);
+      for (const source of video.querySelectorAll('source')) add(source.src);
+    }
+    for (const entry of performance.getEntriesByType('resource')) add(entry.name);
+
+    if (!hydrationScanned) {
+      hydrationScanned = true;
+      for (const script of document.querySelectorAll(
+        'script#__UNIVERSAL_DATA_FOR_REHYDRATION__, script#SIGI_STATE, script[type="application/json"]')) {
+        const text = script.textContent || '';
+        if (!text || text.length > 8 * 1024 * 1024) continue;
+        try {
+          const stack = [JSON.parse(text)];
+          let visited = 0;
+          while (stack.length && visited++ < 50000) {
+            const value = stack.pop();
+            if (typeof value === 'string') {
+              add(value);
+            } else if (Array.isArray(value)) {
+              for (const child of value) stack.push(child);
+            } else if (value && typeof value === 'object') {
+              for (const child of Object.values(value)) stack.push(child);
+            }
+          }
+        } catch (_) {}
+      }
+    }
+  };
+
+  for (let attempt = 0; attempt < 20; attempt++) {
+    collect();
+    if (found.length) return JSON.stringify(found);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return JSON.stringify(found);
+}
+`
+
+func refreshTikTokMediaURLs(page pageEvaluator) ([]string, error) {
+	raw, err := page.Evaluate(resolveTikTokMediaURLsJS)
+	if err != nil {
+		return nil, fmt.Errorf("evaluate TikTok post media: %w", err)
+	}
+	text, ok := raw.(string)
+	if !ok {
+		return nil, fmt.Errorf("TikTok media refresh returned %T", raw)
+	}
+	var candidates []string
+	if err := json.Unmarshal([]byte(text), &candidates); err != nil {
+		return nil, fmt.Errorf("parse TikTok media refresh: %w", err)
+	}
+	return candidates, nil
 }
 
 // tiktokImageEntries resolves a photo post's stills.

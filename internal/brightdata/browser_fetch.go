@@ -155,6 +155,11 @@ type browserFetchRequest struct {
 	// Retryable decides whether a failed session is worth repeating elsewhere.
 	// Nil means never retry.
 	Retryable func(error) bool
+	// RefreshMediaURLs can discover URLs from the page after the supplied
+	// candidates fail. It runs inside the still-open session so a platform can
+	// replace scraper URLs signed for a different resolver with URLs signed for
+	// this exact browser network position. Nil means no refresh is available.
+	RefreshMediaURLs func(pageEvaluator) ([]string, error)
 }
 
 // browserFetchResult reports what a fetch cost as well as what it produced.
@@ -257,19 +262,64 @@ func (c *Client) browserFetchSession(ctx context.Context, country string, req br
 
 	var fetched int64
 	var lastErr error
-	for _, mediaURL := range req.MediaURLs {
-		path, size, err := fetchURLThroughPage(ctx, session, mediaURL, req.TotalHint, req.TempPattern, req.LogWriter)
-		fetched += size
-		if err == nil {
-			return path, fetched, size, mediaURL, true, nil
+	fetchCandidates := func(mediaURLs []string) (string, int64, string, bool) {
+		for _, mediaURL := range mediaURLs {
+			path, size, err := fetchURLThroughPage(ctx, session, mediaURL, req.TotalHint, req.TempPattern, req.LogWriter)
+			fetched += size
+			if err == nil {
+				return path, size, mediaURL, true
+			}
+			lastErr = err
+			if ctx.Err() != nil {
+				break
+			}
+			fmt.Fprintf(req.LogWriter, "In-page fetch failed for one candidate URL: %v\n", err)
 		}
-		lastErr = err
-		if ctx.Err() != nil {
-			break
+		return "", 0, "", false
+	}
+
+	if path, stored, mediaURL, ok := fetchCandidates(req.MediaURLs); ok {
+		return path, fetched, stored, mediaURL, true, nil
+	}
+	if ctx.Err() == nil && req.RefreshMediaURLs != nil {
+		candidateErr := lastErr
+		refreshed, err := req.RefreshMediaURLs(session)
+		if err != nil {
+			lastErr = fmt.Errorf("dataset media fetch failed (%v); refresh media URL: %w", candidateErr, err)
+		} else {
+			refreshed = unseenURLs(refreshed, req.MediaURLs)
+			if len(refreshed) == 0 {
+				lastErr = fmt.Errorf("dataset media fetch failed (%v); refresh media URL returned no new candidates", candidateErr)
+			} else {
+				fmt.Fprintf(req.LogWriter, "Dataset media URLs were refused; trying %d URL(s) refreshed in the current browser session...\n", len(refreshed))
+				if path, stored, mediaURL, ok := fetchCandidates(refreshed); ok {
+					return path, fetched, stored, mediaURL, true, nil
+				}
+			}
 		}
-		fmt.Fprintf(req.LogWriter, "In-page fetch failed for one candidate URL: %v\n", err)
 	}
 	return "", fetched, 0, "", true, lastErr
+}
+
+// unseenURLs de-duplicates refreshed candidates and drops URLs the failed
+// candidate list already tried. A page often exposes the same currentSrc in
+// the DOM, performance entries and hydration JSON; retrying it three times in
+// one paid session cannot improve the answer.
+func unseenURLs(refreshed, attempted []string) []string {
+	seen := make(map[string]bool, len(refreshed)+len(attempted))
+	for _, rawURL := range attempted {
+		seen[rawURL] = true
+	}
+	var urls []string
+	for _, rawURL := range refreshed {
+		rawURL = strings.TrimSpace(rawURL)
+		if rawURL == "" || seen[rawURL] {
+			continue
+		}
+		seen[rawURL] = true
+		urls = append(urls, rawURL)
+	}
+	return urls
 }
 
 // fetchMediaChunkJS fetches one Range of the media URL inside the page and

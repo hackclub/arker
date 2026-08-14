@@ -2,6 +2,7 @@ package brightdata
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -173,6 +174,128 @@ func TestArchiveTikTokVideoFallsBackToSecondURL(t *testing.T) {
 	if len(page.requests) < 2 {
 		t.Errorf("in-page requests = %v; want the refused URL then the fallback", page.requests)
 	}
+}
+
+// Dataset media URLs are signed in the scraper's network position, not the
+// separate Browser API session that later downloads them. A current TikTok
+// record can therefore be perfectly valid while every dataset URL answers the
+// browser with 403 at byte zero. The post page loaded in that same session can
+// refresh the media URL; the refreshed URL must be fetched before abandoning
+// the otherwise usable metadata record.
+func TestArchiveTikTokVideoRefreshesMediaURLAfterDatasetURLsReturn403(t *testing.T) {
+	record := loadRecords(t, "tiktok_post.json")[0]
+	refreshedURL := strings.SplitN(stringField(record, "video_url"), "?", 2)[0] + "?signature=fresh-for-browser-session"
+	video := fakeMP4(32 * 1024)
+	page := &refreshingTikTokPage{
+		fakePage:     newFakePage(),
+		refreshedURL: refreshedURL,
+	}
+	page.media[refreshedURL] = video
+
+	client, db := newTestClient(t, newFakeNetwork(record))
+	sessions := withFakeBrowser(client, page)
+
+	result, err := client.archiveTikTok(context.Background(), tiktokVideoURL, utils.ArchiveTypeYtDlp, io.Discard, db, 30, "tt010")
+	if err != nil {
+		t.Fatalf("archiveTikTok: %v", err)
+	}
+	if got := readResult(t, result); len(got) != len(video) {
+		t.Fatalf("stored %d bytes; want %d", len(got), len(video))
+	}
+	if result.Completeness != archivers.CompletenessComplete {
+		t.Errorf("completeness = %q; want complete", result.Completeness)
+	}
+	if result.Metadata == nil || !json.Valid(result.Metadata.Data) {
+		t.Error("successful capture lost normalized metadata")
+	}
+	if result.RawMetadata == nil || !json.Valid(result.RawMetadata.Data) {
+		t.Error("successful capture lost raw provider metadata")
+	}
+	if *sessions != 1 {
+		t.Errorf("opened %d sessions; want the refreshed URL fetched in the original session", *sessions)
+	}
+	wantRequests := []string{
+		stringField(record, "video_url"),
+		stringField(record, "cdn_link"),
+		refreshedURL,
+	}
+	if len(page.requests) != len(wantRequests) {
+		t.Fatalf("in-page requests = %v; want the two refused dataset URLs then one refreshed URL", page.requests)
+	}
+	for i, want := range wantRequests {
+		if page.requests[i] != want {
+			t.Errorf("in-page request %d = %q; want %q", i, page.requests[i], want)
+		}
+	}
+}
+
+// Error and malformed records must remain failures. In particular, the media
+// refresh path must not turn a provider error into an MP4-only "success" that
+// has no trustworthy provider metadata to preserve and normalize.
+func TestArchiveTikTokVideoRejectsErrorAndMalformedRecords(t *testing.T) {
+	tests := []struct {
+		name   string
+		record map[string]any
+		want   string
+	}{
+		{
+			name: "provider error",
+			record: map[string]any{
+				"error":      "Item doesn't exist",
+				"error_code": "tiktok_item_not_found",
+				"input":      map[string]any{"url": tiktokVideoURL},
+			},
+			want: "Item doesn't exist",
+		},
+		{
+			name: "malformed media fields",
+			record: map[string]any{
+				"post_id":   float64(123),
+				"post_type": "video",
+				"video_url": map[string]any{"unexpected": true},
+				"cdn_link":  []any{false},
+			},
+			want: "no video URL",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, db := newTestClient(t, newFakeNetwork(tt.record))
+			sessions := withFakeBrowser(client, newFakePage())
+
+			result, err := client.archiveTikTok(context.Background(), tiktokVideoURL, utils.ArchiveTypeYtDlp, io.Discard, db, 31, "tt011")
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v; want a failure containing %q", err, tt.want)
+			}
+			if result.Data != nil || result.Metadata != nil || result.RawMetadata != nil || result.Completeness != "" {
+				t.Fatalf("failed record produced archive artifacts: %+v", result)
+			}
+			if *sessions != 0 {
+				t.Errorf("opened %d browser sessions for an unusable provider record", *sessions)
+			}
+			rows := usageRows(t, db)
+			if len(rows) != 1 || rows[0].Success {
+				t.Errorf("usage rows = %+v; want one unsuccessful dataset operation", rows)
+			}
+		})
+	}
+}
+
+// refreshingTikTokPage models one remote Browser API session. The dataset URLs
+// are intentionally absent from fakePage.media and therefore return 403. A
+// second page-evaluation shape returns the URL freshly observed in that page.
+type refreshingTikTokPage struct {
+	*fakePage
+	refreshedURL string
+}
+
+func (p *refreshingTikTokPage) Evaluate(expression string, arg ...any) (any, error) {
+	if expression != fetchMediaChunkJS {
+		encoded, err := json.Marshal([]string{p.refreshedURL})
+		return string(encoded), err
+	}
+	return p.fakePage.Evaluate(expression, arg...)
 }
 
 // A browser fetch that never succeeds still spent session time, so the usage
