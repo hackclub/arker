@@ -218,7 +218,7 @@ func ServeGalleryManifest(c *gin.Context, storageInstance storage.Storage, db *g
 		files = append(files, gin.H{
 			"name":         file.Name,
 			"size":         file.UncompressedSize64,
-			"content_type": galleryFileContentType(file.Name),
+			"content_type": galleryZipFileContentType(file),
 			"url":          fmt.Sprintf("/gallery/%s/file/%s", shortID, url.PathEscape(file.Name)),
 		})
 	}
@@ -340,7 +340,7 @@ func ServeGalleryFile(c *gin.Context, storageInstance storage.Storage, db *gorm.
 		return
 	}
 
-	c.Header("Content-Type", galleryFileContentType(target.Name))
+	c.Header("Content-Type", archivers.GalleryMediaContentType(target.Name, data))
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Header("ETag", fmt.Sprintf("\"%s-%d-%x\"", shortID, target.UncompressedSize64, target.CRC32))
 	// ServeContent sets Content-Length/Content-Range and handles Range and
@@ -348,34 +348,23 @@ func ServeGalleryFile(c *gin.Context, storageInstance storage.Storage, db *gorm.
 	http.ServeContent(c.Writer, c.Request, target.Name, time.Time{}, bytes.NewReader(data))
 }
 
-// galleryFileContentType maps a ZIP entry name to a MIME type, restricted to
-// formats media sites actually serve. Anything unrecognized is served as an
-// opaque download rather than something a browser might try to execute.
+// galleryFileContentType is the extension-only fallback for unreadable ZIP
+// entries. Normal serving paths use galleryZipFileContentType or the already
+// buffered entry bytes so misleading provider extensions cannot win.
 func galleryFileContentType(name string) string {
-	switch strings.ToLower(path.Ext(name)) {
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".png":
-		return "image/png"
-	case ".gif":
-		return "image/gif"
-	case ".webp":
-		return "image/webp"
-	case ".avif":
-		return "image/avif"
-	case ".mp4", ".m4v":
-		return "video/mp4"
-	case ".webm":
-		return "video/webm"
-	case ".mov":
-		return "video/quicktime"
-	case ".mp3":
-		return "audio/mpeg"
-	case ".m4a":
-		return "audio/mp4"
-	case ".json":
-		return "application/json"
-	default:
-		return "application/octet-stream"
+	return archivers.GalleryMediaContentType(name, nil)
+}
+
+func galleryZipFileContentType(file *zip.File) string {
+	contents, err := file.Open()
+	if err != nil {
+		return galleryFileContentType(file.Name)
 	}
+	defer contents.Close()
+	header := make([]byte, 512)
+	n, err := contents.Read(header)
+	if err != nil && err != io.EOF {
+		return galleryFileContentType(file.Name)
+	}
+	return archivers.GalleryMediaContentType(file.Name, header[:n])
 }

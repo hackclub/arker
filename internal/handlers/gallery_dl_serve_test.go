@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 	"arker/internal/models"
 	"arker/internal/storage"
+	"arker/internal/testfixtures"
 	"arker/internal/utils"
 )
 
@@ -86,7 +88,184 @@ func newGalleryRouter(db *gorm.DB, storageInstance storage.Storage) *gin.Engine 
 	r := gin.New()
 	r.GET("/gallery/:shortid/list", func(c *gin.Context) { ServeGalleryManifest(c, storageInstance, db) })
 	r.GET("/gallery/:shortid/file/*filepath", func(c *gin.Context) { ServeGalleryFile(c, storageInstance, db) })
+	r.GET("/gallery/:shortid/raw", func(c *gin.Context) { ServeGalleryRawMetadata(c, storageInstance, db) })
 	return r
+}
+
+func TestGalleryCanonicalizesMisleadingJPEGExtension(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	storageInstance := storage.NewMemoryStorage()
+	seedRealGalleryCapture(t, db, storageInstance, "mime1", "instagram_image", testfixtures.GalleryDlFake{
+		ImageExtension: ".heic",
+	})
+	router := newGalleryRouter(db, storageInstance)
+
+	listRec := httptest.NewRecorder()
+	router.ServeHTTP(listRec, httptest.NewRequest(http.MethodGet, "/gallery/mime1/list", nil))
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", listRec.Code, listRec.Body.String())
+	}
+	var listBody struct {
+		Metadata struct {
+			Files []struct {
+				Name         string `json:"name"`
+				ContentType  string `json:"content_type"`
+				MetadataFile string `json:"metadata_file"`
+			} `json:"files"`
+		} `json:"metadata"`
+		Files []struct {
+			Name        string `json:"name"`
+			ContentType string `json:"content_type"`
+			URL         string `json:"url"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listBody); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(listBody.Metadata.Files) != 1 {
+		t.Fatalf("metadata files = %+v, want one file", listBody.Metadata.Files)
+	}
+	metadataFile := listBody.Metadata.Files[0]
+	if metadataFile.Name != "001.jpg" || metadataFile.ContentType != "image/jpeg" || metadataFile.MetadataFile != "001.jpg.json" {
+		t.Errorf("metadata file = %+v, want canonical 001.jpg, image/jpeg, and 001.jpg.json", metadataFile)
+	}
+	if len(listBody.Files) != 1 {
+		t.Fatalf("listed files = %+v, want one file", listBody.Files)
+	}
+	listedFile := listBody.Files[0]
+	if listedFile.Name != "001.jpg" || listedFile.ContentType != "image/jpeg" || listedFile.URL != "/gallery/mime1/file/001.jpg" {
+		t.Errorf("listed file = %+v, want canonical JPEG name, type, and URL", listedFile)
+	}
+
+	fileRec := httptest.NewRecorder()
+	router.ServeHTTP(fileRec, httptest.NewRequest(http.MethodGet, listedFile.URL, nil))
+	if fileRec.Code != http.StatusOK {
+		t.Fatalf("file status = %d, body = %s", fileRec.Code, fileRec.Body.String())
+	}
+	if got := fileRec.Header().Get("Content-Type"); got != "image/jpeg" {
+		t.Errorf("file Content-Type = %q, want image/jpeg", got)
+	}
+	if !bytes.HasPrefix(fileRec.Body.Bytes(), []byte{0xff, 0xd8, 0xff}) {
+		t.Errorf("file body does not begin with JPEG magic: %x", fileRec.Body.Bytes()[:min(8, fileRec.Body.Len())])
+	}
+
+	rawRec := httptest.NewRecorder()
+	router.ServeHTTP(rawRec, httptest.NewRequest(http.MethodGet, "/gallery/mime1/raw", nil))
+	if rawRec.Code != http.StatusOK {
+		t.Fatalf("raw status = %d, body = %s", rawRec.Code, rawRec.Body.String())
+	}
+	var rawBody struct {
+		Records []struct {
+			Filename string `json:"filename"`
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(rawRec.Body.Bytes(), &rawBody); err != nil {
+		t.Fatalf("decode raw metadata: %v", err)
+	}
+	if len(rawBody.Records) != 1 || rawBody.Records[0].Filename != "001.jpg.json" {
+		t.Errorf("raw metadata records = %+v, want canonical 001.jpg.json sidecar", rawBody.Records)
+	}
+
+	var item models.ArchiveItem
+	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
+		Where("captures.short_id = ? AND archive_items.type = ?", "mime1", utils.ArchiveTypeGalleryDl).
+		First(&item).Error; err != nil {
+		t.Fatalf("load gallery item: %v", err)
+	}
+	archiveReader, err := storageInstance.Reader(item.StorageKey)
+	if err != nil {
+		t.Fatalf("open stored ZIP: %v", err)
+	}
+	archiveBytes, err := io.ReadAll(archiveReader)
+	archiveReader.Close()
+	if err != nil {
+		t.Fatalf("read stored ZIP: %v", err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(archiveBytes), int64(len(archiveBytes)))
+	if err != nil {
+		t.Fatalf("open stored ZIP: %v", err)
+	}
+	entries := make(map[string]bool, len(zr.File))
+	for _, entry := range zr.File {
+		entries[entry.Name] = true
+	}
+	for _, name := range []string{"metadata.json", "001.jpg", "001.jpg.json"} {
+		if !entries[name] {
+			t.Errorf("stored ZIP entries = %v, missing %s", entries, name)
+		}
+	}
+	for name := range entries {
+		if name == "001.heic" || name == "001.heic.json" {
+			t.Errorf("stored ZIP retains misleading entry %s", name)
+		}
+	}
+}
+
+func TestServeGalleryFileSniffsLegacyMisleadingExtension(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	storageInstance := storage.NewMemoryStorage()
+	seedGalleryCapture(t, db, storageInstance, "old01", "completed")
+
+	var item models.ArchiveItem
+	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
+		Where("captures.short_id = ? AND archive_items.type = ?", "old01", utils.ArchiveTypeGalleryDl).
+		First(&item).Error; err != nil {
+		t.Fatalf("load gallery item: %v", err)
+	}
+	var archive bytes.Buffer
+	zw := zip.NewWriter(&archive)
+	for _, entry := range []struct {
+		name string
+		data []byte
+	}{
+		{"metadata.json", []byte(`{"files":[{"name":"001.heic","content_type":"application/octet-stream"}]}`)},
+		{"001.heic", testfixtures.PlaceholderJPEG(t, 16, 16)},
+	} {
+		w, err := zw.Create(entry.name)
+		if err != nil {
+			t.Fatalf("create %s: %v", entry.name, err)
+		}
+		if _, err := w.Write(entry.data); err != nil {
+			t.Fatalf("write %s: %v", entry.name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close ZIP: %v", err)
+	}
+	w, err := storageInstance.Writer(item.StorageKey)
+	if err != nil {
+		t.Fatalf("replace stored ZIP: %v", err)
+	}
+	if _, err := w.Write(archive.Bytes()); err != nil {
+		t.Fatalf("write stored ZIP: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stored ZIP: %v", err)
+	}
+
+	router := newGalleryRouter(db, storageInstance)
+	for _, requestPath := range []string{"/gallery/old01/list", "/gallery/old01/file/001.heic"} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, requestPath, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d, body = %s", requestPath, rec.Code, rec.Body.String())
+		}
+		if requestPath == "/gallery/old01/list" {
+			var body struct {
+				Files []struct {
+					ContentType string `json:"content_type"`
+				} `json:"files"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode list: %v", err)
+			}
+			if len(body.Files) != 1 || body.Files[0].ContentType != "image/jpeg" {
+				t.Errorf("listed legacy file = %+v, want image/jpeg sniffed from bytes", body.Files)
+			}
+		} else if got := rec.Header().Get("Content-Type"); got != "image/jpeg" {
+			t.Errorf("served legacy file Content-Type = %q, want image/jpeg sniffed from bytes", got)
+		}
+	}
 }
 
 func TestServeGalleryManifestReturnsMetadataAndMediaOnly(t *testing.T) {

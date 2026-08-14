@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -168,6 +169,11 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 	media, sidecars, err := collectGalleryFiles(tmpDir)
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to inspect gallery-dl output: %v\n", err)
+		return Result{}, err
+	}
+	media, sidecars, err = canonicalizeGalleryFiles(tmpDir, media, sidecars, logWriter)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to normalize gallery-dl output: %v\n", err)
 		return Result{}, err
 	}
 
@@ -608,6 +614,77 @@ func collectGalleryFiles(dir string) (media []string, sidecars map[string]string
 	return media, sidecars, nil
 }
 
+// canonicalizeGalleryFiles makes the filename describe the bytes that were
+// actually downloaded. Some providers label JPEG responses as HEIC; keeping
+// that name would make metadata and HTTP serving disagree with the payload.
+// A matching gallery-dl sidecar moves with its media file so every internal
+// reference remains valid.
+func canonicalizeGalleryFiles(dir string, media []string, sidecars map[string]string, logWriter io.Writer) ([]string, map[string]string, error) {
+	canonicalMedia := make([]string, 0, len(media))
+	canonicalSidecars := make(map[string]string, len(sidecars))
+
+	for _, name := range media {
+		canonicalName, _, err := inspectGalleryMediaFile(dir, name)
+		if err != nil {
+			return nil, nil, fmt.Errorf("inspect %s: %w", name, err)
+		}
+
+		sidecar := sidecars[name]
+		canonicalSidecar := sidecar
+		if sidecar != "" && canonicalName != name {
+			canonicalSidecar = canonicalName + ".json"
+		}
+
+		if canonicalName != name {
+			if err := galleryRenameAvailable(dir, name, canonicalName); err != nil {
+				return nil, nil, err
+			}
+			if sidecar != "" {
+				if err := galleryRenameAvailable(dir, sidecar, canonicalSidecar); err != nil {
+					return nil, nil, err
+				}
+			}
+
+			if err := os.Rename(filepath.Join(dir, name), filepath.Join(dir, canonicalName)); err != nil {
+				return nil, nil, fmt.Errorf("rename %s to %s: %w", name, canonicalName, err)
+			}
+			if sidecar != "" {
+				if err := os.Rename(filepath.Join(dir, sidecar), filepath.Join(dir, canonicalSidecar)); err != nil {
+					_ = os.Rename(filepath.Join(dir, canonicalName), filepath.Join(dir, name))
+					return nil, nil, fmt.Errorf("rename %s to %s: %w", sidecar, canonicalSidecar, err)
+				}
+			}
+			fmt.Fprintf(logWriter, "Normalized gallery media filename %s to %s based on its bytes\n", name, canonicalName)
+		}
+
+		canonicalMedia = append(canonicalMedia, canonicalName)
+		if canonicalSidecar != "" {
+			canonicalSidecars[canonicalName] = canonicalSidecar
+		}
+	}
+
+	sort.Strings(canonicalMedia)
+	return canonicalMedia, canonicalSidecars, nil
+}
+
+func galleryRenameAvailable(dir, oldName, newName string) error {
+	oldInfo, err := os.Stat(filepath.Join(dir, oldName))
+	if err != nil {
+		return err
+	}
+	newInfo, err := os.Stat(filepath.Join(dir, newName))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if os.SameFile(oldInfo, newInfo) {
+		return nil
+	}
+	return fmt.Errorf("cannot rename %s to %s: destination already exists", oldName, newName)
+}
+
 // buildGalleryMetadata normalizes gallery-dl's site-specific metadata into the
 // handful of fields a viewer actually needs. Every site names things
 // differently, so each field is resolved from a priority list of known keys
@@ -916,6 +993,10 @@ func galleryContentType(name string) string {
 		return "image/webp"
 	case ".avif":
 		return "image/avif"
+	case ".heic":
+		return "image/heic"
+	case ".heif":
+		return "image/heif"
 	case ".mp4", ".m4v":
 		return "video/mp4"
 	case ".webm":
@@ -924,11 +1005,100 @@ func galleryContentType(name string) string {
 		return "video/quicktime"
 	case ".mkv":
 		return "video/x-matroska"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".m4a":
+		return "audio/mp4"
+	case ".json":
+		return "application/json"
 	}
 	if byExt := mime.TypeByExtension(filepath.Ext(name)); byExt != "" {
 		return byExt
 	}
 	return "application/octet-stream"
+}
+
+// inspectGalleryMediaFile detects a gallery asset's actual media type from its
+// leading bytes and returns the canonical filename and MIME type. Unknown
+// formats retain their original extension-based type rather than guessing.
+func inspectGalleryMediaFile(dir, name string) (canonicalName, contentType string, err error) {
+	file, err := os.Open(filepath.Join(dir, name))
+	if err != nil {
+		return "", "", err
+	}
+	defer file.Close()
+
+	header := make([]byte, 512)
+	n, err := file.Read(header)
+	if err != nil && err != io.EOF {
+		return "", "", err
+	}
+	contentType, extension := galleryMediaType(name, header[:n])
+	canonicalName = strings.TrimSuffix(name, filepath.Ext(name)) + extension
+	return canonicalName, contentType, nil
+}
+
+// GalleryMediaContentType detects the type of a ZIP entry from its leading
+// bytes, falling back to its filename for legacy or unrecognized formats.
+// Handlers use this for archives written before filenames were canonicalized.
+func GalleryMediaContentType(name string, header []byte) string {
+	contentType, _ := galleryMediaType(name, header)
+	return contentType
+}
+
+func galleryMediaType(name string, header []byte) (contentType, extension string) {
+	if detected, extension, ok := galleryISOBaseMediaType(header); ok {
+		return detected, extension
+	}
+	detected := http.DetectContentType(header)
+	if semicolon := strings.IndexByte(detected, ';'); semicolon >= 0 {
+		detected = detected[:semicolon]
+	}
+	if extension, ok := galleryCanonicalExtensions[detected]; ok {
+		return detected, extension
+	}
+
+	return galleryContentType(name), filepath.Ext(name)
+}
+
+var galleryCanonicalExtensions = map[string]string{
+	"image/jpeg":      ".jpg",
+	"image/png":       ".png",
+	"image/gif":       ".gif",
+	"image/webp":      ".webp",
+	"audio/mpeg":      ".mp3",
+	"video/mp4":       ".mp4",
+	"video/webm":      ".webm",
+	"video/quicktime": ".mov",
+}
+
+// galleryISOBaseMediaType covers the image brands net/http does not sniff.
+// AVIF, HEIC, and MP4 all start with an ISO BMFF ftyp box, so all compatible
+// brands are checked and image brands win over a generic container brand.
+func galleryISOBaseMediaType(header []byte) (contentType, extension string, ok bool) {
+	if len(header) < 12 || string(header[4:8]) != "ftyp" {
+		return "", "", false
+	}
+	boxSize := int(uint32(header[0])<<24 | uint32(header[1])<<16 | uint32(header[2])<<8 | uint32(header[3]))
+	if boxSize < 12 || boxSize > len(header) {
+		boxSize = len(header)
+	}
+	brands := make(map[string]bool)
+	for offset := 8; offset+4 <= boxSize; offset += 4 {
+		brands[string(header[offset:offset+4])] = true
+	}
+	if brands["avif"] || brands["avis"] {
+		return "image/avif", ".avif", true
+	}
+	for _, brand := range []string{"heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs"} {
+		if brands[brand] {
+			return "image/heic", ".heic", true
+		}
+	}
+	if brands["mif1"] || brands["msf1"] {
+		return "image/heif", ".heif", true
+	}
+	return "", "", false
 }
 
 // writeGalleryZip stores Arker's metadata.json first so a reader can stream

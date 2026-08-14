@@ -777,7 +777,7 @@ func buildGallerySocial(c *gin.Context, store storage.Storage, shortID string, i
 			}
 			continue
 		}
-		ct := galleryFileContentType(f.Name)
+		ct := galleryZipFileContentType(f)
 		typ := "other"
 		if strings.HasPrefix(ct, "image/") {
 			typ = "image"

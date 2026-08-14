@@ -103,6 +103,11 @@ type GalleryDlFake struct {
 	// shape of a run whose raw metadata is unavailable.
 	NoSidecars bool
 
+	// ImageExtension overrides the filename extension of still images while
+	// leaving their JPEG fixture bytes unchanged. It reproduces providers that
+	// label JPEG responses as HEIC (for example, "001.heic").
+	ImageExtension string
+
 	// Version is what "--version" reports.
 	Version string
 }
@@ -205,13 +210,17 @@ func InstallFakeGalleryDl(t *testing.T, cfg GalleryDlFake) string {
 			slides = slides[:cfg.Slides]
 		}
 		for _, slide := range slides {
+			mediaName := slide.MediaName
 			if slide.IsVideo() {
-				writeStageFile(t, outDir, slide.MediaName, placeholderVideo(slide.MediaName))
+				writeStageFile(t, outDir, mediaName, placeholderVideo(mediaName))
 			} else {
-				writeStageFile(t, outDir, slide.MediaName, PlaceholderJPEG(t, 480, 600))
+				if cfg.ImageExtension != "" {
+					mediaName = strings.TrimSuffix(mediaName, filepath.Ext(mediaName)) + cfg.ImageExtension
+				}
+				writeStageFile(t, outDir, mediaName, PlaceholderJPEG(t, 480, 600))
 			}
 			if !cfg.NoSidecars {
-				writeStageFile(t, outDir, slide.SidecarName, slide.Data)
+				writeStageFile(t, outDir, mediaName+".json", slide.Data)
 			}
 		}
 	}
