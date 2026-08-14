@@ -5,15 +5,165 @@ import (
 	"context"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"arker/internal/models"
 	"arker/internal/storage"
 
 	"github.com/gin-gonic/gin"
 )
+
+func TestServeArchiveFinalDirectResponseHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const body = "valid archive bytes"
+	objectStore := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "19")
+		w.Header().Set("X-Object-Request-Method", r.Method)
+
+		// Public R2/custom-domain URLs ignore S3 response header override query
+		// parameters. The authenticated S3 endpoint applies them when they are
+		// part of the presigned request.
+		if r.URL.Query().Get("X-Amz-Signature") == "" {
+			w.Header().Set("Content-Type", "application/octet-stream")
+		} else {
+			w.Header().Set("X-Presigned-Request", "true")
+			if contentType := r.URL.Query().Get("response-content-type"); contentType != "" {
+				w.Header().Set("Content-Type", contentType)
+			}
+			if disposition := r.URL.Query().Get("response-content-disposition"); disposition != "" {
+				w.Header().Set("Content-Disposition", disposition)
+			}
+		}
+
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, body)
+		}
+	}))
+	t.Cleanup(objectStore.Close)
+
+	storageInstance, err := storage.NewS3Storage(context.Background(), storage.S3Config{
+		Endpoint:        objectStore.URL,
+		Region:          "us-east-1",
+		AccessKeyID:     "test-access-key",
+		SecretAccessKey: "test-secret-key",
+		Bucket:          "archive-bucket",
+		Prefix:          "arker",
+		ForcePathStyle:  true,
+		PublicBaseURL:   objectStore.URL + "/assets",
+	})
+	if err != nil {
+		t.Fatalf("NewS3Storage: %v", err)
+	}
+
+	tests := []struct {
+		name           string
+		storedType     string
+		requestedType  string
+		extension      string
+		wantType       string
+		wantAttachment bool
+	}{
+		{name: "yt-dlp MP4", storedType: "yt-dlp", requestedType: "yt-dlp", extension: ".mp4", wantType: "video/mp4"},
+		{name: "screenshot WebP", storedType: "screenshot", requestedType: "screenshot", extension: ".webp", wantType: "image/webp"},
+		{name: "MHTML", storedType: "mhtml", requestedType: "mhtml", extension: ".mhtml", wantType: "multipart/related", wantAttachment: true},
+		{name: "gallery-dl ZIP", storedType: "gallery-dl", requestedType: "gallery-dl", extension: ".zip", wantType: "application/zip", wantAttachment: true},
+		{name: "legacy youtube alias", storedType: "youtube", requestedType: "youtube", extension: ".mp4", wantType: "video/mp4"},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := newHandlerLogTestDB(t)
+			archivedURL := models.ArchivedURL{Original: "https://example.com/archive/" + tt.requestedType}
+			if err := db.Create(&archivedURL).Error; err != nil {
+				t.Fatalf("create archived URL: %v", err)
+			}
+			capture := models.Capture{
+				ArchivedURLID: archivedURL.ID,
+				ShortID:       "mime" + string(rune('a'+i)),
+				Timestamp:     time.Date(2026, time.August, 13, 0, 0, 0, 0, time.UTC),
+			}
+			if err := db.Create(&capture).Error; err != nil {
+				t.Fatalf("create capture: %v", err)
+			}
+			item := models.ArchiveItem{
+				CaptureID:  capture.ID,
+				Type:       tt.storedType,
+				Status:     "completed",
+				StorageKey: "artifacts/" + capture.ShortID + "/archive" + tt.extension,
+				Extension:  tt.extension,
+				FileSize:   int64(len(body)),
+			}
+			if err := db.Create(&item).Error; err != nil {
+				t.Fatalf("create archive item: %v", err)
+			}
+
+			router := gin.New()
+			router.GET("/archive/:shortid/:type", func(c *gin.Context) { ServeArchive(c, storageInstance, db) })
+			router.HEAD("/archive/:shortid/:type", func(c *gin.Context) { ServeArchive(c, storageInstance, db) })
+			archiveServer := httptest.NewServer(router)
+			t.Cleanup(archiveServer.Close)
+
+			for _, method := range []string{http.MethodGet, http.MethodHead} {
+				t.Run(method, func(t *testing.T) {
+					req, err := http.NewRequest(method, archiveServer.URL+"/archive/"+capture.ShortID+"/"+tt.requestedType, nil)
+					if err != nil {
+						t.Fatalf("NewRequest: %v", err)
+					}
+					resp, err := archiveServer.Client().Do(req)
+					if err != nil {
+						t.Fatalf("request archive: %v", err)
+					}
+					defer resp.Body.Close()
+
+					if resp.StatusCode != http.StatusOK {
+						t.Fatalf("final status = %d, want %d", resp.StatusCode, http.StatusOK)
+					}
+					if got := resp.Header.Get("Content-Type"); got != tt.wantType {
+						t.Fatalf("final Content-Type = %q, want %q (URL %s)", got, tt.wantType, resp.Request.URL)
+					}
+					if got := resp.Header.Get("X-Presigned-Request"); got != "true" {
+						t.Fatalf("final response did not use the presigned object endpoint (URL %s)", resp.Request.URL)
+					}
+					if got := resp.Header.Get("X-Object-Request-Method"); got != method {
+						t.Fatalf("final object request method = %q, want %q", got, method)
+					}
+
+					disposition := resp.Header.Get("Content-Disposition")
+					if !tt.wantAttachment {
+						if disposition != "" {
+							t.Fatalf("final Content-Disposition = %q, want inline response without attachment", disposition)
+						}
+					} else {
+						mediaType, params, err := mime.ParseMediaType(disposition)
+						if err != nil {
+							t.Fatalf("parse final Content-Disposition %q: %v", disposition, err)
+						}
+						if mediaType != "attachment" || !strings.HasSuffix(params["filename"], tt.extension) {
+							t.Fatalf("final Content-Disposition = %q, want attachment filename ending in %q", disposition, tt.extension)
+						}
+					}
+
+					responseBody, err := io.ReadAll(resp.Body)
+					if err != nil {
+						t.Fatalf("read final response: %v", err)
+					}
+					if method == http.MethodGet && string(responseBody) != body {
+						t.Fatalf("final body = %q, want %q", responseBody, body)
+					}
+					if method == http.MethodHead && len(responseBody) != 0 {
+						t.Fatalf("HEAD final body length = %d, want 0", len(responseBody))
+					}
+				})
+			}
+		})
+	}
+}
 
 func TestServeArchiveContentRedirectsToDirectStorageURL(t *testing.T) {
 	storageInstance := &fakeDirectURLStorage{

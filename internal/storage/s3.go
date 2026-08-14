@@ -203,8 +203,12 @@ func (s *S3Storage) SeekableReader(key string) (ReadSeekCloser, error) {
 // or a configured public bucket/CDN base URL.
 func (s *S3Storage) DirectURL(ctx context.Context, key string, opts DirectURLOptions) (string, error) {
 	objectKey := s.buildKey(key)
-	if s.publicBaseURL != "" {
-		return s.publicDirectURL(objectKey, opts)
+	// S3 response header overrides only take effect on authenticated requests.
+	// Public bucket and CDN URLs commonly ignore these query parameters and
+	// return the object's generic stored Content-Type instead. Use the public
+	// URL only when the caller does not need response metadata overrides.
+	if s.publicBaseURL != "" && opts.ContentType == "" && opts.ContentDisposition == "" && opts.ContentEncoding == "" {
+		return s.publicDirectURL(objectKey)
 	}
 	if s.presignClient == nil {
 		return "", errors.New("S3 presign client is not configured")
@@ -269,30 +273,12 @@ func (s *S3Storage) presignHeadURL(ctx context.Context, objectKey string, opts D
 	return result.URL, nil
 }
 
-func (s *S3Storage) publicDirectURL(objectKey string, opts DirectURLOptions) (string, error) {
+func (s *S3Storage) publicDirectURL(objectKey string) (string, error) {
 	directURL, err := url.JoinPath(s.publicBaseURL, objectKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to build public object URL: %w", err)
 	}
-
-	parsed, err := url.Parse(directURL)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse public object URL: %w", err)
-	}
-
-	query := parsed.Query()
-	if opts.ContentType != "" {
-		query.Set("response-content-type", opts.ContentType)
-	}
-	if opts.ContentDisposition != "" {
-		query.Set("response-content-disposition", opts.ContentDisposition)
-	}
-	if opts.ContentEncoding != "" {
-		query.Set("response-content-encoding", opts.ContentEncoding)
-	}
-	parsed.RawQuery = query.Encode()
-
-	return parsed.String(), nil
+	return directURL, nil
 }
 
 // s3Writer implements io.WriteCloser for S3 uploads

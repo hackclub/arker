@@ -13,6 +13,38 @@ func TestS3StorageDirectURLUsesExactStorageKeyWithPublicBaseURL(t *testing.T) {
 		prefix:        "arker",
 	}
 
+	directURL, err := storageInstance.DirectURL(context.Background(), "archive/Gxrbu/youtube.mp4", DirectURLOptions{})
+	if err != nil {
+		t.Fatalf("DirectURL returned error: %v", err)
+	}
+
+	parsed, err := url.Parse(directURL)
+	if err != nil {
+		t.Fatalf("failed to parse direct URL %q: %v", directURL, err)
+	}
+	if got, want := parsed.Path, "/files/arker/archive/Gxrbu/youtube.mp4"; got != want {
+		t.Fatalf("path = %q, want %q", got, want)
+	}
+	if parsed.RawQuery != "" {
+		t.Fatalf("query = %q, want empty for an unmodified public object response", parsed.RawQuery)
+	}
+}
+
+func TestS3StorageDirectURLPresignsResponseOverridesWhenPublicBaseURLIsConfigured(t *testing.T) {
+	storageInstance, err := NewS3Storage(context.Background(), S3Config{
+		Endpoint:        "https://s3.example.com",
+		Region:          "us-east-1",
+		AccessKeyID:     "test-access-key",
+		SecretAccessKey: "test-secret-key",
+		Bucket:          "archive-bucket",
+		Prefix:          "arker",
+		ForcePathStyle:  true,
+		PublicBaseURL:   "https://objects.example.com/files",
+	})
+	if err != nil {
+		t.Fatalf("NewS3Storage returned error: %v", err)
+	}
+
 	directURL, err := storageInstance.DirectURL(context.Background(), "archive/Gxrbu/youtube.mp4", DirectURLOptions{
 		ContentType:        "video/mp4",
 		ContentDisposition: `attachment; filename="youtube.mp4"`,
@@ -25,10 +57,13 @@ func TestS3StorageDirectURLUsesExactStorageKeyWithPublicBaseURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to parse direct URL %q: %v", directURL, err)
 	}
-	if got, want := parsed.Path, "/files/arker/archive/Gxrbu/youtube.mp4"; got != want {
-		t.Fatalf("path = %q, want %q", got, want)
+	if got, want := parsed.Host, "s3.example.com"; got != want {
+		t.Fatalf("host = %q, want presigned object endpoint %q", got, want)
 	}
 	query := parsed.Query()
+	if query.Get("X-Amz-Signature") == "" {
+		t.Fatal("presigned URL is missing X-Amz-Signature")
+	}
 	if got := query.Get("response-content-type"); got != "video/mp4" {
 		t.Fatalf("response-content-type = %q, want %q", got, "video/mp4")
 	}
