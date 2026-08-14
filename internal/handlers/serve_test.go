@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,14 +23,17 @@ func TestServeArchiveFinalDirectResponseHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	const body = "valid archive bytes"
+	var objectHeadRequests atomic.Int64
 	objectStore := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "19")
 		w.Header().Set("X-Object-Request-Method", r.Method)
 
-		// Public R2/custom-domain URLs ignore S3 response header override query
-		// parameters. The authenticated S3 endpoint applies them when they are
-		// part of the presigned request.
-		if r.URL.Query().Get("X-Amz-Signature") == "" {
+		// R2 applies signed response header overrides to GET, but ignores them
+		// on HEAD and returns the object's generic stored Content-Type instead.
+		if r.Method == http.MethodHead {
+			objectHeadRequests.Add(1)
+			w.Header().Set("Content-Type", "application/octet-stream")
+		} else if r.URL.Query().Get("X-Amz-Signature") == "" {
 			w.Header().Set("Content-Type", "application/octet-stream")
 		} else {
 			w.Header().Set("X-Presigned-Request", "true")
@@ -111,6 +115,7 @@ func TestServeArchiveFinalDirectResponseHeaders(t *testing.T) {
 
 			for _, method := range []string{http.MethodGet, http.MethodHead} {
 				t.Run(method, func(t *testing.T) {
+					headRequestsBefore := objectHeadRequests.Load()
 					req, err := http.NewRequest(method, archiveServer.URL+"/archive/"+capture.ShortID+"/"+tt.requestedType, nil)
 					if err != nil {
 						t.Fatalf("NewRequest: %v", err)
@@ -127,11 +132,29 @@ func TestServeArchiveFinalDirectResponseHeaders(t *testing.T) {
 					if got := resp.Header.Get("Content-Type"); got != tt.wantType {
 						t.Fatalf("final Content-Type = %q, want %q (URL %s)", got, tt.wantType, resp.Request.URL)
 					}
-					if got := resp.Header.Get("X-Presigned-Request"); got != "true" {
-						t.Fatalf("final response did not use the presigned object endpoint (URL %s)", resp.Request.URL)
-					}
-					if got := resp.Header.Get("X-Object-Request-Method"); got != method {
-						t.Fatalf("final object request method = %q, want %q", got, method)
+					if method == http.MethodGet {
+						if got := resp.Header.Get("X-Presigned-Request"); got != "true" {
+							t.Fatalf("final GET did not use the presigned object endpoint (URL %s)", resp.Request.URL)
+						}
+						if got := resp.Header.Get("X-Object-Request-Method"); got != http.MethodGet {
+							t.Fatalf("final object request method = %q, want GET", got)
+						}
+					} else {
+						if got := resp.Header.Get("X-Object-Request-Method"); got != "" {
+							t.Fatalf("HEAD reached object storage with method %q", got)
+						}
+						if got := objectHeadRequests.Load(); got != headRequestsBefore {
+							t.Fatalf("object HEAD requests = %d, want no increase from %d", got, headRequestsBefore)
+						}
+						if got := resp.Header.Get("Content-Length"); got != "19" {
+							t.Fatalf("HEAD Content-Length = %q, want 19", got)
+						}
+						if got := resp.Header.Get("Accept-Ranges"); got != "bytes" {
+							t.Fatalf("HEAD Accept-Ranges = %q, want bytes", got)
+						}
+						if got := resp.Header.Get("ETag"); got == "" {
+							t.Fatal("HEAD ETag is empty")
+						}
 					}
 
 					disposition := resp.Header.Get("Content-Disposition")
@@ -209,7 +232,7 @@ func TestServeArchiveContentRedirectsToDirectStorageURL(t *testing.T) {
 	}
 }
 
-func TestServeArchiveContentHeadRedirectsToDirectStorageURL(t *testing.T) {
+func TestServeArchiveContentAnswersHeadWithoutDirectStorage(t *testing.T) {
 	storageInstance := &fakeDirectURLStorage{
 		directURL: "https://objects.example.com/archive/Gxrbu/youtube.mp4?sig=abc",
 	}
@@ -226,20 +249,35 @@ func TestServeArchiveContentHeadRedirectsToDirectStorageURL(t *testing.T) {
 		Original: "https://www.youtube.com/watch?v=esxk_nScxFQ",
 	})
 
-	if recorder.Code != http.StatusTemporaryRedirect {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusTemporaryRedirect)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
-	if got := recorder.Header().Get("Location"); got != storageInstance.directURL {
-		t.Fatalf("Location = %q, want %q", got, storageInstance.directURL)
+	if got := recorder.Header().Get("Location"); got != "" {
+		t.Fatalf("Location = %q, want no object redirect", got)
 	}
 	if got := recorder.Body.Len(); got != 0 {
 		t.Fatalf("body length = %d, want 0", got)
 	}
-	if storageInstance.readerOpened || storageInstance.seekableReaderOpened {
-		t.Fatal("HEAD redirect path opened a proxy reader")
+	if got := recorder.Header().Get("Content-Type"); got != "video/mp4" {
+		t.Fatalf("Content-Type = %q, want video/mp4", got)
 	}
-	if storageInstance.directOptions.Method != http.MethodHead {
-		t.Fatalf("DirectURL Method = %q, want %q", storageInstance.directOptions.Method, http.MethodHead)
+	if got := recorder.Header().Get("Content-Length"); got != "1391726026" {
+		t.Fatalf("Content-Length = %q, want 1391726026", got)
+	}
+	if got := recorder.Header().Get("Accept-Ranges"); got != "bytes" {
+		t.Fatalf("Accept-Ranges = %q, want bytes", got)
+	}
+	if got := recorder.Header().Get("Cache-Control"); got != "public, max-age=86400" {
+		t.Fatalf("Cache-Control = %q, want public archive caching", got)
+	}
+	if got := recorder.Header().Get("ETag"); got == "" {
+		t.Fatal("ETag is empty")
+	}
+	if storageInstance.readerOpened || storageInstance.seekableReaderOpened {
+		t.Fatal("HEAD response opened a storage reader")
+	}
+	if storageInstance.directURLCalled {
+		t.Fatal("HEAD response generated a direct object URL")
 	}
 }
 
@@ -531,6 +569,7 @@ func newArchiveContentTestContext(method, rangeHeader string) (*gin.Context, *ht
 type fakeDirectURLStorage struct {
 	directURL            string
 	directURLError       error
+	directURLCalled      bool
 	directKey            string
 	directOptions        storage.DirectURLOptions
 	data                 []byte
@@ -539,6 +578,7 @@ type fakeDirectURLStorage struct {
 }
 
 func (s *fakeDirectURLStorage) DirectURL(_ context.Context, key string, opts storage.DirectURLOptions) (string, error) {
+	s.directURLCalled = true
 	s.directKey = key
 	s.directOptions = opts
 	if s.directURLError != nil {

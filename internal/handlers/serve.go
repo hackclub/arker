@@ -64,6 +64,24 @@ func serveArchiveContent(c *gin.Context, storageInstance storage.Storage, item m
 		contentDisposition = fmt.Sprintf("attachment; filename=\"%s\"", filename)
 	}
 
+	// R2 ignores response-content-type and response-content-disposition on
+	// presigned HEAD requests. Answer HEAD from the completed archive item's
+	// immutable metadata instead of redirecting to an object response that
+	// would expose application/octet-stream.
+	if c.Request.Method == http.MethodHead {
+		c.Header("Content-Type", ct)
+		c.Header("Content-Encoding", "")
+		c.Header("Content-Length", fmt.Sprintf("%d", item.FileSize))
+		if contentDisposition != "" {
+			c.Header("Content-Disposition", contentDisposition)
+		}
+		c.Header("Accept-Ranges", "bytes")
+		c.Header("Cache-Control", "public, max-age=86400")
+		c.Header("ETag", fmt.Sprintf("\"%s-%d\"", item.StorageKey, item.FileSize))
+		c.Status(http.StatusOK)
+		return
+	}
+
 	if directStorage, ok := storageInstance.(storage.DirectURLStorage); ok {
 		directURL, err := directStorage.DirectURL(c.Request.Context(), item.StorageKey, storage.DirectURLOptions{
 			Method:             c.Request.Method,
@@ -116,11 +134,6 @@ func serveArchiveContent(c *gin.Context, storageInstance storage.Storage, item m
 	// Set content length from storage
 	if fileSize, err := storageInstance.Size(item.StorageKey); err == nil {
 		c.Header("Content-Length", fmt.Sprintf("%d", fileSize))
-	}
-
-	if c.Request.Method == http.MethodHead {
-		c.Status(http.StatusOK)
-		return
 	}
 
 	// Stream the file directly
