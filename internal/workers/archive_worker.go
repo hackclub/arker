@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/riverqueue/river"
@@ -149,7 +150,7 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 	nonce := uploadNonce()
 	keyBase := fmt.Sprintf("%s/%s-%s", jobArgs.ShortID, jobArgs.Type, nonce)
 	key := keyBase + result.Extension
-	err = saveArchiveResult(result, keyBase, storage, db, item)
+	err = saveArchiveResult(ctx, result, keyBase, storage, db, item, dbLogWriter)
 	if err != nil {
 		slog.Error("Failed to save archive data", "short_id", jobArgs.ShortID, "type", jobArgs.Type, "error", err)
 		fmt.Fprintf(dbLogWriter, "\nFailed to save archive data: %v\n", err)
@@ -180,7 +181,7 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 // marks the database item completed. The bucket is append-only, so a failure
 // can leave unreachable objects behind, but it can never publish a completed
 // item whose required metadata is only partly stored.
-func saveArchiveResult(result archivers.Result, keyBase string, store storage.Storage, db *gorm.DB, item *models.ArchiveItem) error {
+func saveArchiveResult(ctx context.Context, result archivers.Result, keyBase string, store storage.Storage, db *gorm.DB, item *models.ArchiveItem, logWriter io.Writer) error {
 	key := keyBase + result.Extension
 	fileSize, err := writeArchiveData(result.Data, key, store)
 	if err != nil {
@@ -210,7 +211,11 @@ func saveArchiveResult(result archivers.Result, keyBase string, store storage.St
 
 	metadataKey := ""
 	if result.Metadata != nil {
-		metadataData, err := archivers.SetSubtitleStorageKeys(result.Metadata.Data, extraKeys)
+		metadataData := result.Metadata.Data
+		if isVideoArtifact(result) {
+			metadataData = backfillStoredVideoMetadata(ctx, store, key, metadataData, logWriter)
+		}
+		metadataData, err := archivers.SetSubtitleStorageKeys(metadataData, extraKeys)
 		if err != nil {
 			return fmt.Errorf("failed to record extra artifact keys: %w", err)
 		}
@@ -246,6 +251,49 @@ func saveArchiveResult(result archivers.Result, keyBase string, store storage.St
 		updates["completeness"] = archivers.NormalizeCompletenessState(result.Completeness)
 	}
 	return db.Model(item).Updates(updates).Error
+}
+
+func isVideoArtifact(result archivers.Result) bool {
+	return strings.HasPrefix(strings.ToLower(result.ContentType), "video/") ||
+		strings.EqualFold(result.Extension, ".mp4") ||
+		strings.EqualFold(result.Extension, ".m4v") ||
+		strings.EqualFold(result.Extension, ".mov") ||
+		strings.EqualFold(result.Extension, ".webm")
+}
+
+// backfillStoredVideoMetadata deliberately reads through Storage after the
+// primary artifact write succeeds. Provider records can describe a selected
+// pre-remux stream or omit facts entirely; the stored bytes are authoritative
+// for missing duration, dimensions and codec facts. Probe failures are only a
+// metadata warning and do not change social completeness or fail good media.
+func backfillStoredVideoMetadata(ctx context.Context, store storage.Storage, key string, metadataJSON []byte, logWriter io.Writer) []byte {
+	reader, err := store.Reader(key)
+	if err != nil {
+		logVideoProbeWarning(logWriter, key, fmt.Errorf("open stored artifact: %w", err))
+		return metadataJSON
+	}
+	defer reader.Close()
+
+	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	probe, err := archivers.ProbeVideo(probeCtx, reader)
+	if err != nil {
+		logVideoProbeWarning(logWriter, key, err)
+		return metadataJSON
+	}
+	backfilled, err := archivers.BackfillVideoMetadata(metadataJSON, probe)
+	if err != nil {
+		logVideoProbeWarning(logWriter, key, err)
+		return metadataJSON
+	}
+	return backfilled
+}
+
+func logVideoProbeWarning(logWriter io.Writer, key string, err error) {
+	slog.Warn("Could not probe stored video metadata", "storage_key", key, "error", err)
+	if logWriter != nil {
+		fmt.Fprintf(logWriter, "\nWarning: could not probe stored video metadata: %v\n", err)
+	}
 }
 
 func writeExtraArtifact(store storage.Storage, key string, data []byte) error {

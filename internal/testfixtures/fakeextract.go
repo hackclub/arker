@@ -46,6 +46,11 @@ type YtDlpFake struct {
 	// FailProbe or FailDownload is set with NoInfoJSON.
 	Fixture string
 
+	// InfoJSON overrides the named fixture's provider record while retaining
+	// its URL, subtitle tracks and other staged files. Tests use this to replay
+	// real extractor omissions without adding a near-duplicate fixture file.
+	InfoJSON []byte
+
 	// VideoBytes is the MP4 payload written beside the info JSON. Defaults to
 	// a small deterministic filler.
 	VideoBytes []byte
@@ -148,6 +153,9 @@ func InstallFakeYtDlp(t *testing.T, cfg YtDlpFake) string {
 	if cfg.Fixture != "" {
 		c := Lookup(t, cfg.Fixture)
 		info := c.InfoJSON(t)
+		if cfg.InfoJSON != nil {
+			info = cfg.InfoJSON
+		}
 		title = jsonStringField(t, info, "title")
 		uploader = jsonStringField(t, info, "uploader")
 		duration = jsonNumberField(t, info, "duration")
