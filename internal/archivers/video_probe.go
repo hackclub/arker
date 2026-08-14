@@ -12,8 +12,8 @@ import (
 )
 
 // VideoProbe contains intrinsic facts read from the archived media itself.
-// Provider records are still preferred when they supplied a value: a probe is
-// a backfill for omissions, not a reason to rewrite trustworthy metadata.
+// Valid probe values are authoritative because they describe the exact bytes
+// Arker stored; provider values remain fallbacks when a fact cannot be probed.
 type VideoProbe struct {
 	DurationSeconds *float64
 	Width           *int64
@@ -106,8 +106,9 @@ func ProbeVideo(ctx context.Context, media io.Reader) (VideoProbe, error) {
 	return probe, nil
 }
 
-// BackfillVideoMetadata fills only absent fields in normalized video metadata.
-// In particular, provider duration/dimensions/codecs win over probe output.
+// BackfillVideoMetadata reconciles normalized intrinsic media facts with the
+// stored artifact. Valid probe values are authoritative; existing provider
+// values survive only where ffprobe did not return a usable value.
 func BackfillVideoMetadata(metadataJSON []byte, probe VideoProbe) ([]byte, error) {
 	var metadata VideoMetadata
 	if err := json.Unmarshal(metadataJSON, &metadata); err != nil {
@@ -117,13 +118,13 @@ func BackfillVideoMetadata(metadataJSON []byte, probe VideoProbe) ([]byte, error
 		return metadataJSON, nil
 	}
 
-	metadata.DurationSeconds = firstVideoFloat(metadata.DurationSeconds, probe.DurationSeconds)
-	metadata.Media.Width = firstVideoInt(metadata.Media.Width, probe.Width)
-	metadata.Media.Height = firstVideoInt(metadata.Media.Height, probe.Height)
-	metadata.Media.FPS = firstVideoFloat(metadata.Media.FPS, probe.FPS)
-	metadata.Media.VideoCodec = firstVideoString(metadata.Media.VideoCodec, probe.VideoCodec)
-	metadata.Media.AudioCodec = firstVideoString(metadata.Media.AudioCodec, probe.AudioCodec)
-	metadata.Media.BitrateKbps = firstVideoFloat(metadata.Media.BitrateKbps, probe.BitrateKbps)
+	metadata.DurationSeconds = firstVideoFloat(probe.DurationSeconds, metadata.DurationSeconds)
+	metadata.Media.Width = firstVideoInt(probe.Width, metadata.Media.Width)
+	metadata.Media.Height = firstVideoInt(probe.Height, metadata.Media.Height)
+	metadata.Media.FPS = firstVideoFloat(probe.FPS, metadata.Media.FPS)
+	metadata.Media.VideoCodec = firstVideoString(probe.VideoCodec, metadata.Media.VideoCodec)
+	metadata.Media.AudioCodec = firstVideoString(probe.AudioCodec, metadata.Media.AudioCodec)
+	metadata.Media.BitrateKbps = firstVideoFloat(probe.BitrateKbps, metadata.Media.BitrateKbps)
 	return MarshalVideoMetadata(&metadata)
 }
 

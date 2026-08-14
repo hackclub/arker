@@ -264,8 +264,9 @@ func isVideoArtifact(result archivers.Result) bool {
 // backfillStoredVideoMetadata deliberately reads through Storage after the
 // primary artifact write succeeds. Provider records can describe a selected
 // pre-remux stream or omit facts entirely; the stored bytes are authoritative
-// for missing duration, dimensions and codec facts. Probe failures are only a
-// metadata warning and do not change social completeness or fail good media.
+// for intrinsic duration, dimensions, codec, frame rate and bitrate facts.
+// Probe failures are only a metadata warning and do not change social
+// completeness or fail good media.
 func backfillStoredVideoMetadata(ctx context.Context, store storage.Storage, key string, metadataJSON []byte, logWriter io.Writer) []byte {
 	reader, err := store.Reader(key)
 	if err != nil {
