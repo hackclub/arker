@@ -139,45 +139,60 @@ func openGalleryZip(c *gin.Context, storageInstance storage.Storage, db *gorm.DB
 // openGalleryZipData opens a known completed gallery item without writing an
 // HTTP response. It is shared by the unified result and raw-metadata adapters.
 func openGalleryZipData(storageInstance storage.Storage, item *models.ArchiveItem) (*zip.Reader, func(), bool) {
-	if item == nil || item.Status != "completed" || item.StorageKey == "" {
+	zr, cleanup, err := openGalleryZipItem(storageInstance, item)
+	if err != nil {
 		return nil, nil, false
+	}
+	return zr, cleanup, true
+}
+
+// openGalleryZipItem is openGalleryZipData with the failure reason kept, so a
+// caller can tell "this bundle cannot be read right now" (retryable) from "this
+// item holds no bundle" (permanent).
+func openGalleryZipItem(storageInstance storage.Storage, item *models.ArchiveItem) (*zip.Reader, func(), error) {
+	if item == nil || item.Status != "completed" || item.StorageKey == "" {
+		return nil, nil, fmt.Errorf("gallery item has no stored bundle")
 	}
 	size, err := storageInstance.Size(item.StorageKey)
 	if err != nil {
-		return nil, nil, false
+		return nil, nil, fmt.Errorf("stat gallery bundle: %w", err)
 	}
 	if seekable, ok := storageInstance.(storage.SeekableStorage); ok {
 		reader, err := seekable.SeekableReader(item.StorageKey)
 		if err == nil {
 			zr, err := zip.NewReader(&seekerReaderAt{seeker: reader}, size)
 			if err == nil {
-				return zr, func() { _ = reader.Close() }, true
+				return zr, func() { _ = reader.Close() }, nil
 			}
 			_ = reader.Close()
 		}
 	}
 	if size > maxGalleryBufferedSize {
-		return nil, nil, false
+		return nil, nil, fmt.Errorf("gallery bundle exceeds %d bytes and the backend cannot seek", maxGalleryBufferedSize)
 	}
 	r, err := storageInstance.Reader(item.StorageKey)
 	if err != nil {
-		return nil, nil, false
+		return nil, nil, fmt.Errorf("open gallery bundle: %w", err)
 	}
 	defer r.Close()
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return nil, nil, false
+		return nil, nil, fmt.Errorf("read gallery bundle: %w", err)
 	}
 	zr, err := zip.NewReader(&bytesReaderAtCloser{data: data}, int64(len(data)))
 	if err != nil {
-		return nil, nil, false
+		return nil, nil, fmt.Errorf("gallery bundle is not a readable ZIP: %w", err)
 	}
-	return zr, func() {}, true
+	return zr, func() {}, nil
 }
 
-// ServeGalleryManifest returns the normalized post metadata plus the list of
+// ServeGalleryList returns the normalized post metadata plus the list of
 // media files in the archive. The viewer calls this to render a post.
-func ServeGalleryManifest(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
+//
+// API consumers should prefer ServeGalleryManifest (/gallery/:shortid/manifest),
+// which carries capture status, explicit slide order and absolute media URLs.
+// This endpoint predates it and its shape is frozen for the viewer.
+func ServeGalleryList(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
 	shortID := c.Param("shortid")
 
 	zipReader, cleanup, ok := openGalleryZip(c, storageInstance, db, shortID)

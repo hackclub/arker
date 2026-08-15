@@ -34,6 +34,13 @@ import (
 // per-file metadata sidecars, and a normalized metadata.json written by Arker.
 type GalleryDLArchiver struct{}
 
+// GalleryMetadataSchemaVersion is the public normalized gallery/post contract,
+// covering both this struct and the /gallery/:shortid/manifest envelope that
+// carries it. Additive fields do not require a new version; incompatible
+// meaning or shape changes do. It shares the video contract's numbering so a
+// consumer reading either manifest sees one versioning scheme.
+const GalleryMetadataSchemaVersion = "1"
+
 // GalleryMetadata is Arker's normalized view of a gallery-dl capture. The
 // raw, site-specific metadata is preserved alongside it in the ZIP, so this
 // only needs to carry the fields a viewer wants: who posted, what they said,

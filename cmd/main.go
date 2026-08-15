@@ -825,7 +825,8 @@ func main() {
 	r.GET("/itch/:shortid/list", func(c *gin.Context) { handlers.ServeItchGameList(c, storageInstance, db) })
 
 	// Gallery routes - MUST come before /:shortid/:type catch-all
-	r.GET("/gallery/:shortid/list", func(c *gin.Context) { handlers.ServeGalleryManifest(c, storageInstance, db) })
+	r.GET("/gallery/:shortid/manifest", func(c *gin.Context) { handlers.ServeGalleryManifest(c, storageInstance, db) })
+	r.GET("/gallery/:shortid/list", func(c *gin.Context) { handlers.ServeGalleryList(c, storageInstance, db) })
 	r.GET("/gallery/:shortid/raw", func(c *gin.Context) { handlers.ServeGalleryRawMetadata(c, storageInstance, db) })
 	r.GET("/gallery/:shortid/file/*filepath", func(c *gin.Context) { handlers.ServeGalleryFile(c, storageInstance, db) })
 

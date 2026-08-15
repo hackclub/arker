@@ -86,7 +86,8 @@ func seedGalleryCapture(t *testing.T, db *gorm.DB, storageInstance storage.Stora
 func newGalleryRouter(db *gorm.DB, storageInstance storage.Storage) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.GET("/gallery/:shortid/list", func(c *gin.Context) { ServeGalleryManifest(c, storageInstance, db) })
+	r.GET("/gallery/:shortid/list", func(c *gin.Context) { ServeGalleryList(c, storageInstance, db) })
+	r.GET("/gallery/:shortid/manifest", func(c *gin.Context) { ServeGalleryManifest(c, storageInstance, db) })
 	r.GET("/gallery/:shortid/file/*filepath", func(c *gin.Context) { ServeGalleryFile(c, storageInstance, db) })
 	r.GET("/gallery/:shortid/raw", func(c *gin.Context) { ServeGalleryRawMetadata(c, storageInstance, db) })
 	return r
@@ -268,7 +269,7 @@ func TestServeGalleryFileSniffsLegacyMisleadingExtension(t *testing.T) {
 	}
 }
 
-func TestServeGalleryManifestReturnsMetadataAndMediaOnly(t *testing.T) {
+func TestServeGalleryListReturnsMetadataAndMediaOnly(t *testing.T) {
 	db := newHandlerLogTestDB(t)
 	storageInstance := storage.NewMemoryStorage()
 	seedGalleryCapture(t, db, storageInstance, "7fbf9", "completed")

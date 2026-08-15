@@ -87,7 +87,8 @@ When using Amp with `make dev` running in another window:
 │   │   ├── display.go      # Archive display pages
 │   │   ├── git.go          # Git HTTP backend
 │   │   ├── itch_serve.go   # itch.io individual file serving
-│   │   ├── gallery_dl_serve.go # gallery-dl manifest + per-file serving
+│   │   ├── gallery_dl_serve.go # gallery-dl ZIP browsing + per-file serving
+│   │   ├── gallery_manifest.go # gallery manifest (status, metadata, card URLs)
 │   │   ├── thumb.go        # Thumbnail serving + placeholder
 │   │   └── serve.go        # File serving with streaming
 │   ├── models/             # Database models & types
@@ -158,7 +159,8 @@ When using Amp with `make dev` running in another window:
 - `GET /git/:shortid` - Git HTTP backend for cloning repositories
 - `GET /itch/:shortid/file/*filepath` - Stream individual files from itch.io game archives
 - `GET /itch/:shortid/list` - JSON list of files in itch.io game archive
-- `GET /gallery/:shortid/list` - JSON post metadata + media file list for a gallery-dl archive
+- `GET /gallery/:shortid/manifest` - Gallery capture status, normalized post metadata, and one absolute media URL per card in swipe order (the video manifest's counterpart; what API consumers should use)
+- `GET /gallery/:shortid/list` - JSON post metadata + media file list for a gallery-dl archive (viewer-facing, predates the manifest, shape frozen)
 - `GET /gallery/:shortid/file/*filepath` - Stream one media file out of a gallery-dl archive
 - `GET /video/:shortid/manifest` - Video capture status, normalized post metadata, and archived media URL. `metadata.media_type` is the platform's own delivery format (YouTube reports `short` or `video`), passed through verbatim from the provider record so it always matches `/video/:shortid/raw`; it is absent — never guessed — when the provider names none (Instagram, TikTok, Facebook, and the Bright Data fallbacks) or when the archive predates the field
 - `GET /video/:shortid/raw` - Sanitized raw yt-dlp/Bright Data provider record

@@ -89,10 +89,17 @@ video in this post"*. Those URLs go to `gallery-dl` instead, which fetches every
 image and video in the post along with the caption, author, date, and like count.
 
 The result is a ZIP holding every downloaded file, gallery-dl's raw per-file
-metadata sidecars, and a normalized `metadata.json` written by Arker. The viewer
-renders it as the original post; `/gallery/:shortid/list` returns the same data
-as JSON. `/gallery/:shortid/raw` returns sanitized provider sidecars while the
-existing ZIP remains available unchanged.
+metadata sidecars, and a normalized `metadata.json` written by Arker.
+
+`GET /gallery/:shortid/manifest` is the counterpart of the video manifest and
+the endpoint API consumers should use: capture status, normalized post
+metadata, and one complete `media_url` per card in swipe order, each fetchable
+on its own from `/gallery/:shortid/file/<name>`. Nobody has to download the ZIP
+to read a carousel, and no caller has to build a path out of the capture tool's
+name. Unfinished, failed and legacy captures answer `200` with the state named
+explicitly. `/gallery/:shortid/raw` returns sanitized provider sidecars, the
+viewer's own `/gallery/:shortid/list` is unchanged, and the ZIP remains
+available at `/archive/:shortid/gallery-dl`.
 
 Routed hosts (post-shaped URLs only, so a profile link never pulls a whole
 account): Instagram `/p/` and `/tv/`, X/Twitter, Reddit, Tumblr, Bluesky, Flickr,

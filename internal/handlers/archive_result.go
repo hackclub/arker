@@ -783,15 +783,7 @@ func buildGallerySocial(c *gin.Context, store storage.Storage, shortID string, i
 			continue
 		}
 		ct := galleryZipFileContentType(f)
-		typ := "other"
-		if strings.HasPrefix(ct, "image/") {
-			typ = "image"
-		} else if strings.HasPrefix(ct, "video/") {
-			typ = "video"
-		} else if strings.HasPrefix(ct, "audio/") {
-			typ = "audio"
-		}
-		media := normalizedMedia{Index: len(out.Media), Type: typ, URL: fullPath(c, fmt.Sprintf("gallery/%s/file/%s", shortID, url.PathEscape(f.Name))), Filename: f.Name, ContentType: ct, SizeBytes: int64(f.UncompressedSize64)}
+		media := normalizedMedia{Index: len(out.Media), Type: galleryMediaKind(ct), URL: fullPath(c, fmt.Sprintf("gallery/%s/file/%s", shortID, url.PathEscape(f.Name))), Filename: f.Name, ContentType: ct, SizeBytes: int64(f.UncompressedSize64)}
 		if details, ok := fileMetadata[f.Name]; ok {
 			if details.Width > 0 {
 				width := int64(details.Width)

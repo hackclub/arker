@@ -263,6 +263,65 @@
 		</div>
 		<p>Returns the captured yt-dlp info JSON or Bright Data provider response after credentials, cookies, authorization headers, proxy details, signed URL secrets, and similar sensitive values have been redacted.</p>
 
+		<h3>Gallery Media Manifest</h3>
+		<div class="code-block">
+			<code>GET https://{{.baseURL}}/gallery/&lt;short_id&gt;/manifest</code>
+		</div>
+		<p>The photo-post counterpart of the video manifest, with the same envelope and the same keyless access. A carousel is many assets, so <code>media_url</code> becomes an ordered <code>media</code> list: one entry per card, in swipe order, each with a complete URL you can <code>GET</code> directly. <code>index</code> counts from 0 and is the card's position in the post as published. Downloading the ZIP is not required, and no URL has to be built from the capture tool's name.</p>
+		<div class="response">
+			<div class="code-block"><code>{
+  "schema_version": "1",
+  "short_id": "a1b2c",
+  "capture_status": "completed",
+  "media_count": 2,
+  "media": [
+    {
+      "index": 0,
+      "media_url": "https://{{.baseURL}}/gallery/a1b2c/file/001.jpg",
+      "filename": "001.jpg",
+      "type": "image",
+      "content_type": "image/jpeg",
+      "size_bytes": 57150,
+      "width": 1080,
+      "height": 1350
+    },
+    {
+      "index": 1,
+      "media_url": "https://{{.baseURL}}/gallery/a1b2c/file/002.mp4",
+      "filename": "002.mp4",
+      "type": "video",
+      "content_type": "video/mp4",
+      "size_bytes": 812345
+    }
+  ],
+  "archive_url": "https://{{.baseURL}}/archive/a1b2c/gallery-dl",
+  "metadata_available": true,
+  "metadata": {
+    "source_url": "https://www.instagram.com/p/example/",
+    "extractor": "instagram",
+    "author": "someone",
+    "description": "a caption",
+    "date": "2025-07-17T10:07:45.000Z",
+    "file_count": 2,
+    "completeness": {"state": "complete", "expected": 2, "stored": 2}
+  },
+  "raw_metadata_url": "https://{{.baseURL}}/gallery/a1b2c/raw"
+}</code></div>
+		</div>
+		<p>An unfinished or failed capture still answers <code>200</code> with its real <code>capture_status</code>, an empty <code>media</code> list, and <code>metadata_unavailable_reason: "capture_not_completed"</code>, so polling can tell it apart from a capture that does not exist (<code>404</code>). A bundle stored before Arker normalized gallery metadata still lists every fetchable card, with <code>metadata: null</code> and <code>metadata_unavailable_reason: "legacy_archive_without_structured_metadata"</code>.</p>
+
+		<h3>Gallery Media File</h3>
+		<div class="code-block">
+			<code>GET https://{{.baseURL}}/gallery/&lt;short_id&gt;/file/&lt;filename&gt;</code>
+		</div>
+		<p>Streams one card out of the archive with its real content type and range support. Use the <code>media_url</code> values from the manifest rather than composing this path yourself. The full ZIP remains available at <code>/archive/&lt;short_id&gt;/gallery-dl</code>.</p>
+
+		<h3>Sanitized Raw Gallery Metadata</h3>
+		<div class="code-block">
+			<code>GET https://{{.baseURL}}/gallery/&lt;short_id&gt;/raw</code>
+		</div>
+		<p>Returns the provider's own per-card records after redaction. Signed CDN URLs in these records are redacted and therefore not fetchable; the archived bytes are served from <code>media_url</code> instead.</p>
+
         <h3>Git Repository Access</h3>
         <div class="code-block">
             <code>git clone https://{{.baseURL}}/git/&lt;short_id&gt;</code>
