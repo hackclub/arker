@@ -22,25 +22,35 @@ const VideoMetadataSchemaVersion = "1"
 // The provider's sanitized raw record is stored separately so this shape can
 // remain stable when yt-dlp or an upstream API changes.
 type VideoMetadata struct {
-	SchemaVersion        string          `json:"schema_version"`
-	SourceURL            string          `json:"source_url"`
-	Platform             string          `json:"platform,omitempty"`
-	Extractor            string          `json:"extractor,omitempty"`
-	PostID               string          `json:"post_id,omitempty"`
-	CanonicalURL         string          `json:"canonical_url,omitempty"`
-	Title                string          `json:"title,omitempty"`
-	Description          string          `json:"description,omitempty"`
-	Author               string          `json:"author,omitempty"`
-	AuthorID             string          `json:"author_id,omitempty"`
-	Uploader             string          `json:"uploader,omitempty"`
-	UploaderID           string          `json:"uploader_id,omitempty"`
-	Channel              string          `json:"channel,omitempty"`
-	ChannelID            string          `json:"channel_id,omitempty"`
-	PublicationTimestamp string          `json:"publication_timestamp,omitempty"`
-	DurationSeconds      *float64        `json:"duration_seconds,omitempty"`
-	Engagement           VideoEngagement `json:"engagement"`
-	Tags                 []string        `json:"tags,omitempty"`
-	Media                VideoMedia      `json:"media"`
+	SchemaVersion        string   `json:"schema_version"`
+	SourceURL            string   `json:"source_url"`
+	Platform             string   `json:"platform,omitempty"`
+	Extractor            string   `json:"extractor,omitempty"`
+	PostID               string   `json:"post_id,omitempty"`
+	CanonicalURL         string   `json:"canonical_url,omitempty"`
+	Title                string   `json:"title,omitempty"`
+	Description          string   `json:"description,omitempty"`
+	Author               string   `json:"author,omitempty"`
+	AuthorID             string   `json:"author_id,omitempty"`
+	Uploader             string   `json:"uploader,omitempty"`
+	UploaderID           string   `json:"uploader_id,omitempty"`
+	Channel              string   `json:"channel,omitempty"`
+	ChannelID            string   `json:"channel_id,omitempty"`
+	PublicationTimestamp string   `json:"publication_timestamp,omitempty"`
+	DurationSeconds      *float64 `json:"duration_seconds,omitempty"`
+	// MediaType is the platform's own name for the delivery format of the
+	// post — "short" for a YouTube Short, "video" for an ordinary one. It is a
+	// passthrough of the provider's term rather than a vocabulary of Arker's
+	// invention, so it always matches what /video/:shortid/raw reports.
+	//
+	// It is absent, never guessed, when the provider names no delivery format
+	// (Instagram, TikTok and Facebook records carry none) and on archives
+	// captured before this field existed. Duration and aspect ratio are not a
+	// substitute: a 60-second 9:16 upload can be either.
+	MediaType  string          `json:"media_type,omitempty"`
+	Engagement VideoEngagement `json:"engagement"`
+	Tags       []string        `json:"tags,omitempty"`
+	Media      VideoMedia      `json:"media"`
 	// Subtitles lists the stored caption tracks, and Transcript is the readable
 	// text derived from the best of them. Both are additive and both are
 	// absent for most posts: a platform that exposes no captions is a fact
@@ -133,6 +143,7 @@ func BuildYtDlpVideoArtifacts(rawJSON []byte, sourceURL, toolVersion string, med
 		ChannelID:            videoString(raw, "channel_id"),
 		PublicationTimestamp: videoPublicationTimestamp(raw),
 		DurationSeconds:      videoFloat(raw, "duration"),
+		MediaType:            videoString(raw, "media_type"),
 		Engagement: VideoEngagement{
 			Views:    videoInt(raw, "view_count"),
 			Likes:    videoInt(raw, "like_count"),

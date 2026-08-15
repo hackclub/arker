@@ -98,15 +98,20 @@ type socialCompleteness struct {
 }
 
 type normalizedPost struct {
-	ID              string            `json:"id,omitempty"`
-	URL             string            `json:"url,omitempty"`
-	Title           string            `json:"title,omitempty"`
-	Text            string            `json:"text,omitempty"`
-	PublishedAt     string            `json:"published_at,omitempty"`
-	DurationSeconds *float64          `json:"duration_seconds,omitempty"`
-	Author          *normalizedAuthor `json:"author,omitempty"`
-	Engagement      *socialEngagement `json:"engagement,omitempty"`
-	Tags            []string          `json:"tags,omitempty"`
+	ID              string   `json:"id,omitempty"`
+	URL             string   `json:"url,omitempty"`
+	Title           string   `json:"title,omitempty"`
+	Text            string   `json:"text,omitempty"`
+	PublishedAt     string   `json:"published_at,omitempty"`
+	DurationSeconds *float64 `json:"duration_seconds,omitempty"`
+	// MediaType is the platform's own delivery format ("short", "video"),
+	// carried through from the normalized record so this endpoint and
+	// /video/:shortid/manifest never disagree. Absent where the provider
+	// names none.
+	MediaType  string            `json:"media_type,omitempty"`
+	Author     *normalizedAuthor `json:"author,omitempty"`
+	Engagement *socialEngagement `json:"engagement,omitempty"`
+	Tags       []string          `json:"tags,omitempty"`
 }
 
 type normalizedAuthor struct {
@@ -686,7 +691,7 @@ func buildVideoSocial(c *gin.Context, store storage.Storage, shortID string, ite
 	if eng.Views == nil && eng.Likes == nil && eng.Comments == nil && eng.Reposts == nil {
 		eng = nil
 	}
-	out.Post = &normalizedPost{ID: meta.PostID, URL: meta.CanonicalURL, Title: meta.Title, Text: meta.Description, PublishedAt: meta.PublicationTimestamp, DurationSeconds: meta.DurationSeconds, Author: author, Engagement: eng, Tags: meta.Tags}
+	out.Post = &normalizedPost{ID: meta.PostID, URL: meta.CanonicalURL, Title: meta.Title, Text: meta.Description, PublishedAt: meta.PublicationTimestamp, DurationSeconds: meta.DurationSeconds, MediaType: meta.MediaType, Author: author, Engagement: eng, Tags: meta.Tags}
 	if len(out.Media) > 0 {
 		out.Media[0].ContentType = meta.Media.ContentType
 		out.Media[0].SizeBytes = meta.Media.SizeBytes

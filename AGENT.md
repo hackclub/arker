@@ -160,7 +160,7 @@ When using Amp with `make dev` running in another window:
 - `GET /itch/:shortid/list` - JSON list of files in itch.io game archive
 - `GET /gallery/:shortid/list` - JSON post metadata + media file list for a gallery-dl archive
 - `GET /gallery/:shortid/file/*filepath` - Stream one media file out of a gallery-dl archive
-- `GET /video/:shortid/manifest` - Video capture status, normalized post metadata, and archived media URL
+- `GET /video/:shortid/manifest` - Video capture status, normalized post metadata, and archived media URL. `metadata.media_type` is the platform's own delivery format (YouTube reports `short` or `video`), passed through verbatim from the provider record so it always matches `/video/:shortid/raw`; it is absent — never guessed — when the provider names none (Instagram, TikTok, Facebook, and the Bright Data fallbacks) or when the archive predates the field
 - `GET /video/:shortid/raw` - Sanitized raw yt-dlp/Bright Data provider record
 - `GET /video/:shortid/subtitle/:name` - One stored caption track (`name` is `<lang>.<format>`, e.g. `en.vtt`); only tracks the archive's own metadata records are servable
 - `GET /video/:shortid/transcript` - Plain-text transcript derived from the best caption track
