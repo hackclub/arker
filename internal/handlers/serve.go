@@ -30,6 +30,22 @@ func ServeArchive(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) 
 	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
 		Where("captures.short_id = ? AND archive_items.type IN ?", shortID, utils.ArchiveTypeMatchValues(typ)).
 		First(&item).Error; err != nil {
+		// A complete, single-video gallery is a video even when Instagram's
+		// submitted permalink used /p/ and therefore selected gallery-dl. Serve
+		// its media entry through the stable yt-dlp/youtube URL so existing
+		// clients do not need to know which extractor discovered the bytes.
+		if typ == utils.ArchiveTypeYtDlp {
+			projection, cleanup, projectionErr := projectGalleryVideo(storageInstance, db, shortID)
+			if projectionErr != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "video archive temporarily unavailable"})
+				return
+			}
+			defer cleanup()
+			if projection != nil {
+				serveGalleryZipEntry(c, shortID, projection.Entry)
+				return
+			}
+		}
 		c.JSON(http.StatusNotFound, gin.H{"error": "archive not found"})
 		return
 	}
