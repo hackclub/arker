@@ -243,7 +243,6 @@
   "short_id": "a1b2c",
   "capture_status": "completed",
   "media_url": "/archive/a1b2c/yt-dlp",
-  "thumbnail_available": true,
   "thumbnail_url": "/thumb/a1b2c",
   "metadata_available": true,
   "metadata": {
@@ -259,7 +258,7 @@
 		</div>
 		<p>For videos captured before structured metadata was introduced, the endpoint still returns the real capture status and media URL, with <code>metadata: null</code>, <code>metadata_available: false</code>, and <code>metadata_unavailable_reason: "legacy_archive_without_structured_metadata"</code>. It never synthesizes fields from archive logs.</p>
 		<p><code>thumbnail_url</code> is a preview image <strong>Arker stored</strong>, never a link to a platform CDN: those expire and are not archived. Fetch it directly; it is a 480&times;270 JPEG. It is the capture's best available image &mdash; the video's own poster when the platform published one, and the archived page screenshot when it did not, since every URL is captured as MHTML and a screenshot before any media archiver runs.</p>
-		<p>Check <code>thumbnail_available</code> before using it. It is always present, so <code>false</code> means this archive genuinely has no thumbnail &mdash; distinct from the field being missing entirely, which means the server predates it. When <code>false</code>, <code>thumbnail_url</code> is <code>null</code> and <code>thumbnail_unavailable_reason</code> says why: <code>capture_not_completed</code> while a capture is still running, or <code>no_thumbnail_captured</code> when the capture stored no usable image at all &mdash; typically an archive taken before Arker stored previews, since a completed capture normally has at least its page screenshot. Do not fall back to building a <code>/thumb/</code> path yourself: that endpoint always answers with an image, serving a generated placeholder when none exists, so it cannot tell you whether a real thumbnail is there.</p>
+		<p>The key is always present. It is <code>null</code> &mdash; never omitted &mdash; when the capture stored no image at all, which in practice means an archive taken before Arker stored previews, since a completed capture normally has at least its page screenshot. That way <code>null</code> means "this archive has no thumbnail" and a missing key means "this server predates the field". Do not substitute a <code>/thumb/</code> path you build yourself when it is <code>null</code>: that endpoint always answers with an image, serving a generated placeholder when none exists, so it would silently give you a placeholder instead of nothing.</p>
 
 		<h3>Sanitized Raw Video Metadata</h3>
 		<div class="code-block">
@@ -298,7 +297,6 @@
       "size_bytes": 812345
     }
   ],
-  "thumbnail_available": true,
   "thumbnail_url": "https://{{.baseURL}}/thumb/a1b2c",
   "archive_url": "https://{{.baseURL}}/archive/a1b2c/gallery-dl",
   "metadata_available": true,
@@ -315,7 +313,7 @@
 }</code></div>
 		</div>
 		<p>An unfinished or failed capture still answers <code>200</code> with its real <code>capture_status</code>, an empty <code>media</code> list, and <code>metadata_unavailable_reason: "capture_not_completed"</code>, so polling can tell it apart from a capture that does not exist (<code>404</code>). A bundle stored before Arker normalized gallery metadata still lists every fetchable card, with <code>metadata: null</code> and <code>metadata_unavailable_reason: "legacy_archive_without_structured_metadata"</code>.</p>
-		<p><code>thumbnail_available</code>, <code>thumbnail_url</code> and <code>thumbnail_unavailable_reason</code> mean exactly what they mean in the video manifest, so one code path covers a carousel and a reel. The post's own cover is its first card; a post whose cards are all video falls back to the archived page screenshot rather than a frame Arker never captured.</p>
+		<p><code>thumbnail_url</code> means exactly what it means in the video manifest, so one code path covers a carousel and a reel. The post's own cover is its first card; a post whose cards are all video falls back to the archived page screenshot rather than a frame Arker never captured.</p>
 
 		<h3>Gallery Media File</h3>
 		<div class="code-block">

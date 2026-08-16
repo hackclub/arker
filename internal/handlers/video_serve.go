@@ -22,29 +22,25 @@ type videoManifestResponse struct {
 	ShortID       string  `json:"short_id"`
 	CaptureStatus string  `json:"capture_status"`
 	MediaURL      *string `json:"media_url"`
-	// ThumbnailAvailable and ThumbnailURL report the preview image Arker
-	// archived for this video, next to the media it previews.
+	// ThumbnailURL is the preview image Arker archived for this video, next to
+	// the media it previews.
 	//
-	// The URL points at an object Arker stored at capture time, derived from
-	// the poster the extractor supplied. It is never a platform CDN link:
-	// those expire, are redacted for some providers, and are not archived, so
-	// reporting one would hand consumers a URL that rots.
+	// It points at an object Arker stored at capture time, derived from the
+	// poster the extractor supplied or, when the platform published none, from
+	// the screenshot every capture takes of the page. It is never a platform
+	// CDN link: those expire, are redacted for some providers, and are not
+	// archived, so reporting one would hand consumers a URL that rots.
 	//
-	// ThumbnailAvailable is always present, including when false, so a
-	// consumer can tell "this archive has no thumbnail" from "this Arker
-	// predates the field". ThumbnailURL is null in that case rather than
-	// pointing at /thumb, which always renders a placeholder and so could
-	// never express absence.
-	ThumbnailAvailable bool    `json:"thumbnail_available"`
-	ThumbnailURL       *string `json:"thumbnail_url"`
-	// ThumbnailUnavailableReason names why there is no preview, using the same
-	// vocabulary as MetadataUnavailableReason.
-	ThumbnailUnavailableReason string          `json:"thumbnail_unavailable_reason,omitempty"`
-	MetadataAvailable          bool            `json:"metadata_available"`
-	Metadata                   json.RawMessage `json:"metadata"`
-	RawMetadataURL             *string         `json:"raw_metadata_url"`
-	Provenance                 string          `json:"provenance,omitempty"`
-	MetadataUnavailableReason  string          `json:"metadata_unavailable_reason,omitempty"`
+	// Null, never omitted, when the capture stored no image at all — in
+	// practice an archive predating stored previews. Emitting the key
+	// unconditionally keeps "this archive has no thumbnail" distinguishable
+	// from "this Arker predates the field", without a second field to say so.
+	ThumbnailURL              *string         `json:"thumbnail_url"`
+	MetadataAvailable         bool            `json:"metadata_available"`
+	Metadata                  json.RawMessage `json:"metadata"`
+	RawMetadataURL            *string         `json:"raw_metadata_url"`
+	Provenance                string          `json:"provenance,omitempty"`
+	MetadataUnavailableReason string          `json:"metadata_unavailable_reason,omitempty"`
 }
 
 // ServeVideoManifest returns the stable normalized post metadata, capture
@@ -77,12 +73,9 @@ func ServeVideoManifest(c *gin.Context, store storage.Storage, db *gorm.DB) {
 	// The capture-wide preview, not a type-scoped one: /thumb picks the best
 	// image the capture holds, which is the video's own poster when it has one
 	// and the archived page screenshot when it does not.
-	if available, reason := manifestThumbnailState(db, item); available {
+	if captureHasStoredThumbnail(db, item) {
 		thumbnailURL := fmt.Sprintf("/thumb/%s", shortID)
-		response.ThumbnailAvailable = true
 		response.ThumbnailURL = &thumbnailURL
-	} else {
-		response.ThumbnailUnavailableReason = reason
 	}
 
 	if item.MetadataKey == "" {

@@ -218,28 +218,14 @@ func hostLabel(raw string) string {
 	return strings.TrimPrefix(u.Host, "www.")
 }
 
-// Reasons a manifest reports for having no archived preview image. They share
-// the vocabulary of metadata_unavailable_reason so a consumer reads absence the
-// same way whichever part of the envelope it is looking at.
-const (
-	// thumbnailReasonNotCompleted means the capture has not produced its media
-	// yet, so no preview could exist regardless of the source.
-	thumbnailReasonNotCompleted = "capture_not_completed"
-	// thumbnailReasonNotCaptured covers both an archive taken before Arker
-	// stored previews and one whose extractor supplied no usable cover. The two
-	// are indistinguishable in the data, so reporting a single honest reason
-	// beats inventing a confidence the row cannot support.
-	thumbnailReasonNotCaptured = "no_thumbnail_captured"
-)
-
-// manifestThumbnailState reports whether a capture has a preview image Arker
-// actually stored, and if not, why.
+// captureHasStoredThumbnail reports whether a capture holds a preview image
+// Arker actually stored, so a manifest can decide whether to advertise one.
 //
 // The question is asked of the whole capture, not of one item, because that is
 // what /thumb/{shortid} answers: every URL is archived as MHTML and a
 // screenshot before any media archiver is added, so a video whose platform
 // published no poster still has a real captured image of the page. Scoping this
-// to the media item would report "no thumbnail" while that image sat there
+// to the media item would report no thumbnail while that image sat there
 // unused.
 //
 // It answers from the items' own columns and never touches storage: a manifest
@@ -250,8 +236,8 @@ const (
 // to serve. That endpoint always renders something, falling back to a
 // placeholder SVG, which is right for an <img> tag and useless to an API
 // consumer: it makes "no thumbnail" indistinguishable from "a thumbnail". A
-// manifest reports a URL only when following it yields real archived bytes.
-func manifestThumbnailState(db *gorm.DB, item models.ArchiveItem) (available bool, reason string) {
+// manifest advertises a URL only when following it yields real archived bytes.
+func captureHasStoredThumbnail(db *gorm.DB, item models.ArchiveItem) bool {
 	var items []models.ArchiveItem
 	if err := db.Where("capture_id = ?", item.CaptureID).Find(&items).Error; err != nil {
 		// The row we already hold is still evidence; fall back to it rather
@@ -259,19 +245,12 @@ func manifestThumbnailState(db *gorm.DB, item models.ArchiveItem) (available boo
 		items = []models.ArchiveItem{item}
 	}
 
-	anyCompleted := false
 	for _, candidate := range items {
 		if candidate.ThumbnailStatus == models.ThumbnailStatusReady && candidate.ThumbnailKey != "" {
-			return true, ""
-		}
-		if candidate.Status == "completed" {
-			anyCompleted = true
+			return true
 		}
 	}
-	if !anyCompleted {
-		return false, thumbnailReasonNotCompleted
-	}
-	return false, thumbnailReasonNotCaptured
+	return false
 }
 
 // ThumbnailURL builds the absolute URL for a capture's preview image.

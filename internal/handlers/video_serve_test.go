@@ -97,10 +97,8 @@ func TestServeVideoManifestReturnsNormalizedMetadataAndMediaURL(t *testing.T) {
 // archived preview image. Declared once so every thumbnail test reads the same
 // contract a consumer would.
 type thumbnailManifest struct {
-	CaptureStatus              string  `json:"capture_status"`
-	ThumbnailAvailable         bool    `json:"thumbnail_available"`
-	ThumbnailURL               *string `json:"thumbnail_url"`
-	ThumbnailUnavailableReason string  `json:"thumbnail_unavailable_reason"`
+	CaptureStatus string  `json:"capture_status"`
+	ThumbnailURL  *string `json:"thumbnail_url"`
 }
 
 func decodeThumbnailManifest(t *testing.T, body []byte) thumbnailManifest {
@@ -148,14 +146,8 @@ func TestServeVideoManifestReportsStoredThumbnail(t *testing.T) {
 		t.Fatalf("manifest status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	manifest := decodeThumbnailManifest(t, rec.Body.Bytes())
-	if !manifest.ThumbnailAvailable {
-		t.Errorf("thumbnail_available = false for a capture holding a stored thumbnail")
-	}
 	if manifest.ThumbnailURL == nil || *manifest.ThumbnailURL != "/thumb/thm01" {
 		t.Fatalf("thumbnail_url = %v, want /thumb/thm01", manifest.ThumbnailURL)
-	}
-	if manifest.ThumbnailUnavailableReason != "" {
-		t.Errorf("thumbnail_unavailable_reason = %q on an available thumbnail", manifest.ThumbnailUnavailableReason)
 	}
 
 	// Follow the advertised URL exactly as a consumer would.
@@ -207,9 +199,6 @@ func TestServeVideoManifestFallsBackToSiblingScreenshotThumbnail(t *testing.T) {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/video/thm06/manifest", nil))
 	manifest := decodeThumbnailManifest(t, rec.Body.Bytes())
-	if !manifest.ThumbnailAvailable {
-		t.Fatalf("thumbnail_available = false while the capture holds a screenshot thumbnail: %+v", manifest)
-	}
 	if manifest.ThumbnailURL == nil || *manifest.ThumbnailURL != "/thumb/thm06" {
 		t.Fatalf("thumbnail_url = %v, want /thumb/thm06", manifest.ThumbnailURL)
 	}
@@ -221,10 +210,9 @@ func TestServeVideoManifestFallsBackToSiblingScreenshotThumbnail(t *testing.T) {
 	}
 }
 
-// TestServeVideoManifestSignalsAbsentThumbnail is the case the consumer must be
-// able to tell apart from "you are on an old schema": the field is present and
-// explicitly false, with a reason.
-func TestServeVideoManifestSignalsAbsentThumbnail(t *testing.T) {
+// The absent case the consumer must be able to tell apart from "you are on an
+// old schema": the key is present and explicitly null.
+func TestServeVideoManifestReportsNullThumbnailWhenNoneStored(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newHandlerLogTestDB(t)
 	store := storage.NewMemoryStorage()
@@ -249,26 +237,17 @@ func TestServeVideoManifestSignalsAbsentThumbnail(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
 		t.Fatal(err)
 	}
-	if _, present := raw["thumbnail_available"]; !present {
-		t.Error("thumbnail_available is omitted; a consumer cannot distinguish no-thumbnail from old-schema")
+	value, present := raw["thumbnail_url"]
+	if !present {
+		t.Fatal("thumbnail_url is omitted; it must be present and null so absence is distinguishable from an older schema")
 	}
-	if _, present := raw["thumbnail_url"]; !present {
-		t.Error("thumbnail_url is omitted; it must be present and null")
-	}
-
-	manifest := decodeThumbnailManifest(t, rec.Body.Bytes())
-	if manifest.ThumbnailAvailable || manifest.ThumbnailURL != nil {
-		t.Errorf("manifest advertised a thumbnail it does not have: %+v", manifest)
-	}
-	if manifest.ThumbnailUnavailableReason != "no_thumbnail_captured" {
-		t.Errorf("thumbnail_unavailable_reason = %q, want no_thumbnail_captured", manifest.ThumbnailUnavailableReason)
+	if string(value) != "null" {
+		t.Errorf("thumbnail_url = %s, want null", value)
 	}
 }
 
-// TestServeVideoManifestThumbnailReasonForPendingCapture keeps the reason
-// vocabulary aligned with metadata_unavailable_reason: a capture still running
-// has not failed to produce a thumbnail, it simply has not finished.
-func TestServeVideoManifestThumbnailReasonForPendingCapture(t *testing.T) {
+// A capture still running has nothing stored to preview yet.
+func TestServeVideoManifestReportsNoThumbnailForPendingCapture(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newHandlerLogTestDB(t)
 	store := storage.NewMemoryStorage()
@@ -283,11 +262,8 @@ func TestServeVideoManifestThumbnailReasonForPendingCapture(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	manifest := decodeThumbnailManifest(t, rec.Body.Bytes())
-	if manifest.ThumbnailAvailable || manifest.ThumbnailURL != nil {
+	if manifest.ThumbnailURL != nil {
 		t.Errorf("pending capture advertised a thumbnail: %+v", manifest)
-	}
-	if manifest.ThumbnailUnavailableReason != "capture_not_completed" {
-		t.Errorf("thumbnail_unavailable_reason = %q, want capture_not_completed", manifest.ThumbnailUnavailableReason)
 	}
 }
 
@@ -313,7 +289,7 @@ func TestServeVideoManifestIgnoresUnreadyThumbnailRow(t *testing.T) {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/video/thm04/manifest", nil))
 	manifest := decodeThumbnailManifest(t, rec.Body.Bytes())
-	if manifest.ThumbnailAvailable || manifest.ThumbnailURL != nil {
+	if manifest.ThumbnailURL != nil {
 		t.Errorf("a pending thumbnail row was advertised as available: %+v", manifest)
 	}
 }

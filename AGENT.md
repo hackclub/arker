@@ -159,10 +159,10 @@ When using Amp with `make dev` running in another window:
 - `GET /git/:shortid` - Git HTTP backend for cloning repositories
 - `GET /itch/:shortid/file/*filepath` - Stream individual files from itch.io game archives
 - `GET /itch/:shortid/list` - JSON list of files in itch.io game archive
-- `GET /gallery/:shortid/manifest` - Gallery capture status, normalized post metadata, and one absolute media URL per card in swipe order (the video manifest's counterpart; what API consumers should use). Also reports `thumbnail_url` (capture-wide `/thumb/:shortid`, preferring the post's first card) with the same absence contract as the video manifest
+- `GET /gallery/:shortid/manifest` - Gallery capture status, normalized post metadata, and one absolute media URL per card in swipe order (the video manifest's counterpart; what API consumers should use). Also reports `thumbnail_url` (capture-wide `/thumb/:shortid`, preferring the post's first card) with the same nullable contract as the video manifest
 - `GET /gallery/:shortid/list` - JSON post metadata + media file list for a gallery-dl archive (viewer-facing, predates the manifest, shape frozen)
 - `GET /gallery/:shortid/file/*filepath` - Stream one media file out of a gallery-dl archive
-- `GET /video/:shortid/manifest` - Video capture status, normalized post metadata, and archived media URL. `metadata.media_type` is the platform's own delivery format (YouTube reports `short` or `video`), passed through verbatim from the provider record so it always matches `/video/:shortid/raw`; it is absent — never guessed — when the provider names none (Instagram, TikTok, Facebook, and the Bright Data fallbacks) or when the archive predates the field. `thumbnail_url` is the capture-wide stored preview image `/thumb/:shortid` (see Thumbnails), reported only when following it yields real archived bytes rather than the placeholder; `thumbnail_available` is always present so absence is distinguishable from an older schema
+- `GET /video/:shortid/manifest` - Video capture status, normalized post metadata, and archived media URL. `metadata.media_type` is the platform's own delivery format (YouTube reports `short` or `video`), passed through verbatim from the provider record so it always matches `/video/:shortid/raw`; it is absent — never guessed — when the provider names none (Instagram, TikTok, Facebook, and the Bright Data fallbacks) or when the archive predates the field. `thumbnail_url` is the capture-wide stored preview image `/thumb/:shortid` (see Thumbnails), reported only when following it yields real archived bytes rather than the placeholder, and `null` rather than omitted otherwise so absence is distinguishable from an older schema
 - `GET /video/:shortid/raw` - Sanitized raw yt-dlp/Bright Data provider record
 - `GET /video/:shortid/subtitle/:name` - One stored caption track (`name` is `<lang>.<format>`, e.g. `en.vtt`); only tracks the archive's own metadata records are servable
 - `GET /video/:shortid/transcript` - Plain-text transcript derived from the best caption track
@@ -341,12 +341,11 @@ served from `/thumb/{shortid}[/{type}]`.
   `/thumb` URL.** An `<img>` tag wants an image no matter what; an API consumer
   needs to know whether one exists. So the video and gallery manifests report
   `thumbnail_url` only when some item on the capture is `ready` with a key
-  (`manifestThumbnailState` in `handlers/thumb.go`), and otherwise send `null`
-  plus a `thumbnail_unavailable_reason`. `thumbnail_available` is always
-  present, mirroring `metadata_available`, so a consumer can tell "no
-  thumbnail" from "field not in this server's schema". The state is read from
-  the item's columns, never by touching storage — a manifest request must not
-  pay a round trip per field.
+  (`captureHasStoredThumbnail` in `handlers/thumb.go`), and otherwise send
+  `null` — present, never omitted, so a consumer can tell "no thumbnail" from
+  "field not in this server's schema" without a second field to say so. The
+  state is read from the items' columns, never by touching storage — a manifest
+  request must not pay a round trip per field.
 - **The manifest question is capture-wide, not item-scoped**, matching the URL
   it hands out. Every URL is archived as MHTML and a screenshot before any media
   archiver is appended (`utils.GetArchiveTypes`), and screenshots always yield a

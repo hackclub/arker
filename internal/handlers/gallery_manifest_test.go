@@ -36,15 +36,13 @@ type galleryManifestBody struct {
 		Height      *int64 `json:"height"`
 		AltText     string `json:"alt_text"`
 	} `json:"media"`
-	ThumbnailAvailable         bool            `json:"thumbnail_available"`
-	ThumbnailURL               *string         `json:"thumbnail_url"`
-	ThumbnailUnavailableReason string          `json:"thumbnail_unavailable_reason"`
-	ArchiveURL                 *string         `json:"archive_url"`
-	MetadataAvailable          bool            `json:"metadata_available"`
-	Metadata                   json.RawMessage `json:"metadata"`
-	RawMetadataURL             *string         `json:"raw_metadata_url"`
-	Provenance                 string          `json:"provenance"`
-	MetadataUnavailableReason  string          `json:"metadata_unavailable_reason"`
+	ThumbnailURL              *string         `json:"thumbnail_url"`
+	ArchiveURL                *string         `json:"archive_url"`
+	MetadataAvailable         bool            `json:"metadata_available"`
+	Metadata                  json.RawMessage `json:"metadata"`
+	RawMetadataURL            *string         `json:"raw_metadata_url"`
+	Provenance                string          `json:"provenance"`
+	MetadataUnavailableReason string          `json:"metadata_unavailable_reason"`
 }
 
 // setGalleryThumbnail marks a capture's gallery item as carrying a stored
@@ -341,12 +339,6 @@ func TestServeGalleryManifestReportsStoredThumbnail(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if !manifest.ThumbnailAvailable {
-		t.Errorf("thumbnail_available = false for a gallery holding a stored thumbnail")
-	}
-	if manifest.ThumbnailUnavailableReason != "" {
-		t.Errorf("thumbnail_unavailable_reason = %q on an available thumbnail", manifest.ThumbnailUnavailableReason)
-	}
 	// Absolute, matching every other URL this manifest reports, and free of
 	// the capture tool's name in any segment a caller would have to build.
 	if manifest.ThumbnailURL == nil || *manifest.ThumbnailURL != "https://archive.test/thumb/gth01" {
@@ -369,7 +361,7 @@ func TestServeGalleryManifestReportsStoredThumbnail(t *testing.T) {
 
 // An all-video post has no still to cover it, and a bundle captured before
 // Arker stored previews has none either. Both must read as an explicit no.
-func TestServeGalleryManifestSignalsAbsentThumbnail(t *testing.T) {
+func TestServeGalleryManifestReportsNullThumbnailWhenNoneStored(t *testing.T) {
 	db := newHandlerLogTestDB(t)
 	store := storage.NewMemoryStorage()
 	seedGalleryCapture(t, db, store, "gth02", "completed")
@@ -383,11 +375,8 @@ func TestServeGalleryManifestSignalsAbsentThumbnail(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if manifest.ThumbnailAvailable || manifest.ThumbnailURL != nil {
+	if manifest.ThumbnailURL != nil {
 		t.Errorf("manifest advertised a thumbnail it does not have: %+v", manifest)
-	}
-	if manifest.ThumbnailUnavailableReason != "no_thumbnail_captured" {
-		t.Errorf("thumbnail_unavailable_reason = %q, want no_thumbnail_captured", manifest.ThumbnailUnavailableReason)
 	}
 
 	// Present-and-false, not omitted: absence must be distinguishable from an
@@ -396,16 +385,18 @@ func TestServeGalleryManifestSignalsAbsentThumbnail(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"thumbnail_available", "thumbnail_url"} {
-		if _, present := raw[field]; !present {
-			t.Errorf("%q is omitted; a consumer cannot distinguish no-thumbnail from old-schema", field)
-		}
+	value, present := raw["thumbnail_url"]
+	if !present {
+		t.Fatal("thumbnail_url is omitted; a consumer cannot distinguish no-thumbnail from old-schema")
+	}
+	if string(value) != "null" {
+		t.Errorf("thumbnail_url = %s, want null", value)
 	}
 }
 
 // A capture still running has not failed to produce a cover, and must say so
 // with the same reason the video manifest uses.
-func TestServeGalleryManifestThumbnailReasonForPendingCapture(t *testing.T) {
+func TestServeGalleryManifestReportsNoThumbnailForPendingCapture(t *testing.T) {
 	db := newHandlerLogTestDB(t)
 	store := storage.NewMemoryStorage()
 	seedGalleryCapture(t, db, store, "gth03", "pending")
@@ -415,10 +406,7 @@ func TestServeGalleryManifestThumbnailReasonForPendingCapture(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if manifest.ThumbnailAvailable || manifest.ThumbnailURL != nil {
+	if manifest.ThumbnailURL != nil {
 		t.Errorf("pending capture advertised a thumbnail: %+v", manifest)
-	}
-	if manifest.ThumbnailUnavailableReason != "capture_not_completed" {
-		t.Errorf("thumbnail_unavailable_reason = %q, want capture_not_completed", manifest.ThumbnailUnavailableReason)
 	}
 }

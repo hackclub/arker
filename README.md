@@ -79,12 +79,11 @@ capture time — never a link to a platform CDN, which expires and is not
 archived. It is the capture's best image: the platform's own poster when there
 is one, and the archived page screenshot when there is not, since every URL is
 captured as MHTML and a screenshot before any media archiver runs.
-`thumbnail_available` is always present, so `false` means this archive has no
-thumbnail while a missing field means an older server, and
-`thumbnail_unavailable_reason` names which. Consumers read
-that URL rather than building a `/thumb/` path: that endpoint always answers
-with an image, falling back to a generated placeholder, so it cannot express
-absence.
+The key is always present and is `null` when the capture stored no image at
+all, so `null` means this archive has no thumbnail while a missing key means an
+older server. Consumers read that URL rather than building a `/thumb/` path:
+that endpoint always answers with an image, falling back to a generated
+placeholder, so it cannot express absence.
 
 For manual installs, prefer:
 
