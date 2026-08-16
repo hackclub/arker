@@ -74,6 +74,18 @@ metadata. `GET /video/:shortid/raw` returns the sanitized raw record for audits.
 Older completed videos remain playable; their manifest explicitly returns
 `metadata_available: false` rather than guessing metadata from logs or the URL.
 
+The manifest also reports `thumbnail_url`, a preview image Arker stored at
+capture time — never a link to a platform CDN, which expires and is not
+archived. It is the capture's best image: the platform's own poster when there
+is one, and the archived page screenshot when there is not, since every URL is
+captured as MHTML and a screenshot before any media archiver runs.
+`thumbnail_available` is always present, so `false` means this archive has no
+thumbnail while a missing field means an older server, and
+`thumbnail_unavailable_reason` names which. Consumers read
+that URL rather than building a `/thumb/` path: that endpoint always answers
+with an image, falling back to a generated placeholder, so it cannot express
+absence.
+
 For manual installs, prefer:
 
 ```bash
@@ -97,7 +109,9 @@ metadata, and one complete `media_url` per card in swipe order, each fetchable
 on its own from `/gallery/:shortid/file/<name>`. Nobody has to download the ZIP
 to read a carousel, and no caller has to build a path out of the capture tool's
 name. Unfinished, failed and legacy captures answer `200` with the state named
-explicitly. `/gallery/:shortid/raw` returns sanitized provider sidecars, the
+explicitly. It reports `thumbnail_url` with the same meaning the video manifest
+gives it, preferring the post's first card, so one consumer code path covers a
+carousel and a reel. `/gallery/:shortid/raw` returns sanitized provider sidecars, the
 viewer's own `/gallery/:shortid/list` is unchanged, and the ZIP remains
 available at `/archive/:shortid/gallery-dl`.
 

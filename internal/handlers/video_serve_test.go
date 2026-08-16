@@ -11,6 +11,7 @@ import (
 
 	"arker/internal/models"
 	"arker/internal/storage"
+	"arker/internal/thumbnail"
 )
 
 func storeTestObject(t *testing.T, store storage.Storage, key string, data []byte) {
@@ -92,6 +93,231 @@ func TestServeVideoManifestReturnsNormalizedMetadataAndMediaURL(t *testing.T) {
 	}
 }
 
+// thumbnailManifest is the slice of the manifest envelope describing the
+// archived preview image. Declared once so every thumbnail test reads the same
+// contract a consumer would.
+type thumbnailManifest struct {
+	CaptureStatus              string  `json:"capture_status"`
+	ThumbnailAvailable         bool    `json:"thumbnail_available"`
+	ThumbnailURL               *string `json:"thumbnail_url"`
+	ThumbnailUnavailableReason string  `json:"thumbnail_unavailable_reason"`
+}
+
+func decodeThumbnailManifest(t *testing.T, body []byte) thumbnailManifest {
+	t.Helper()
+	var manifest thumbnailManifest
+	if err := json.Unmarshal(body, &manifest); err != nil {
+		t.Fatalf("decode manifest: %v (body %s)", err, body)
+	}
+	return manifest
+}
+
+// TestServeVideoManifestReportsStoredThumbnail is the consumer's whole reason
+// for the field: read a URL out of the manifest, fetch it, get the bytes Arker
+// stored. It drives the real /thumb route rather than asserting on the string
+// alone, because a URL the manifest advertises but the server does not serve
+// would pass a string comparison and fail every caller.
+func TestServeVideoManifestReportsStoredThumbnail(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	createVideoCapture(t, db, "thm01", "https://www.youtube.com/watch?v=thumb", map[string]string{"yt-dlp": "completed"})
+
+	thumbKey := "thm01/yt-dlp-abcd-thumb.jpg"
+	thumbBytes := []byte("\xff\xd8\xff\xe0 fake jpeg bytes")
+	storeTestObject(t, store, thumbKey, thumbBytes)
+	if err := db.Model(&models.ArchiveItem{}).
+		Where("type = ?", "yt-dlp").
+		Updates(map[string]interface{}{
+			"storage_key":      "thm01/yt-dlp-abcd.mp4",
+			"thumbnail_key":    thumbKey,
+			"thumbnail_width":  480,
+			"thumbnail_height": 270,
+			"thumbnail_status": models.ThumbnailStatusReady,
+		}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.GET("/video/:shortid/manifest", func(c *gin.Context) { ServeVideoManifest(c, store, db) })
+	router.GET("/thumb/:shortid", func(c *gin.Context) { ServeThumbnail(c, store, db, nil) })
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/video/thm01/manifest", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manifest status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	manifest := decodeThumbnailManifest(t, rec.Body.Bytes())
+	if !manifest.ThumbnailAvailable {
+		t.Errorf("thumbnail_available = false for a capture holding a stored thumbnail")
+	}
+	if manifest.ThumbnailURL == nil || *manifest.ThumbnailURL != "/thumb/thm01" {
+		t.Fatalf("thumbnail_url = %v, want /thumb/thm01", manifest.ThumbnailURL)
+	}
+	if manifest.ThumbnailUnavailableReason != "" {
+		t.Errorf("thumbnail_unavailable_reason = %q on an available thumbnail", manifest.ThumbnailUnavailableReason)
+	}
+
+	// Follow the advertised URL exactly as a consumer would.
+	thumbRec := httptest.NewRecorder()
+	router.ServeHTTP(thumbRec, httptest.NewRequest(http.MethodGet, *manifest.ThumbnailURL, nil))
+	if thumbRec.Code != http.StatusOK {
+		t.Fatalf("advertised thumbnail_url returned %d", thumbRec.Code)
+	}
+	if got := thumbRec.Body.Bytes(); string(got) != string(thumbBytes) {
+		t.Errorf("advertised thumbnail_url served %q, want the stored bytes %q", got, thumbBytes)
+	}
+	if ct := thumbRec.Header().Get("Content-Type"); ct != thumbnail.ContentType {
+		t.Errorf("advertised thumbnail_url content type = %q, want %q", ct, thumbnail.ContentType)
+	}
+}
+
+// A video whose platform published no poster is still an archived page, and
+// that page was screenshotted before yt-dlp ever ran. The manifest must report
+// that image rather than claim the archive has no preview.
+func TestServeVideoManifestFallsBackToSiblingScreenshotThumbnail(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	createVideoCapture(t, db, "thm06", "https://www.youtube.com/watch?v=noposter", map[string]string{
+		"yt-dlp":     "completed",
+		"screenshot": "completed",
+	})
+
+	// The video item captured no poster; the screenshot did.
+	shotBytes := []byte("\xff\xd8\xff\xe0 screenshot jpeg")
+	storeTestObject(t, store, "thm06/screenshot-abcd-thumb.jpg", shotBytes)
+	if err := db.Model(&models.ArchiveItem{}).Where("type = ?", "yt-dlp").
+		Update("storage_key", "thm06/yt-dlp-abcd.mp4").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&models.ArchiveItem{}).Where("type = ?", "screenshot").
+		Updates(map[string]interface{}{
+			"storage_key":      "thm06/screenshot-abcd.png",
+			"thumbnail_key":    "thm06/screenshot-abcd-thumb.jpg",
+			"thumbnail_status": models.ThumbnailStatusReady,
+		}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.GET("/video/:shortid/manifest", func(c *gin.Context) { ServeVideoManifest(c, store, db) })
+	router.GET("/thumb/:shortid", func(c *gin.Context) { ServeThumbnail(c, store, db, nil) })
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/video/thm06/manifest", nil))
+	manifest := decodeThumbnailManifest(t, rec.Body.Bytes())
+	if !manifest.ThumbnailAvailable {
+		t.Fatalf("thumbnail_available = false while the capture holds a screenshot thumbnail: %+v", manifest)
+	}
+	if manifest.ThumbnailURL == nil || *manifest.ThumbnailURL != "/thumb/thm06" {
+		t.Fatalf("thumbnail_url = %v, want /thumb/thm06", manifest.ThumbnailURL)
+	}
+
+	thumbRec := httptest.NewRecorder()
+	router.ServeHTTP(thumbRec, httptest.NewRequest(http.MethodGet, *manifest.ThumbnailURL, nil))
+	if got := thumbRec.Body.Bytes(); string(got) != string(shotBytes) {
+		t.Errorf("thumbnail_url served %q, want the sibling screenshot bytes", got)
+	}
+}
+
+// TestServeVideoManifestSignalsAbsentThumbnail is the case the consumer must be
+// able to tell apart from "you are on an old schema": the field is present and
+// explicitly false, with a reason.
+func TestServeVideoManifestSignalsAbsentThumbnail(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	createVideoCapture(t, db, "thm02", "https://www.youtube.com/watch?v=nothumb", map[string]string{"yt-dlp": "completed"})
+	if err := db.Model(&models.ArchiveItem{}).Where("type = ?", "yt-dlp").
+		Update("storage_key", "thm02/yt-dlp-abcd.mp4").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.GET("/video/:shortid/manifest", func(c *gin.Context) { ServeVideoManifest(c, store, db) })
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/video/thm02/manifest", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	// The raw body must carry the key even though it is false, so absence is
+	// distinguishable from an older Arker that never had the field.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := raw["thumbnail_available"]; !present {
+		t.Error("thumbnail_available is omitted; a consumer cannot distinguish no-thumbnail from old-schema")
+	}
+	if _, present := raw["thumbnail_url"]; !present {
+		t.Error("thumbnail_url is omitted; it must be present and null")
+	}
+
+	manifest := decodeThumbnailManifest(t, rec.Body.Bytes())
+	if manifest.ThumbnailAvailable || manifest.ThumbnailURL != nil {
+		t.Errorf("manifest advertised a thumbnail it does not have: %+v", manifest)
+	}
+	if manifest.ThumbnailUnavailableReason != "no_thumbnail_captured" {
+		t.Errorf("thumbnail_unavailable_reason = %q, want no_thumbnail_captured", manifest.ThumbnailUnavailableReason)
+	}
+}
+
+// TestServeVideoManifestThumbnailReasonForPendingCapture keeps the reason
+// vocabulary aligned with metadata_unavailable_reason: a capture still running
+// has not failed to produce a thumbnail, it simply has not finished.
+func TestServeVideoManifestThumbnailReasonForPendingCapture(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	createVideoCapture(t, db, "thm03", "https://www.youtube.com/watch?v=pending", map[string]string{"yt-dlp": "pending"})
+
+	router := gin.New()
+	router.GET("/video/:shortid/manifest", func(c *gin.Context) { ServeVideoManifest(c, store, db) })
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/video/thm03/manifest", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	manifest := decodeThumbnailManifest(t, rec.Body.Bytes())
+	if manifest.ThumbnailAvailable || manifest.ThumbnailURL != nil {
+		t.Errorf("pending capture advertised a thumbnail: %+v", manifest)
+	}
+	if manifest.ThumbnailUnavailableReason != "capture_not_completed" {
+		t.Errorf("thumbnail_unavailable_reason = %q, want capture_not_completed", manifest.ThumbnailUnavailableReason)
+	}
+}
+
+// TestServeVideoManifestIgnoresUnreadyThumbnailRow guards against advertising a
+// URL that would serve the placeholder: a row mid-generation has a status but
+// no stored object yet.
+func TestServeVideoManifestIgnoresUnreadyThumbnailRow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	createVideoCapture(t, db, "thm04", "https://www.youtube.com/watch?v=queued", map[string]string{"yt-dlp": "completed"})
+	if err := db.Model(&models.ArchiveItem{}).Where("type = ?", "yt-dlp").
+		Updates(map[string]interface{}{
+			"storage_key":      "thm04/yt-dlp-abcd.mp4",
+			"thumbnail_status": models.ThumbnailStatusPending,
+		}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.GET("/video/:shortid/manifest", func(c *gin.Context) { ServeVideoManifest(c, store, db) })
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/video/thm04/manifest", nil))
+	manifest := decodeThumbnailManifest(t, rec.Body.Bytes())
+	if manifest.ThumbnailAvailable || manifest.ThumbnailURL != nil {
+		t.Errorf("a pending thumbnail row was advertised as available: %+v", manifest)
+	}
+}
+
 func TestServeVideoManifestDoesNotSynthesizeLegacyMetadata(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newHandlerLogTestDB(t)
@@ -126,5 +352,45 @@ func TestServeVideoManifestDoesNotSynthesizeLegacyMetadata(t *testing.T) {
 	}
 	if manifest.MediaURL == nil || *manifest.MediaURL != "/archive/old01/yt-dlp" {
 		t.Errorf("legacy media URL = %v", manifest.MediaURL)
+	}
+}
+
+// A legacy row still typed "youtube" is served under the canonical yt-dlp
+// segment everywhere else in the manifest, and the thumbnail URL must
+// normalize the same way or it would advertise a path that renders a
+// placeholder.
+func TestServeVideoManifestThumbnailUsesCanonicalTypeForLegacyRows(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	createVideoCapture(t, db, "thm05", "https://www.youtube.com/watch?v=legacy", map[string]string{"youtube": "completed"})
+
+	thumbKey := "thm05/youtube-abcd-thumb.jpg"
+	thumbBytes := []byte("\xff\xd8\xff\xe0 legacy jpeg")
+	storeTestObject(t, store, thumbKey, thumbBytes)
+	if err := db.Model(&models.ArchiveItem{}).Where("type = ?", "youtube").
+		Updates(map[string]interface{}{
+			"storage_key":      "thm05/youtube.mp4",
+			"thumbnail_key":    thumbKey,
+			"thumbnail_status": models.ThumbnailStatusReady,
+		}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.GET("/video/:shortid/manifest", func(c *gin.Context) { ServeVideoManifest(c, store, db) })
+	router.GET("/thumb/:shortid", func(c *gin.Context) { ServeThumbnail(c, store, db, nil) })
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/video/thm05/manifest", nil))
+	manifest := decodeThumbnailManifest(t, rec.Body.Bytes())
+	if manifest.ThumbnailURL == nil || *manifest.ThumbnailURL != "/thumb/thm05" {
+		t.Fatalf("thumbnail_url = %v, want /thumb/thm05", manifest.ThumbnailURL)
+	}
+
+	thumbRec := httptest.NewRecorder()
+	router.ServeHTTP(thumbRec, httptest.NewRequest(http.MethodGet, *manifest.ThumbnailURL, nil))
+	if got := thumbRec.Body.Bytes(); string(got) != string(thumbBytes) {
+		t.Errorf("canonical thumbnail URL served %q, want the legacy row's stored bytes", got)
 	}
 }

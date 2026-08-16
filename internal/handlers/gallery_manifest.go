@@ -31,17 +31,27 @@ const maxGalleryManifestMetadataSize = 4 * 1024 * 1024
 // media_url becomes an ordered media list. Every URL is absolute and complete:
 // a consumer must never have to build a path out of the capture tool's name.
 type galleryManifestResponse struct {
-	SchemaVersion             string                 `json:"schema_version"`
-	ShortID                   string                 `json:"short_id"`
-	CaptureStatus             string                 `json:"capture_status"`
-	MediaCount                int                    `json:"media_count"`
-	Media                     []galleryManifestMedia `json:"media"`
-	ArchiveURL                *string                `json:"archive_url"`
-	MetadataAvailable         bool                   `json:"metadata_available"`
-	Metadata                  json.RawMessage        `json:"metadata"`
-	RawMetadataURL            *string                `json:"raw_metadata_url"`
-	Provenance                string                 `json:"provenance,omitempty"`
-	MetadataUnavailableReason string                 `json:"metadata_unavailable_reason,omitempty"`
+	SchemaVersion string                 `json:"schema_version"`
+	ShortID       string                 `json:"short_id"`
+	CaptureStatus string                 `json:"capture_status"`
+	MediaCount    int                    `json:"media_count"`
+	Media         []galleryManifestMedia `json:"media"`
+	// ThumbnailAvailable and ThumbnailURL report the post's archived preview
+	// image, carrying exactly the meaning they carry in the video manifest so a
+	// consumer handles a carousel and a reel the same way.
+	//
+	// A post's cover is its first card, which is what the archiver derives the
+	// stored thumbnail from. An all-video post has no still to cover it and so
+	// reports no thumbnail rather than a frame Arker never captured.
+	ThumbnailAvailable         bool            `json:"thumbnail_available"`
+	ThumbnailURL               *string         `json:"thumbnail_url"`
+	ThumbnailUnavailableReason string          `json:"thumbnail_unavailable_reason,omitempty"`
+	ArchiveURL                 *string         `json:"archive_url"`
+	MetadataAvailable          bool            `json:"metadata_available"`
+	Metadata                   json.RawMessage `json:"metadata"`
+	RawMetadataURL             *string         `json:"raw_metadata_url"`
+	Provenance                 string          `json:"provenance,omitempty"`
+	MetadataUnavailableReason  string          `json:"metadata_unavailable_reason,omitempty"`
 }
 
 // galleryManifestMedia is one card of the post.
@@ -88,6 +98,16 @@ func ServeGalleryManifest(c *gin.Context, store storage.Storage, db *gorm.DB) {
 		Media:      []galleryManifestMedia{},
 		Metadata:   json.RawMessage("null"),
 		Provenance: item.Source,
+	}
+
+	// Resolved before the not-completed return below so an unfinished capture
+	// still names why it has no preview, rather than omitting the reason.
+	if available, reason := manifestThumbnailState(db, item); available {
+		thumbnailURL := fullPath(c, fmt.Sprintf("thumb/%s", shortID))
+		response.ThumbnailAvailable = true
+		response.ThumbnailURL = &thumbnailURL
+	} else {
+		response.ThumbnailUnavailableReason = reason
 	}
 
 	if item.Status != "completed" || item.StorageKey == "" {

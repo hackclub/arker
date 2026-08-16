@@ -36,12 +36,38 @@ type galleryManifestBody struct {
 		Height      *int64 `json:"height"`
 		AltText     string `json:"alt_text"`
 	} `json:"media"`
-	ArchiveURL                *string         `json:"archive_url"`
-	MetadataAvailable         bool            `json:"metadata_available"`
-	Metadata                  json.RawMessage `json:"metadata"`
-	RawMetadataURL            *string         `json:"raw_metadata_url"`
-	Provenance                string          `json:"provenance"`
-	MetadataUnavailableReason string          `json:"metadata_unavailable_reason"`
+	ThumbnailAvailable         bool            `json:"thumbnail_available"`
+	ThumbnailURL               *string         `json:"thumbnail_url"`
+	ThumbnailUnavailableReason string          `json:"thumbnail_unavailable_reason"`
+	ArchiveURL                 *string         `json:"archive_url"`
+	MetadataAvailable          bool            `json:"metadata_available"`
+	Metadata                   json.RawMessage `json:"metadata"`
+	RawMetadataURL             *string         `json:"raw_metadata_url"`
+	Provenance                 string          `json:"provenance"`
+	MetadataUnavailableReason  string          `json:"metadata_unavailable_reason"`
+}
+
+// setGalleryThumbnail marks a capture's gallery item as carrying a stored
+// preview image, exactly as StoreThumbnail does after a capture derives one
+// from the post's first card.
+func setGalleryThumbnail(t *testing.T, db *gorm.DB, store storage.Storage, shortID, key string, data []byte) {
+	t.Helper()
+	storeTestObject(t, store, key, data)
+	var item models.ArchiveItem
+	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
+		Where("captures.short_id = ? AND archive_items.type = ?", shortID, utils.ArchiveTypeGalleryDl).
+		First(&item).Error; err != nil {
+		t.Fatalf("load gallery item: %v", err)
+	}
+	if err := db.Model(&item).
+		Updates(map[string]interface{}{
+			"thumbnail_key":    key,
+			"thumbnail_width":  480,
+			"thumbnail_height": 270,
+			"thumbnail_status": models.ThumbnailStatusReady,
+		}).Error; err != nil {
+		t.Fatalf("set gallery thumbnail: %v", err)
+	}
 }
 
 // writeGalleryZipFixture stores a ZIP with exactly the given entries under the
@@ -291,5 +317,108 @@ func TestServeGalleryManifestRejectsUnknownCapture(t *testing.T) {
 	rec, _ := getGalleryManifest(t, newGalleryRouter(db, store), "nope1")
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 for a capture with no gallery item", rec.Code)
+	}
+}
+
+// A carousel's cover is its first card, and the consumer must reach it the
+// same way it reaches a video's thumbnail: one URL, read not built.
+func TestServeGalleryManifestReportsStoredThumbnail(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	seedGalleryCapture(t, db, store, "gth01", "completed")
+	writeGalleryZipFixture(t, db, store, "gth01", []struct{ name, body string }{
+		{"metadata.json", `{"source_url":"https://www.instagram.com/p/ABC123/","file_count":1,"files":[{"name":"001.jpg","size":10,"content_type":"image/jpeg","is_video":false}]}`},
+		{"001.jpg", "jpeg-bytes"},
+	})
+
+	thumbBytes := []byte("\xff\xd8\xff\xe0 fake jpeg bytes")
+	setGalleryThumbnail(t, db, store, "gth01", "gth01/gallery-dl-abcd-thumb.jpg", thumbBytes)
+
+	router := newGalleryRouter(db, store)
+	router.GET("/thumb/:shortid", func(c *gin.Context) { ServeThumbnail(c, store, db, nil) })
+
+	rec, manifest := getGalleryManifest(t, router, "gth01")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !manifest.ThumbnailAvailable {
+		t.Errorf("thumbnail_available = false for a gallery holding a stored thumbnail")
+	}
+	if manifest.ThumbnailUnavailableReason != "" {
+		t.Errorf("thumbnail_unavailable_reason = %q on an available thumbnail", manifest.ThumbnailUnavailableReason)
+	}
+	// Absolute, matching every other URL this manifest reports, and free of
+	// the capture tool's name in any segment a caller would have to build.
+	if manifest.ThumbnailURL == nil || *manifest.ThumbnailURL != "https://archive.test/thumb/gth01" {
+		t.Fatalf("thumbnail_url = %v, want the absolute preview URL", manifest.ThumbnailURL)
+	}
+
+	parsed, err := url.Parse(*manifest.ThumbnailURL)
+	if err != nil {
+		t.Fatalf("parse thumbnail_url: %v", err)
+	}
+	thumbRec := httptest.NewRecorder()
+	router.ServeHTTP(thumbRec, httptest.NewRequest(http.MethodGet, parsed.Path, nil))
+	if thumbRec.Code != http.StatusOK {
+		t.Fatalf("advertised thumbnail_url returned %d", thumbRec.Code)
+	}
+	if got := thumbRec.Body.Bytes(); string(got) != string(thumbBytes) {
+		t.Errorf("advertised thumbnail_url served %q, want the stored bytes %q", got, thumbBytes)
+	}
+}
+
+// An all-video post has no still to cover it, and a bundle captured before
+// Arker stored previews has none either. Both must read as an explicit no.
+func TestServeGalleryManifestSignalsAbsentThumbnail(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	seedGalleryCapture(t, db, store, "gth02", "completed")
+	writeGalleryZipFixture(t, db, store, "gth02", []struct{ name, body string }{
+		{"metadata.json", `{"source_url":"https://www.instagram.com/p/DEF456/","file_count":1,"files":[{"name":"001.mp4","size":9,"content_type":"video/mp4","is_video":true}]}`},
+		{"001.mp4", "mp4-bytes"},
+	})
+
+	router := newGalleryRouter(db, store)
+	rec, manifest := getGalleryManifest(t, router, "gth02")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if manifest.ThumbnailAvailable || manifest.ThumbnailURL != nil {
+		t.Errorf("manifest advertised a thumbnail it does not have: %+v", manifest)
+	}
+	if manifest.ThumbnailUnavailableReason != "no_thumbnail_captured" {
+		t.Errorf("thumbnail_unavailable_reason = %q, want no_thumbnail_captured", manifest.ThumbnailUnavailableReason)
+	}
+
+	// Present-and-false, not omitted: absence must be distinguishable from an
+	// older Arker that never carried the field.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"thumbnail_available", "thumbnail_url"} {
+		if _, present := raw[field]; !present {
+			t.Errorf("%q is omitted; a consumer cannot distinguish no-thumbnail from old-schema", field)
+		}
+	}
+}
+
+// A capture still running has not failed to produce a cover, and must say so
+// with the same reason the video manifest uses.
+func TestServeGalleryManifestThumbnailReasonForPendingCapture(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	seedGalleryCapture(t, db, store, "gth03", "pending")
+
+	router := newGalleryRouter(db, store)
+	rec, manifest := getGalleryManifest(t, router, "gth03")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if manifest.ThumbnailAvailable || manifest.ThumbnailURL != nil {
+		t.Errorf("pending capture advertised a thumbnail: %+v", manifest)
+	}
+	if manifest.ThumbnailUnavailableReason != "capture_not_completed" {
+		t.Errorf("thumbnail_unavailable_reason = %q, want capture_not_completed", manifest.ThumbnailUnavailableReason)
 	}
 }
