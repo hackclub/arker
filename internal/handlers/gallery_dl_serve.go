@@ -331,7 +331,13 @@ func ServeGalleryFile(c *gin.Context, storageInstance storage.Storage, db *gorm.
 		c.Status(http.StatusNotFound)
 		return
 	}
+	serveGalleryZipEntry(c, shortID, target)
+}
 
+// serveGalleryZipEntry serves one already-selected gallery entry as ordinary
+// media. The video compatibility path uses the same implementation so Range,
+// HEAD, MIME sniffing, and size limits cannot drift between URLs.
+func serveGalleryZipEntry(c *gin.Context, shortID string, target *zip.File) {
 	contents, err := target.Open()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read file from archive"})

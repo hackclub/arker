@@ -39,8 +39,45 @@ func ServeVideoManifest(c *gin.Context, store storage.Storage, db *gorm.DB) {
 		return
 	}
 
-	item, ok := findVideoItem(c, db, shortID)
-	if !ok {
+	item, err := lookupVideoItem(db, shortID)
+	if err == gorm.ErrRecordNotFound {
+		projection, cleanup, projectionErr := projectGalleryVideo(store, db, shortID)
+		if projectionErr != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "video archive temporarily unavailable"})
+			return
+		}
+		defer cleanup()
+		if projection == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "video archive not found"})
+			return
+		}
+		metadata, marshalErr := marshalProjectedVideoMetadata(projection)
+		if marshalErr != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "video metadata temporarily unavailable"})
+			return
+		}
+		mediaURL := fmt.Sprintf("/archive/%s/%s", shortID, utils.ArchiveTypeYtDlp)
+		response := videoManifestResponse{
+			SchemaVersion:     archivers.VideoMetadataSchemaVersion,
+			ShortID:           shortID,
+			CaptureStatus:     projection.Item.Status,
+			MediaURL:          &mediaURL,
+			MetadataAvailable: true,
+			Metadata:          metadata,
+			Provenance:        projection.Item.Source,
+		}
+		if response.Provenance == "" {
+			response.Provenance = models.ArchiveSourceNative
+		}
+		if projection.HasRawData {
+			rawURL := fmt.Sprintf("/video/%s/raw", shortID)
+			response.RawMetadataURL = &rawURL
+		}
+		c.JSON(http.StatusOK, response)
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
 		return
 	}
 	response := videoManifestResponse{
@@ -89,8 +126,24 @@ func ServeVideoRawMetadata(c *gin.Context, store storage.Storage, db *gorm.DB) {
 	if redirectIfAlias(c, db, shortID) {
 		return
 	}
-	item, ok := findVideoItem(c, db, shortID)
-	if !ok {
+	item, err := lookupVideoItem(db, shortID)
+	if err == gorm.ErrRecordNotFound {
+		projection, cleanup, projectionErr := projectGalleryVideo(store, db, shortID)
+		if projectionErr != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "raw video metadata temporarily unavailable"})
+			return
+		}
+		if projection == nil || !projection.HasRawData {
+			cleanup()
+			c.JSON(http.StatusNotFound, gin.H{"error": "raw video metadata not available"})
+			return
+		}
+		cleanup()
+		ServeGalleryRawMetadata(c, store, db)
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
 		return
 	}
 	if item.Status != "completed" || item.RawMetadataKey == "" {
@@ -114,11 +167,19 @@ func ServeVideoRawMetadata(c *gin.Context, store storage.Storage, db *gorm.DB) {
 	_, _ = io.Copy(c.Writer, reader)
 }
 
-func findVideoItem(c *gin.Context, db *gorm.DB, shortID string) (models.ArchiveItem, bool) {
+func lookupVideoItem(db *gorm.DB, shortID string) (models.ArchiveItem, error) {
 	var item models.ArchiveItem
 	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
 		Where("captures.short_id = ? AND archive_items.type IN ?", shortID, utils.ArchiveTypeMatchValues(utils.ArchiveTypeYtDlp)).
 		First(&item).Error; err != nil {
+		return models.ArchiveItem{}, err
+	}
+	return item, nil
+}
+
+func findVideoItem(c *gin.Context, db *gorm.DB, shortID string) (models.ArchiveItem, bool) {
+	item, err := lookupVideoItem(db, shortID)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "video archive not found"})
 		return models.ArchiveItem{}, false
 	}
