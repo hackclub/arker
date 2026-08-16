@@ -677,3 +677,53 @@ func TestLastFailureReasonReadsOnlyTheLogTail(t *testing.T) {
 		t.Fatalf("last_failure_reason = %q, want the newest failure, not the first", reason)
 	}
 }
+
+// The unified archive result is where a consumer should be able to learn
+// everything about a capture, so the preview image belongs in it too, at the
+// top level: it describes the capture, not the post.
+func TestArchiveResultReportsThumbnailURL(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	seedRealVideoCapture(t, db, store, "thr01", "youtube_regular")
+
+	var item models.ArchiveItem
+	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
+		Where("captures.short_id = ?", "thr01").First(&item).Error; err != nil {
+		t.Fatalf("load item: %v", err)
+	}
+	if err := db.Model(&item).Updates(map[string]interface{}{
+		"thumbnail_key":    "thr01/yt-dlp-n1-thumb.jpg",
+		"thumbnail_status": models.ThumbnailStatusReady,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, body := getResult(t, resultRouter(db, store), "thr01")
+	got, present := body["thumbnail_url"]
+	if !present {
+		t.Fatal("thumbnail_url is missing from the archive result")
+	}
+	if got == nil {
+		t.Fatal("thumbnail_url is null for a capture holding a stored thumbnail")
+	}
+	if s, _ := got.(string); s == "" || !containsSubstring(s, "/thumb/thr01") {
+		t.Errorf("thumbnail_url = %v, want an absolute URL ending /thumb/thr01", got)
+	}
+}
+
+// A capture with nothing stored reports null rather than omitting the key, so
+// absence stays distinguishable from an older server.
+func TestArchiveResultReportsNullThumbnailWhenNoneStored(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	seedRealVideoCapture(t, db, store, "thr02", "youtube_regular")
+
+	_, body := getResult(t, resultRouter(db, store), "thr02")
+	got, present := body["thumbnail_url"]
+	if !present {
+		t.Fatal("thumbnail_url is omitted; it must be present and null")
+	}
+	if got != nil {
+		t.Errorf("thumbnail_url = %v, want null", got)
+	}
+}

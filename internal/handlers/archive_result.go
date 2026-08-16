@@ -21,16 +21,25 @@ import (
 )
 
 type archiveResultResponse struct {
-	SchemaVersion    string              `json:"schema_version"`
-	ShortID          string              `json:"short_id"`
-	CanonicalShortID string              `json:"canonical_short_id"`
-	SourceURL        string              `json:"source_url"`
-	ArchiveURL       string              `json:"archive_url"`
-	SubmittedAt      string              `json:"submitted_at"`
-	CaptureDone      bool                `json:"capture_done"`
-	Items            []archiveResultItem `json:"items"`
-	Cost             archiveResultCost   `json:"cost"`
-	SocialPost       *socialPostResult   `json:"social_post"`
+	SchemaVersion    string `json:"schema_version"`
+	ShortID          string `json:"short_id"`
+	CanonicalShortID string `json:"canonical_short_id"`
+	SourceURL        string `json:"source_url"`
+	ArchiveURL       string `json:"archive_url"`
+	// ThumbnailURL is the capture's archived preview image, carrying the same
+	// meaning it carries in the video and gallery manifests: an image Arker
+	// stored, never a platform CDN link, and null rather than omitted when the
+	// capture stored none.
+	//
+	// It sits at the top level rather than inside social_post because it
+	// describes the capture, not the post: an ordinary web page archive has a
+	// preview too, derived from the screenshot every capture takes.
+	ThumbnailURL *string             `json:"thumbnail_url"`
+	SubmittedAt  string              `json:"submitted_at"`
+	CaptureDone  bool                `json:"capture_done"`
+	Items        []archiveResultItem `json:"items"`
+	Cost         archiveResultCost   `json:"cost"`
+	SocialPost   *socialPostResult   `json:"social_post"`
 }
 
 type archiveResultCost struct {
@@ -257,6 +266,12 @@ func ApiArchiveResult(c *gin.Context, store storage.Storage, db *gorm.DB) {
 		SourceURL:  requestedCapture.ArchivedURL.Original,
 		ArchiveURL: fullPath(c, canonical.ShortID), SubmittedAt: requestedCapture.Timestamp.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		CaptureDone: done, Items: items,
+	}
+	// Asked of the canonical capture: an alias owns no items, and the preview
+	// belongs to the work that was actually done.
+	if len(canonical.ArchiveItems) > 0 && captureHasStoredThumbnail(db, canonical.ArchiveItems[0]) {
+		thumbnailURL := fullPath(c, fmt.Sprintf("thumb/%s", canonical.ShortID))
+		response.ThumbnailURL = &thumbnailURL
 	}
 	cost, err := buildArchiveResultCost(db, canonical.ArchiveItems)
 	if err != nil {
