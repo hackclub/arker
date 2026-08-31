@@ -87,3 +87,12 @@ type ExtraArtifact struct {
 type Archiver interface {
 	Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (Result, error)
 }
+
+// VideoMetadataRefresher is implemented by video archivers that can rebuild an
+// item's sidecars — normalized metadata, sanitized raw record, caption tracks,
+// poster — without downloading the media again. media describes the stored
+// artifact the refreshed record must keep describing. The returned Result
+// carries no Data: the caller reuses the bytes that are already in storage.
+type VideoMetadataRefresher interface {
+	RefreshVideoMetadata(ctx context.Context, url string, logWriter io.Writer, media VideoMedia) (Result, error)
+}

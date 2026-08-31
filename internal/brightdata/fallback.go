@@ -137,6 +137,19 @@ func WithFallback(primary archivers.Archiver, itemType string, backend Backend) 
 	return &FallbackArchiver{Primary: primary, Type: itemType, Backend: backend}
 }
 
+// RefreshVideoMetadata delegates to the native archiver. The fallback exists
+// to fetch media the native flow cannot reach; a metadata-only refresh reuses
+// media that is already stored, so there is nothing for Bright Data to rescue
+// and no reason to spend money. A refresh failure is handled by the worker
+// (it falls back to the stored sidecars or a full run), not by the backend.
+func (f *FallbackArchiver) RefreshVideoMetadata(ctx context.Context, url string, logWriter io.Writer, media archivers.VideoMedia) (archivers.Result, error) {
+	refresher, ok := f.Primary.(archivers.VideoMetadataRefresher)
+	if !ok {
+		return archivers.Result{}, fmt.Errorf("archiver %T cannot refresh video metadata", f.Primary)
+	}
+	return refresher.RefreshVideoMetadata(ctx, url, logWriter, media)
+}
+
 func (f *FallbackArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (archivers.Result, error) {
 	result, nativeErr := f.Primary.Archive(ctx, url, logWriter, db, itemID)
 	if nativeErr == nil {

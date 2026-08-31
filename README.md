@@ -74,6 +74,14 @@ metadata. `GET /video/:shortid/raw` returns the sanitized raw record for audits.
 Older completed videos remain playable; their manifest explicitly returns
 `metadata_available: false` rather than guessing metadata from logs or the URL.
 
+Re-archiving a URL whose video is already stored never downloads the media
+again: the new capture shares the earlier media object and runs yt-dlp with
+`--skip-download` to write fresh metadata, captions, and poster sidecars under
+its own capture (MHTML and screenshot re-run as normal). If even the metadata
+refresh fails — a deleted post, a platform refusal — the new capture inherits
+the earlier sidecars instead of failing, since the archive already holds the
+product.
+
 For manual installs, prefer:
 
 ```bash

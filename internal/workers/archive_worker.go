@@ -131,6 +131,19 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 	ctx, cancel := context.WithTimeout(ctx, timeout) // respect River cancellation
 	defer cancel()
 
+	// A video already archived for this URL — under any capture sharing its
+	// canonical identity — is never downloaded again. The metadata, captions,
+	// and poster are refreshed so the new capture stays current, while the
+	// media bytes are shared with the earlier stored object. See video_reuse.go.
+	if utils.ArchiveTypesEqual(jobArgs.Type, utils.ArchiveTypeYtDlp) {
+		if prior := findReusableVideoItem(db, jobArgs.URL, item.ID); prior != nil {
+			handled, err := refreshVideoFromStored(ctx, jobArgs, item, prior, arch, storage, db, dbLogWriter)
+			if handled {
+				return err
+			}
+		}
+	}
+
 	// Archive the content. PWBundle is returned for browser-based archivers.
 	result, err := arch.Archive(ctx, jobArgs.URL, dbLogWriter, db, item.ID)
 
@@ -195,19 +208,7 @@ func saveArchiveResult(ctx context.Context, result archivers.Result, keyBase str
 	// store must not fail a video that downloaded perfectly. The track is
 	// dropped from the metadata instead, so the archive describes exactly what
 	// it holds rather than advertising a file that is not there.
-	extraKeys := make(map[string]string, len(result.Extras))
-	for _, extra := range result.Extras {
-		if extra.NameSuffix == "" || len(extra.Data) == 0 {
-			continue
-		}
-		extraKey := keyBase + extra.NameSuffix
-		if err := writeExtraArtifact(store, extraKey, extra.Data); err != nil {
-			slog.Warn("Failed to store extra archive artifact",
-				"key", extraKey, "suffix", extra.NameSuffix, "error", err)
-			continue
-		}
-		extraKeys[extra.NameSuffix] = extraKey
-	}
+	extraKeys := writeExtraArtifacts(result, keyBase, store)
 
 	metadataKey := ""
 	if result.Metadata != nil {
@@ -295,6 +296,26 @@ func logVideoProbeWarning(logWriter io.Writer, key string, err error) {
 	if logWriter != nil {
 		fmt.Fprintf(logWriter, "\nWarning: could not probe stored video metadata: %v\n", err)
 	}
+}
+
+// writeExtraArtifacts stores the result's extras under keyBase and returns
+// the keys that actually made it into storage, keyed by name suffix. A failed
+// extra is logged and skipped, never fatal.
+func writeExtraArtifacts(result archivers.Result, keyBase string, store storage.Storage) map[string]string {
+	extraKeys := make(map[string]string, len(result.Extras))
+	for _, extra := range result.Extras {
+		if extra.NameSuffix == "" || len(extra.Data) == 0 {
+			continue
+		}
+		extraKey := keyBase + extra.NameSuffix
+		if err := writeExtraArtifact(store, extraKey, extra.Data); err != nil {
+			slog.Warn("Failed to store extra archive artifact",
+				"key", extraKey, "suffix", extra.NameSuffix, "error", err)
+			continue
+		}
+		extraKeys[extra.NameSuffix] = extraKey
+	}
+	return extraKeys
 }
 
 func writeExtraArtifact(store storage.Storage, key string, data []byte) error {

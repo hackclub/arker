@@ -42,7 +42,29 @@ func (r *tempVideoReader) Close() error {
 type YtDlpArchiver struct{}
 
 func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (Result, error) {
-	fmt.Fprintf(logWriter, "Starting video archive for: %s\n", url)
+	return a.archive(ctx, url, logWriter, true, VideoMedia{})
+}
+
+// RefreshVideoMetadata re-runs the extractor with --skip-download to rebuild
+// the metadata sidecars, caption tracks, and poster image for a video whose
+// bytes are already archived. media describes the stored artifact, so the
+// refreshed record keeps reporting the file the archive actually holds rather
+// than whatever the extractor would pick today. The returned Result carries no
+// Data.
+func (a *YtDlpArchiver) RefreshVideoMetadata(ctx context.Context, url string, logWriter io.Writer, media VideoMedia) (Result, error) {
+	return a.archive(ctx, url, logWriter, false, media)
+}
+
+// archive is the shared flow behind Archive and RefreshVideoMetadata. The two
+// runs are identical — cookies, probe, subtitle selection, info JSON, poster —
+// except that a metadata-only run passes --skip-download and describes the
+// already-stored media instead of a freshly downloaded file.
+func (a *YtDlpArchiver) archive(ctx context.Context, url string, logWriter io.Writer, downloadVideo bool, storedMedia VideoMedia) (Result, error) {
+	if downloadVideo {
+		fmt.Fprintf(logWriter, "Starting video archive for: %s\n", url)
+	} else {
+		fmt.Fprintf(logWriter, "Refreshing video metadata for: %s (media already archived)\n", url)
+	}
 
 	// Check context before starting
 	select {
@@ -126,6 +148,11 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 	outputTemplate := tempBase + ".%(ext)s"
 	cmd := exec.CommandContext(ctx, "yt-dlp")
 	cmd.Args = append(cmd.Args, ytDlpDownloadArgs(outputTemplate)...)
+	if !downloadVideo {
+		// The media bytes are already archived; only the info JSON, captions,
+		// and poster image are wanted from this run.
+		cmd.Args = append(cmd.Args, "--skip-download")
+	}
 	cmd.Args = append(cmd.Args, utils.YtDlpSubtitleArgs(detectedLang)...)
 	cmd.Args = append(cmd.Args, utils.YtDlpImpersonateArgsForURL(url)...)
 	cmd.Args = append(cmd.Args, refererArgs...)
@@ -163,10 +190,24 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 		return Result{}, fmt.Errorf("yt-dlp download failed: %w", err)
 	}
 
-	outputPath, err := findDownloadedMP4(tempBase)
-	if err != nil {
-		fmt.Fprintf(logWriter, "Failed to find downloaded MP4: %v\n", err)
-		return Result{}, err
+	outputPath := ""
+	media := storedMedia
+	if downloadVideo {
+		outputPath, err = findDownloadedMP4(tempBase)
+		if err != nil {
+			fmt.Fprintf(logWriter, "Failed to find downloaded MP4: %v\n", err)
+			return Result{}, err
+		}
+		videoStat, err := os.Stat(outputPath)
+		if err != nil {
+			fmt.Fprintf(logWriter, "Failed to inspect downloaded MP4: %v\n", err)
+			return Result{}, err
+		}
+		media = VideoMedia{
+			Extension:   ".mp4",
+			ContentType: "video/mp4",
+			SizeBytes:   videoStat.Size(),
+		}
 	}
 
 	infoPath, err := findYtDlpInfoJSON(tempBase)
@@ -179,16 +220,7 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 		fmt.Fprintf(logWriter, "Failed to read yt-dlp info JSON: %v\n", err)
 		return Result{}, err
 	}
-	videoStat, err := os.Stat(outputPath)
-	if err != nil {
-		fmt.Fprintf(logWriter, "Failed to inspect downloaded MP4: %v\n", err)
-		return Result{}, err
-	}
-	metadata, sanitizedRaw, err := BuildYtDlpVideoArtifacts(rawInfo, url, version, VideoMedia{
-		Extension:   ".mp4",
-		ContentType: "video/mp4",
-		SizeBytes:   videoStat.Size(),
-	}, time.Now())
+	metadata, sanitizedRaw, err := BuildYtDlpVideoArtifacts(rawInfo, url, version, media, time.Now())
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to normalize yt-dlp info JSON: %v\n", err)
 		return Result{}, err
@@ -207,23 +239,31 @@ func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Wr
 		return Result{}, err
 	}
 
-	file, err := os.Open(outputPath)
-	if err != nil {
-		fmt.Fprintf(logWriter, "Failed to open downloaded MP4: %v\n", err)
-		return Result{}, err
+	var data io.Reader
+	if downloadVideo {
+		file, err := os.Open(outputPath)
+		if err != nil {
+			fmt.Fprintf(logWriter, "Failed to open downloaded MP4: %v\n", err)
+			return Result{}, err
+		}
+		keepTempFile = outputPath
+		data = &tempVideoReader{File: file, path: outputPath, dir: filepath.Dir(tempBase)}
 	}
-	keepTempFile = outputPath
 
 	// Read the poster image before returning: the deferred cleanup sweeps every
 	// sibling temp file except the video, so it is gone the moment we return.
 	thumb := videoThumbnail(tempBase, outputPath, logWriter)
 
-	fmt.Fprintf(logWriter, "Video download completed successfully\n")
+	if downloadVideo {
+		fmt.Fprintf(logWriter, "Video download completed successfully\n")
+	} else {
+		fmt.Fprintf(logWriter, "Video metadata refresh completed successfully\n")
+	}
 
 	return Result{
-		Data:        &tempVideoReader{File: file, path: outputPath, dir: filepath.Dir(tempBase)},
-		Extension:   ".mp4",
-		ContentType: "video/mp4",
+		Data:        data,
+		Extension:   metadata.Media.Extension,
+		ContentType: metadata.Media.ContentType,
 		Thumbnail:   thumb,
 		Source:      "native",
 		Metadata:    &Sidecar{Data: metadataJSON},
