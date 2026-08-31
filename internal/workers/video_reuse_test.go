@@ -82,7 +82,7 @@ func seedPriorVideoCapture(t *testing.T, db *gorm.DB, store storage.Storage, url
 		MetadataKey:     shortID + "/yt-dlp-aaaa1111.metadata.json",
 		RawMetadataKey:  shortID + "/yt-dlp-aaaa1111.raw-metadata.json",
 		Completeness:    archivers.CompletenessComplete,
-		Source:          models.ArchiveSourceBrightData,
+		Source:          models.ArchiveSourceNative,
 		ThumbnailKey:    shortID + "/yt-dlp-aaaa1111-thumb.webp",
 		ThumbnailWidth:  320,
 		ThumbnailHeight: 180,
@@ -147,8 +147,8 @@ func TestRepeatVideoCaptureReusesStoredMediaAndRefreshesMetadata(t *testing.T) {
 	if got.FileSize != prior.FileSize || got.Extension != prior.Extension {
 		t.Errorf("media facts not inherited: %+v", got)
 	}
-	if got.Source != models.ArchiveSourceBrightData {
-		t.Errorf("source = %q, want the stored media's provenance %q", got.Source, models.ArchiveSourceBrightData)
+	if got.Source != models.ArchiveSourceNative {
+		t.Errorf("source = %q, want the stored media's provenance %q", got.Source, models.ArchiveSourceNative)
 	}
 	if got.Completeness != archivers.CompletenessComplete {
 		t.Errorf("completeness = %q, want complete", got.Completeness)
@@ -290,5 +290,26 @@ func TestFindReusableVideoItemIgnoresUnusableItems(t *testing.T) {
 	}
 	if found := findReusableVideoItem(db, url, 0); found == nil || found.ID != failed.ID {
 		t.Fatalf("a completed stored item was not found: %+v", found)
+	}
+}
+
+// A Bright Data rescue is a degraded 360p stand-in, not the bytes a native run
+// would fetch — a repeat capture must redownload, not alias the rescue.
+func TestFindReusableVideoItemSkipsBrightDataRescues(t *testing.T) {
+	db := newWorkerTestDB(t)
+	store := storage.NewMemoryStorage()
+	url := "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+	rescued := seedPriorVideoCapture(t, db, store, url, "old06", func(item *models.ArchiveItem) {
+		item.Source = models.ArchiveSourceBrightData
+	})
+	if found := findReusableVideoItem(db, url, 0); found != nil {
+		t.Fatalf("reused a Bright Data rescue: %+v", found)
+	}
+
+	db.Model(&models.ArchiveItem{}).Where("id = ?", rescued.ID).
+		Update("source", models.ArchiveSourceNative)
+	if found := findReusableVideoItem(db, url, 0); found == nil || found.ID != rescued.ID {
+		t.Fatalf("a native stored item was not found: %+v", found)
 	}
 }

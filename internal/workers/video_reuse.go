@@ -38,6 +38,13 @@ import (
 // identity, or nil when the video has never been archived. The legacy
 // "youtube" type spelling and rows without a backfilled canonical_url are both
 // still matched, so pre-rename archives keep their videos reusable.
+//
+// Bright Data rescues are deliberately NOT reused: that fallback is capped at
+// the progressive stream (360p), so its bytes are a degraded stand-in, not
+// the bytes a fresh native run would fetch. A repeat capture is the archive's
+// one chance to upgrade such a video to full fidelity once whatever blocked
+// the native path (an IP flag, a cookie outage) has been fixed. If the native
+// path is still blocked, the fallback simply buys the same rescue again.
 func findReusableVideoItem(db *gorm.DB, url string, excludeItemID uint) *models.ArchiveItem {
 	canonical := utils.CanonicalizeArchiveURL(url)
 	var rows []models.ArchivedURL
@@ -56,6 +63,7 @@ func findReusableVideoItem(db *gorm.DB, url string, excludeItemID uint) *models.
 		Where("archive_items.type IN ?", utils.ArchiveTypeMatchValues(utils.ArchiveTypeYtDlp)).
 		Where("archive_items.status = ?", "completed").
 		Where("archive_items.storage_key <> ''").
+		Where("(archive_items.source IS NULL OR archive_items.source <> ?)", models.ArchiveSourceBrightData).
 		Where("archive_items.id <> ?", excludeItemID).
 		Order("archive_items.updated_at DESC").
 		First(&item).Error

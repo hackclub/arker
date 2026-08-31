@@ -536,6 +536,20 @@ func main() {
 	// app and the orchestrator gave up on it. Losing logged-in archiving is bad;
 	// losing the whole server, including every archive type that needs no
 	// cookies at all, is much worse.
+	// When no cookie configuration is given, look for a jar at the
+	// conventional secrets-mount paths. The bind mount is orchestrator-managed
+	// config that survives redeploys, while env vars set on the running
+	// container have repeatedly been wiped by container recreation (the canary
+	// vars, then YTDLP_COOKIES_FILE itself) — a redeploy must not silently
+	// demote YouTube archiving to the paid 360p fallback again.
+	if cfg.YtDlpCookiesFile == "" && cfg.YtDlpCookiesB64 == "" {
+		for _, candidate := range []string{"/data/secrets/media-cookies.txt", "/data/secrets/ig-cookies.txt"} {
+			if _, statErr := os.Stat(candidate); statErr == nil {
+				cfg.YtDlpCookiesFile = candidate
+				break
+			}
+		}
+	}
 	cookiesPath, err := utils.InitYtDlpCookies(cfg.YtDlpCookiesFile, cfg.YtDlpCookiesB64, os.TempDir())
 	switch {
 	case err != nil:
