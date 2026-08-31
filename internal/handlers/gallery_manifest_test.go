@@ -26,15 +26,16 @@ type galleryManifestBody struct {
 	CaptureStatus string `json:"capture_status"`
 	MediaCount    int    `json:"media_count"`
 	Media         []struct {
-		Index       int    `json:"index"`
-		MediaURL    string `json:"media_url"`
-		Filename    string `json:"filename"`
-		Type        string `json:"type"`
-		ContentType string `json:"content_type"`
-		SizeBytes   int64  `json:"size_bytes"`
-		Width       *int64 `json:"width"`
-		Height      *int64 `json:"height"`
-		AltText     string `json:"alt_text"`
+		Index           int      `json:"index"`
+		MediaURL        string   `json:"media_url"`
+		Filename        string   `json:"filename"`
+		Type            string   `json:"type"`
+		ContentType     string   `json:"content_type"`
+		SizeBytes       int64    `json:"size_bytes"`
+		Width           *int64   `json:"width"`
+		Height          *int64   `json:"height"`
+		DurationSeconds *float64 `json:"duration_seconds"`
+		AltText         string   `json:"alt_text"`
 	} `json:"media"`
 	ArchiveURL                *string         `json:"archive_url"`
 	MetadataAvailable         bool            `json:"metadata_available"`
@@ -109,7 +110,7 @@ func TestServeGalleryManifestReportsPerCardMediaURLs(t *testing.T) {
 	writeGalleryZipFixture(t, db, store, "7fbf9", []struct{ name, body string }{
 		{"metadata.json", `{"source_url":"https://www.instagram.com/p/ABC123/","extractor":"instagram","author":"someone","author_name":"Some One","description":"a caption","file_count":2,"files":[` +
 			`{"name":"001.jpg","size":10,"content_type":"image/jpeg","is_video":false,"width":1080,"height":1350,"alt_text":"a friend soldering"},` +
-			`{"name":"002.mp4","size":9,"content_type":"video/mp4","is_video":true,"width":720,"height":1280}]}`},
+			`{"name":"002.mp4","size":9,"content_type":"video/mp4","is_video":true,"width":720,"height":1280,"duration_seconds":6.25}]}`},
 		{"001.jpg", "jpeg-bytes"},
 		{"001.jpg.json", `{"width":1080,"height":1350}`},
 		{"002.mp4", "mp4-bytes"},
@@ -148,6 +149,9 @@ func TestServeGalleryManifestReportsPerCardMediaURLs(t *testing.T) {
 	}
 	if second.Filename != "002.mp4" || second.Type != "video" || second.ContentType != "video/mp4" {
 		t.Errorf("media[1] = %+v, want the video slide", second)
+	}
+	if second.DurationSeconds == nil || *second.DurationSeconds != 6.25 {
+		t.Errorf("media[1].duration_seconds = %v, want 6.25", second.DurationSeconds)
 	}
 	if first.SizeBytes != int64(len("jpeg-bytes")) {
 		t.Errorf("media[0].size_bytes = %d, want %d", first.SizeBytes, len("jpeg-bytes"))

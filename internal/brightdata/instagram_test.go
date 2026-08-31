@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"arker/internal/archivers"
 	"arker/internal/models"
@@ -163,6 +164,76 @@ func TestInstagramGalleryFallbackCanonicalizesMisleadingHEICNames(t *testing.T) 
 	}
 }
 
+// /p/ URLs take the gallery fallback even when Instagram says the post is a
+// Reel. The video endpoint later projects a complete one-video gallery onto
+// the video contract, so the ZIP's per-file metadata must carry the intrinsic
+// duration and dimensions read from the downloaded MP4. This is the exact path
+// that left capture 5pfAm without duration_seconds.
+func TestInstagramGalleryFallbackRecordsVideoIntrinsics(t *testing.T) {
+	targetURL := "https://www.instagram.com/p/DcO8-weBHGS/"
+	mediaURL := "https://scontent.example/reel.mp4"
+	record := map[string]any{
+		"shortcode":    "DcO8-weBHGS",
+		"url":          targetURL,
+		"content_type": "Reel",
+		"user_posted":  "anna.codes.stuff",
+		"description":  "A fixture caption",
+		"likes":        float64(177),
+		"num_comments": float64(5),
+		"post_content": []any{
+			map[string]any{"index": float64(0), "type": "Video", "url": mediaURL},
+		},
+		"videos_duration": []any{
+			map[string]any{"url": mediaURL, "video_duration": float64(48.087074)},
+		},
+	}
+	network := newFakeNetwork(record)
+	network.serve(mediaURL, fakeMP4(1024))
+	installInstagramGalleryFFprobe(t)
+	client, db := newTestClient(t, network)
+
+	result, err := client.ArchiveFallback(context.Background(), targetURL, utils.ArchiveTypeGalleryDl, io.Discard, db, 42)
+	if err != nil {
+		t.Fatalf("ArchiveFallback: %v", err)
+	}
+	meta := galleryMetadataFromZip(t, resultZip(t, result))
+	if len(meta.Files) != 1 {
+		t.Fatalf("metadata files = %+v; want one video", meta.Files)
+	}
+	video := meta.Files[0]
+	if !video.IsVideo || video.ContentType != "video/mp4" {
+		t.Fatalf("stored file = %+v; want video/mp4", video)
+	}
+	if video.DurationSeconds == nil || *video.DurationSeconds != 48.087074 {
+		t.Errorf("duration_seconds = %v; want 48.087074 from stored bytes", video.DurationSeconds)
+	}
+	if video.Width != 1080 || video.Height != 1920 {
+		t.Errorf("dimensions = %dx%d; want 1080x1920 from stored bytes", video.Width, video.Height)
+	}
+	if meta.Likes == nil || *meta.Likes != 177 || meta.Comments == nil || *meta.Comments != 5 {
+		t.Errorf("engagement = likes %v, comments %v; want 177/5", meta.Likes, meta.Comments)
+	}
+	if meta.Title != "Video by anna.codes.stuff" {
+		t.Errorf("title = %q; want a stable single-video title", meta.Title)
+	}
+}
+
+func installInstagramGalleryFFprobe(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	script := `#!/bin/sh
+for last; do :; done
+[ -r "$last" ] || exit 90
+cat <<'JSON'
+{"streams":[{"codec_name":"h264","codec_type":"video","width":1080,"height":1920,"r_frame_rate":"30/1"}],"format":{"duration":"48.087074"}}
+JSON
+`
+	if err := os.WriteFile(filepath.Join(bin, "ffprobe"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -187,6 +258,77 @@ func TestFirstVideoFromPost(t *testing.T) {
 	}
 }
 
+// The reels dataset calls its duration "length" (a float: 68.475647 for a
+// 68-second reel) and the posts dataset "videos_duration"; neither matches the
+// yt-dlp-style video_duration/duration keys this mapping originally read,
+// which is how brightdata-provenance video captures shipped with no
+// duration_seconds at all (capture 5pfAm, flagged 2026-08-31). This pins the
+// mapping to the real field names.
+func TestBrightDataInstagramVideoMetadataCarriesDuration(t *testing.T) {
+	record := loadRecord(t, "instagram_reel.json")
+
+	sidecar, _, err := buildBrightDataInstagramVideoArtifacts(record, "https://www.instagram.com/reel/DPAid-WDi67/", 1234, fixedArchiveTime(t))
+	if err != nil {
+		t.Fatalf("buildBrightDataInstagramVideoArtifacts: %v", err)
+	}
+	var metadata archivers.VideoMetadata
+	if err := json.Unmarshal(sidecar.Data, &metadata); err != nil {
+		t.Fatalf("decode normalized metadata: %v", err)
+	}
+	if metadata.DurationSeconds == nil || *metadata.DurationSeconds < 68.47 || *metadata.DurationSeconds > 68.48 {
+		t.Errorf("duration_seconds = %v; want the reel record's length 68.475647", metadata.DurationSeconds)
+	}
+	if metadata.Title != "Video by bcydc" {
+		t.Errorf("title = %q; want a stable single-video title", metadata.Title)
+	}
+	if metadata.Engagement.Likes == nil || *metadata.Engagement.Likes != 40 {
+		t.Errorf("likes = %v; want 40", metadata.Engagement.Likes)
+	}
+	if metadata.Engagement.Comments == nil || *metadata.Engagement.Comments != 7 {
+		t.Errorf("comments = %v; want 7", metadata.Engagement.Comments)
+	}
+}
+
+func fixedArchiveTime(t *testing.T) time.Time {
+	t.Helper()
+	stamp, err := time.Parse(time.RFC3339, "2026-08-31T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return stamp
+}
+
+// floatField has to read every shape the datasets actually serve: bare floats,
+// stringified numbers, and the posts dataset's one-element videos_duration
+// list of {url, video_duration} objects, while refusing ambiguous lists and
+// unparseable values.
+func TestFloatFieldReadsProviderShapes(t *testing.T) {
+	cases := []struct {
+		name   string
+		record map[string]any
+		want   *float64
+	}{
+		{"bare float", map[string]any{"length": 68.475647}, floatPtr(68.475647)},
+		{"string number", map[string]any{"videos_duration": "18.994"}, floatPtr(18.994)},
+		{"single-element object list", map[string]any{"videos_duration": []any{map[string]any{"url": "https://cdn.example/video.mp4", "video_duration": 18.994}}}, floatPtr(18.994)},
+		{"multi-element list is ambiguous", map[string]any{"videos_duration": []any{18.994, 3.2}}, nil},
+		{"absent", map[string]any{}, nil},
+		{"null", map[string]any{"length": nil}, nil},
+		{"human-formatted string", map[string]any{"length": "1.2K"}, nil},
+	}
+	for _, c := range cases {
+		got := floatField(c.record, "length", "videos_duration")
+		switch {
+		case (got == nil) != (c.want == nil):
+			t.Errorf("%s: floatField = %v; want %v", c.name, got, c.want)
+		case got != nil && *got != *c.want:
+			t.Errorf("%s: floatField = %v; want %v", c.name, *got, *c.want)
+		}
+	}
+}
+
+func floatPtr(v float64) *float64 { return &v }
+
 func TestGalleryMetadataFromRecord(t *testing.T) {
 	record := loadRecord(t, "instagram_post.json")
 
@@ -205,6 +347,9 @@ func TestGalleryMetadataFromRecord(t *testing.T) {
 	}
 	if meta.Likes == nil || *meta.Likes != 27662 {
 		t.Errorf("likes = %v; want 27662", meta.Likes)
+	}
+	if meta.Comments == nil || *meta.Comments != 22 {
+		t.Errorf("comments = %v; want 22 (num_comments)", meta.Comments)
 	}
 	if meta.Date == "" {
 		t.Error("date is empty")

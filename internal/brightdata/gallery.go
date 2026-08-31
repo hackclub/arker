@@ -90,6 +90,11 @@ func (c *Client) buildGalleryArchive(ctx context.Context, entries []mediaEntry, 
 	completeness.MissingIndices = missing
 	meta.Completeness = &completeness
 
+	// Read duration and dimensions off the downloaded bytes while they are
+	// still files: provider records rarely carry per-slide intrinsics, and the
+	// ZIP about to be built is immutable once stored.
+	archivers.ProbeGalleryVideoFiles(ctx, tmpDir, meta.Files, logWriter)
+
 	fmt.Fprintf(logWriter, "Downloaded %d of %d media file(s), %d bytes total\n", len(meta.Files), expected, totalBytes)
 
 	zipPath, err := buildGalleryZip(tmpDir, meta, record)

@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // VideoProbe contains intrinsic facts read from the archived media itself.
@@ -44,17 +46,34 @@ type ffprobeOutput struct {
 // ProbeVideo asks ffprobe to inspect the bytes supplied on stdin. Supplying a
 // reader instead of a path lets the worker inspect the object it just stored
 // through the same Storage interface used by filesystem and S3 backends.
+//
+// A pipe cannot seek, so a container whose moov atom trails the media data may
+// not be probeable this way; use ProbeVideoFile when the bytes are on disk.
 func ProbeVideo(ctx context.Context, media io.Reader) (VideoProbe, error) {
 	if media == nil {
 		return VideoProbe{}, fmt.Errorf("video reader is nil")
 	}
+	return runVideoProbe(ctx, media, "pipe:0")
+}
+
+// ProbeVideoFile inspects a media file on disk. ffprobe can seek in a real
+// file, so this also reads containers whose index sits at the end — which is
+// how ffmpeg-muxed downloads (gallery-dl's ytdl route, for one) come out.
+func ProbeVideoFile(ctx context.Context, path string) (VideoProbe, error) {
+	if path == "" {
+		return VideoProbe{}, fmt.Errorf("video path is empty")
+	}
+	return runVideoProbe(ctx, nil, path)
+}
+
+func runVideoProbe(ctx context.Context, stdin io.Reader, input string) (VideoProbe, error) {
 	cmd := exec.CommandContext(ctx, "ffprobe",
 		"-v", "error",
 		"-show_entries", "format=duration,bit_rate:stream=codec_type,codec_name,width,height,duration,avg_frame_rate,r_frame_rate,bit_rate",
 		"-of", "json",
-		"pipe:0",
+		input,
 	)
-	cmd.Stdin = media
+	cmd.Stdin = stdin
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -126,6 +145,46 @@ func BackfillVideoMetadata(metadataJSON []byte, probe VideoProbe) ([]byte, error
 	metadata.Media.AudioCodec = firstVideoString(probe.AudioCodec, metadata.Media.AudioCodec)
 	metadata.Media.BitrateKbps = firstVideoFloat(probe.BitrateKbps, metadata.Media.BitrateKbps)
 	return MarshalVideoMetadata(&metadata)
+}
+
+// ProbeGalleryVideoFiles reads intrinsic facts (duration, dimensions) off the
+// video files of a gallery bundle before it is zipped, writing them into the
+// matching GalleryFile entries in place.
+//
+// This is the only moment those facts are knowable for a gallery: provider
+// records rarely carry a per-slide duration, and once the bundle is a stored
+// ZIP the bytes are behind an immutable object. Without it, a single-video
+// post archived through the gallery flow serves a video manifest with no
+// duration_seconds — an honest absence, but an avoidable one, and one that
+// blocks any consumer integrating over playback time. Probe values win over
+// provider values where both exist, matching BackfillVideoMetadata: the probe
+// describes the exact bytes stored. A probe failure only logs; intrinsic
+// metadata is an enrichment, never an archive-success boundary.
+func ProbeGalleryVideoFiles(ctx context.Context, dir string, files []GalleryFile, logWriter io.Writer) {
+	for i := range files {
+		file := &files[i]
+		if !file.IsVideo {
+			continue
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		probe, err := ProbeVideoFile(probeCtx, filepath.Join(dir, file.Name))
+		cancel()
+		if err != nil {
+			if logWriter != nil {
+				fmt.Fprintf(logWriter, "Warning: could not probe %s for intrinsic video metadata: %v\n", file.Name, err)
+			}
+			continue
+		}
+		if probe.DurationSeconds != nil {
+			file.DurationSeconds = probe.DurationSeconds
+		}
+		if probe.Width != nil {
+			file.Width = int(*probe.Width)
+		}
+		if probe.Height != nil {
+			file.Height = int(*probe.Height)
+		}
+	}
 }
 
 func positiveProbeFloat(value string) *float64 {

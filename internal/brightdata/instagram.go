@@ -141,10 +141,17 @@ func buildBrightDataInstagramVideoArtifacts(record map[string]any, sourceURL str
 		return nil, nil, fmt.Errorf("sanitize Bright Data Instagram record: %w", err)
 	}
 
-	var duration *float64
-	if seconds := intField(record, "video_duration", "duration"); seconds != nil {
-		value := float64(*seconds)
-		duration = &value
+	// "length" is what the reels dataset actually calls its duration (a float,
+	// 68.475647 for a 68-second reel); the posts dataset uses "videos_duration".
+	// The original video_duration/duration keys exist in no observed Instagram
+	// record, which is why brightdata-provenance reels shipped without a
+	// duration until this was checked against real snapshots. The stored-bytes
+	// ffprobe backfill overrides this where it runs; the record value is the
+	// fallback that keeps the fact when probing is unavailable.
+	duration := floatField(record, "length", "video_duration", "videos_duration", "duration")
+	if duration != nil && *duration <= 0 {
+		// A zero is what these datasets write for "no duration", not a fact.
+		duration = nil
 	}
 	metadataJSON, err := archivers.MarshalVideoMetadata(&archivers.VideoMetadata{
 		SchemaVersion:        archivers.VideoMetadataSchemaVersion,
@@ -153,7 +160,7 @@ func buildBrightDataInstagramVideoArtifacts(record map[string]any, sourceURL str
 		Extractor:            "instagram",
 		PostID:               stringField(record, "shortcode", "post_id", "content_id"),
 		CanonicalURL:         archivers.SanitizeURL(firstNonEmptyString(stringField(record, "url"), sourceURL), nil),
-		Title:                stringField(record, "title"),
+		Title:                instagramVideoTitle(record),
 		Description:          stringField(record, "description", "caption"),
 		Author:               stringField(record, "user_posted", "username", "owner_username"),
 		AuthorID:             stringField(record, "user_id", "owner_id"),
@@ -162,7 +169,7 @@ func buildBrightDataInstagramVideoArtifacts(record map[string]any, sourceURL str
 		PublicationTimestamp: normalizeProviderDate(stringField(record, "date_posted", "timestamp")),
 		DurationSeconds:      duration,
 		Engagement: archivers.VideoEngagement{
-			Views:    intField(record, "video_view_count", "views", "view_count"),
+			Views:    intField(record, "video_view_count", "views", "view_count", "video_play_count"),
 			Likes:    intField(record, "likes", "like_count"),
 			Comments: intField(record, "num_comments", "comments", "comment_count"),
 		},
@@ -253,6 +260,11 @@ func (c *Client) instagramGallery(ctx context.Context, targetURL string, logWrit
 	completeness := archivers.CompletenessFromCounts(&expected, len(meta.Files), false)
 	completeness.MissingIndices = missing
 	meta.Completeness = &completeness
+
+	// The Instagram datasets expose no per-slide duration or dimensions, so
+	// the downloaded bytes are the only source for them — and this is the last
+	// moment they exist as probeable files rather than an immutable stored ZIP.
+	archivers.ProbeGalleryVideoFiles(ctx, tmpDir, meta.Files, logWriter)
 
 	logInstagramMetadata(logWriter, record)
 	fmt.Fprintf(logWriter, "Downloaded %d of %d media file(s), %d bytes total\n", len(meta.Files), len(entries), totalBytes)
@@ -388,6 +400,25 @@ func firstVideoFromPost(record map[string]any) string {
 	return ""
 }
 
+// Instagram's datasets do not publish a title field for videos. yt-dlp's
+// normalized record names the same kind of post "Video by <uploader>", so use
+// that stable display title only when the record proves it is exactly one
+// video. Photo posts and carousels stay untitled rather than being guessed.
+func instagramVideoTitle(record map[string]any) string {
+	if title := stringField(record, "title"); title != "" {
+		return title
+	}
+	entries := postMediaEntries(record)
+	if len(entries) != 1 || !entries[0].isVideo() {
+		return ""
+	}
+	author := stringField(record, "user_posted", "username", "owner_username")
+	if author == "" {
+		return ""
+	}
+	return "Video by " + author
+}
+
 // galleryMetadataFromRecord maps a Bright Data post record onto Arker's
 // normalized gallery metadata, the same shape the native gallery-dl flow
 // writes, so both flows are indistinguishable to the viewer.
@@ -399,6 +430,7 @@ func galleryMetadataFromRecord(record map[string]any, sourceURL string) *archive
 		PostID:      stringField(record, "shortcode", "post_id", "content_id"),
 		PostURL:     stringField(record, "url"),
 		Author:      stringField(record, "user_posted"),
+		Title:       instagramVideoTitle(record),
 		Description: stringField(record, "description"),
 		Date:        stringField(record, "date_posted", "timestamp"),
 		Tags:        stringSlice(record, "hashtags"),
@@ -408,6 +440,8 @@ func galleryMetadataFromRecord(record map[string]any, sourceURL string) *archive
 	if likes := intField(record, "likes"); likes != nil {
 		meta.Likes = likes
 	}
+	meta.Views = intField(record, "video_view_count", "views", "video_play_count")
+	meta.Comments = intField(record, "num_comments")
 	return meta
 }
 
@@ -640,6 +674,43 @@ func intField(record map[string]any, keys ...string) *int64 {
 			if v, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil {
 				return &v
 			}
+		}
+	}
+	return nil
+}
+
+// floatField reads a fractional quantity (a duration in seconds) from a
+// provider record. Records are not schemas: the reels dataset's "length" is a
+// scalar, while the posts dataset's "videos_duration" is a one-element list of
+// {url, video_duration} objects for a single-video post. Parsing is strict for
+// the same reason intField's is: "1.2K" is not a number this can honestly
+// report.
+func floatField(record map[string]any, keys ...string) *float64 {
+	for _, key := range keys {
+		if v := floatValue(record[key]); v != nil {
+			return v
+		}
+	}
+	return nil
+}
+
+func floatValue(value any) *float64 {
+	switch typed := value.(type) {
+	case float64:
+		return &typed
+	case json.Number:
+		if v, err := typed.Float64(); err == nil {
+			return &v
+		}
+	case string:
+		if v, err := strconv.ParseFloat(strings.TrimSpace(typed), 64); err == nil {
+			return &v
+		}
+	case map[string]any:
+		return floatField(typed, "video_duration", "duration", "length")
+	case []any:
+		if len(typed) == 1 {
+			return floatValue(typed[0])
 		}
 	}
 	return nil

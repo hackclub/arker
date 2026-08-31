@@ -46,20 +46,25 @@ const GalleryMetadataSchemaVersion = "1"
 // only needs to carry the fields a viewer wants: who posted, what they said,
 // when, and what files came back.
 type GalleryMetadata struct {
-	SourceURL   string        `json:"source_url"`
-	Extractor   string        `json:"extractor,omitempty"`
-	Subcategory string        `json:"subcategory,omitempty"`
-	PostID      string        `json:"post_id,omitempty"`
-	PostURL     string        `json:"post_url,omitempty"`
-	Author      string        `json:"author,omitempty"`
-	AuthorName  string        `json:"author_name,omitempty"`
-	Title       string        `json:"title,omitempty"`
-	Description string        `json:"description,omitempty"`
-	Date        string        `json:"date,omitempty"`
-	Likes       *int64        `json:"likes,omitempty"`
-	Tags        []string      `json:"tags,omitempty"`
-	FileCount   int           `json:"file_count"`
-	Files       []GalleryFile `json:"files"`
+	SourceURL   string `json:"source_url"`
+	Extractor   string `json:"extractor,omitempty"`
+	Subcategory string `json:"subcategory,omitempty"`
+	PostID      string `json:"post_id,omitempty"`
+	PostURL     string `json:"post_url,omitempty"`
+	Author      string `json:"author,omitempty"`
+	AuthorName  string `json:"author_name,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Date        string `json:"date,omitempty"`
+	Likes       *int64 `json:"likes,omitempty"`
+	// Views and Comments complete the engagement picture where the extractor
+	// exposes them. Like Likes they are pointers: a missing count is a fact
+	// about the source, not a zero.
+	Views     *int64        `json:"views,omitempty"`
+	Comments  *int64        `json:"comments,omitempty"`
+	Tags      []string      `json:"tags,omitempty"`
+	FileCount int           `json:"file_count"`
+	Files     []GalleryFile `json:"files"`
 	// Completeness answers whether FileCount is all of the post or only what
 	// survived. gallery-dl keeps partial downloads, so file_count alone cannot
 	// distinguish a 3-slide post from 3 slides of a 10-slide carousel. Nil on
@@ -77,6 +82,12 @@ type GalleryFile struct {
 	IsVideo     bool   `json:"is_video"`
 	Width       int    `json:"width,omitempty"`
 	Height      int    `json:"height,omitempty"`
+	// DurationSeconds is the playable length of a video slide, read off the
+	// stored bytes by ffprobe at archive time (ProbeGalleryVideoFiles). It is
+	// what lets a single-video post archived through the gallery flow serve a
+	// video manifest with a real duration. Nil for stills and for bundles
+	// written before this was recorded.
+	DurationSeconds *float64 `json:"duration_seconds,omitempty"`
 	// AltText is the poster's own description of this image, where the
 	// extractor exposes it. It is part of the post as published — often the
 	// only text describing an image-only post — so it is worth keeping.
@@ -226,6 +237,10 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 
 	metadata := buildGalleryMetadata(tmpDir, url, version, media, sidecars, logWriter)
 	metadata.Completeness = &completeness
+	// The files are still on disk here; once zipped they are behind an
+	// immutable stored object, so this is the only chance to read intrinsic
+	// video facts (duration, dimensions) off the actual bytes.
+	ProbeGalleryVideoFiles(ctx, tmpDir, metadata.Files, logWriter)
 	metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to encode gallery metadata: %v\n", err)
@@ -758,6 +773,16 @@ func buildGalleryMetadata(dir, sourceURL, version string, media []string, sideca
 			"likes", "like_count", "likeCount",
 			"upvote_count", "point_count",
 			"favorite_count", "favorites", "score")
+		// Views and comments follow the same first-match-wins rule. The keys
+		// are the ones extractors actually emit; a site that models comments
+		// as a list rather than a count simply resolves to nil, because
+		// galleryInt only accepts numbers.
+		meta.Views = galleryInt(raw,
+			"view_count", "views", "video_view_count",
+			"play_count", "video_play_count")
+		meta.Comments = galleryInt(raw,
+			"comment_count", "comments", "num_comments",
+			"reply_count", "replies")
 		meta.Tags = galleryStrings(raw, "tags", "hashtags")
 	}
 

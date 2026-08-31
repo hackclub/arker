@@ -59,7 +59,11 @@ type galleryManifestMedia struct {
 	SizeBytes   int64  `json:"size_bytes"`
 	Width       *int64 `json:"width,omitempty"`
 	Height      *int64 `json:"height,omitempty"`
-	AltText     string `json:"alt_text,omitempty"`
+	// DurationSeconds is present on video cards whose bundle recorded it at
+	// archive time; consumers weighting attention by playback length read it
+	// here instead of downloading the media.
+	DurationSeconds *float64 `json:"duration_seconds,omitempty"`
+	AltText         string   `json:"alt_text,omitempty"`
 }
 
 // ServeGalleryManifest returns a gallery capture's status, normalized post
@@ -157,6 +161,10 @@ func ServeGalleryManifest(c *gin.Context, store storage.Storage, db *gorm.DB) {
 			if stored.Height > 0 {
 				height := int64(stored.Height)
 				card.Height = &height
+			}
+			if stored.DurationSeconds != nil && *stored.DurationSeconds > 0 {
+				duration := *stored.DurationSeconds
+				card.DurationSeconds = &duration
 			}
 			card.AltText = stored.AltText
 		}

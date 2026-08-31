@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"arker/internal/archivers"
 	"arker/internal/models"
 	"arker/internal/storage"
 	"arker/internal/utils"
@@ -272,6 +273,34 @@ func TestApiArchiveResultGalleryRawPartialAliasAndSkipped(t *testing.T) {
 	f := skipped["social_post"].(map[string]any)["failure"].(map[string]any)
 	if f["code"] != "authentication_required" {
 		t.Fatalf("skipped = %#v", skipped)
+	}
+}
+
+func TestApiArchiveResultGalleryCarriesVideoDurationAndEngagement(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	seedGalleryCapture(t, db, store, "igapi", "completed")
+	writeGalleryZipFixture(t, db, store, "igapi", []struct{ name, body string }{
+		{"metadata.json", `{"source_url":"https://www.instagram.com/p/igapi/","extractor":"instagram","post_id":"igapi","post_url":"https://www.instagram.com/p/igapi/","author":"someone","views":123,"likes":42,"comments":5,"file_count":1,"files":[{"name":"001.mp4","size":32,"content_type":"video/mp4","is_video":true,"width":576,"height":1024,"duration_seconds":48.087074}],"completeness":{"state":"complete","expected":1,"stored":1}}`},
+		{"001.mp4", "stored-video"},
+		{"brightdata.json", `{"shortcode":"igapi"}`},
+	})
+	if err := db.Model(&models.ArchiveItem{}).
+		Where("type = ?", utils.ArchiveTypeGalleryDl).
+		Updates(map[string]any{"source": models.ArchiveSourceBrightData, "completeness": archivers.CompletenessComplete}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, body := getResult(t, resultRouter(db, store), "igapi")
+	social := socialOf(t, body)
+	post := social["post"].(map[string]any)
+	engagement := post["engagement"].(map[string]any)
+	if engagement["views"] != float64(123) || engagement["likes"] != float64(42) || engagement["comments"] != float64(5) {
+		t.Errorf("engagement = %#v, want views/likes/comments 123/42/5", engagement)
+	}
+	media := social["media"].([]any)[0].(map[string]any)
+	if media["duration_seconds"] != 48.087074 || media["width"] != float64(576) || media["height"] != float64(1024) {
+		t.Errorf("media facts = %#v, want duration 48.087074 and 576x1024", media)
 	}
 }
 

@@ -97,6 +97,11 @@ func projectGalleryVideo(store storage.Storage, db *gorm.DB, shortID string) (*g
 		value := int64(details.Height)
 		height = &value
 	}
+	var duration *float64
+	if details.DurationSeconds != nil && *details.DurationSeconds > 0 {
+		value := *details.DurationSeconds
+		duration = &value
+	}
 	provider := "gallery-dl"
 	provenance := item.Source
 	if provenance == "" {
@@ -116,7 +121,8 @@ func projectGalleryVideo(store storage.Storage, db *gorm.DB, shortID string) (*g
 		Description:          gallery.Description,
 		Author:               gallery.Author,
 		PublicationTimestamp: gallery.Date,
-		Engagement:           archivers.VideoEngagement{Likes: gallery.Likes},
+		DurationSeconds:      duration,
+		Engagement:           archivers.VideoEngagement{Views: gallery.Views, Likes: gallery.Likes, Comments: gallery.Comments},
 		Tags:                 gallery.Tags,
 		Media: archivers.VideoMedia{
 			Extension:   filepath.Ext(entry.Name),

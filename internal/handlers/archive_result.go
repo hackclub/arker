@@ -766,8 +766,8 @@ func buildGallerySocial(c *gin.Context, store storage.Storage, shortID string, i
 		author = nil
 	}
 	var eng *socialEngagement
-	if meta.Likes != nil {
-		eng = &socialEngagement{Likes: meta.Likes}
+	if meta.Likes != nil || meta.Views != nil || meta.Comments != nil {
+		eng = &socialEngagement{Views: meta.Views, Likes: meta.Likes, Comments: meta.Comments}
 	}
 	out.Post = &normalizedPost{ID: meta.PostID, URL: meta.PostURL, Title: meta.Title, Text: meta.Description, PublishedAt: meta.Date, Author: author, Engagement: eng, Tags: meta.Tags}
 	fileMetadata := make(map[string]archivers.GalleryFile, len(meta.Files))
@@ -792,6 +792,10 @@ func buildGallerySocial(c *gin.Context, store storage.Storage, shortID string, i
 			if details.Height > 0 {
 				height := int64(details.Height)
 				media.Height = &height
+			}
+			if details.DurationSeconds != nil && *details.DurationSeconds > 0 {
+				duration := *details.DurationSeconds
+				media.DurationSeconds = &duration
 			}
 			media.AltText = details.AltText
 		}

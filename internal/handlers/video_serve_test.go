@@ -141,7 +141,7 @@ func TestVideoContractProjectsSingleVideoGalleryCapture(t *testing.T) {
 	seedGalleryCapture(t, db, store, "igr01", "completed")
 	video := append([]byte{0, 0, 0, 20}, []byte("ftypisomarchived-reel-bytes")...)
 	writeGalleryZipFixture(t, db, store, "igr01", []struct{ name, body string }{
-		{"metadata.json", `{"source_url":"https://www.instagram.com/p/ABC123/","extractor":"instagram","post_id":"ABC123","post_url":"https://www.instagram.com/p/ABC123/","author":"someone","title":"A reel","description":"caption","date":"2026-08-09T22:16:38Z","likes":42,"file_count":1,"files":[{"name":"001.mp4","size":32,"content_type":"video/mp4","is_video":true,"width":576,"height":1024}],"completeness":{"state":"complete","expected":1,"stored":1},"archived_at":"2026-08-16T18:31:22Z"}`},
+		{"metadata.json", `{"source_url":"https://www.instagram.com/p/ABC123/","extractor":"instagram","post_id":"ABC123","post_url":"https://www.instagram.com/p/ABC123/","author":"someone","title":"A reel","description":"caption","date":"2026-08-09T22:16:38Z","views":123,"likes":42,"comments":5,"file_count":1,"files":[{"name":"001.mp4","size":32,"content_type":"video/mp4","is_video":true,"width":576,"height":1024,"duration_seconds":48.087074}],"completeness":{"state":"complete","expected":1,"stored":1},"archived_at":"2026-08-16T18:31:22Z"}`},
 		{"001.mp4", string(video)},
 		{"brightdata.json", `{"content_type":"Reel","product_type":"clips","shortcode":"ABC123"}`},
 	})
@@ -186,10 +186,16 @@ func TestVideoContractProjectsSingleVideoGalleryCapture(t *testing.T) {
 		t.Errorf("provenance = %q, want brightdata", manifest.Provenance)
 	}
 	var metadata struct {
-		Platform string `json:"platform"`
-		PostID   string `json:"post_id"`
-		Title    string `json:"title"`
-		Media    struct {
+		Platform        string   `json:"platform"`
+		PostID          string   `json:"post_id"`
+		Title           string   `json:"title"`
+		DurationSeconds *float64 `json:"duration_seconds"`
+		Engagement      struct {
+			Views    *int64 `json:"views"`
+			Likes    *int64 `json:"likes"`
+			Comments *int64 `json:"comments"`
+		} `json:"engagement"`
+		Media struct {
 			ContentType string `json:"content_type"`
 			Width       *int64 `json:"width"`
 			Height      *int64 `json:"height"`
@@ -203,6 +209,14 @@ func TestVideoContractProjectsSingleVideoGalleryCapture(t *testing.T) {
 	}
 	if metadata.Media.Width == nil || *metadata.Media.Width != 576 || metadata.Media.Height == nil || *metadata.Media.Height != 1024 {
 		t.Errorf("video dimensions = %v x %v, want 576x1024", metadata.Media.Width, metadata.Media.Height)
+	}
+	if metadata.DurationSeconds == nil || *metadata.DurationSeconds != 48.087074 {
+		t.Errorf("duration_seconds = %v, want 48.087074", metadata.DurationSeconds)
+	}
+	if metadata.Engagement.Views == nil || *metadata.Engagement.Views != 123 ||
+		metadata.Engagement.Likes == nil || *metadata.Engagement.Likes != 42 ||
+		metadata.Engagement.Comments == nil || *metadata.Engagement.Comments != 5 {
+		t.Errorf("engagement = %+v, want views/likes/comments 123/42/5", metadata.Engagement)
 	}
 
 	videoRec := httptest.NewRecorder()
