@@ -98,6 +98,9 @@ func TestThumbnailWorkerGeneratesFromStoredScreenshot(t *testing.T) {
 	if got.ThumbnailStatus != models.ThumbnailStatusReady {
 		t.Fatalf("status = %q, want ready", got.ThumbnailStatus)
 	}
+	if got.ThumbnailKind != models.ThumbnailKindPagePreview {
+		t.Errorf("kind = %q, want page preview", got.ThumbnailKind)
+	}
 	if got.ThumbnailWidth != thumbnail.Width || got.ThumbnailHeight != thumbnail.Height {
 		t.Errorf("dimensions = %dx%d, want %dx%d", got.ThumbnailWidth, got.ThumbnailHeight, thumbnail.Width, thumbnail.Height)
 	}
@@ -250,6 +253,9 @@ func TestProcessArchiveJobKeepsSocialThumbnailExtension(t *testing.T) {
 	}
 	if got.ThumbnailWidth != 137 || got.ThumbnailHeight != 251 {
 		t.Errorf("stored dimensions = %dx%d, want 137x251", got.ThumbnailWidth, got.ThumbnailHeight)
+	}
+	if got.ThumbnailKind != models.ThumbnailKindSocialOriginal {
+		t.Errorf("kind = %q, want social original", got.ThumbnailKind)
 	}
 	r, err := store.Reader(got.ThumbnailKey)
 	if err != nil {

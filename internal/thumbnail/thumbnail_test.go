@@ -302,6 +302,49 @@ func TestOriginalFromReaderRejectsInvalidImage(t *testing.T) {
 	}
 }
 
+func TestOriginalFromReaderPreservesAVIFAndHEICGeometry(t *testing.T) {
+	for _, tc := range []struct {
+		brand, extension, contentType string
+	}{
+		{"avif", ".avif", "image/avif"},
+		{"heic", ".heic", "image/heic"},
+		{"heif", ".heif", "image/heif"},
+	} {
+		t.Run(tc.brand, func(t *testing.T) {
+			data := syntheticBMFFStill(tc.brand, 1080, 1350)
+			got, err := OriginalFromReader(bytes.NewReader(data))
+			if err != nil {
+				t.Fatalf("OriginalFromReader: %v", err)
+			}
+			if !bytes.Equal(got.Data, data) || got.Width != 1080 || got.Height != 1350 {
+				t.Fatalf("preserved image = %dx%d equal=%v", got.Width, got.Height, bytes.Equal(got.Data, data))
+			}
+			if ext := FileExtension(data); ext != tc.extension {
+				t.Errorf("extension = %q, want %q", ext, tc.extension)
+			}
+			if ct := ContentTypeForData(data); ct != tc.contentType {
+				t.Errorf("content type = %q, want %q", ct, tc.contentType)
+			}
+		})
+	}
+}
+
+func syntheticBMFFStill(brand string, width, height uint32) []byte {
+	var data []byte
+	data = binary.BigEndian.AppendUint32(data, 24)
+	data = append(data, "ftyp"...)
+	data = append(data, brand...)
+	data = binary.BigEndian.AppendUint32(data, 0)
+	data = append(data, brand...)
+	data = append(data, "mif1"...)
+	data = binary.BigEndian.AppendUint32(data, 20)
+	data = append(data, "ispe"...)
+	data = binary.BigEndian.AppendUint32(data, 0)
+	data = binary.BigEndian.AppendUint32(data, width)
+	data = binary.BigEndian.AppendUint32(data, height)
+	return data
+}
+
 // hugePNGHeader builds just enough valid PNG for DecodeConfig to report a huge
 // size. Encoding a real 50-megapixel image would cost hundreds of megabytes,
 // which is precisely what the guard exists to avoid.

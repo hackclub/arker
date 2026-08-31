@@ -229,6 +229,7 @@ func copyPriorThumbnail(db *gorm.DB, item, prior *models.ArchiveItem) {
 		"thumbnail_width":  prior.ThumbnailWidth,
 		"thumbnail_height": prior.ThumbnailHeight,
 		"thumbnail_status": models.ThumbnailStatusReady,
+		"thumbnail_kind":   prior.ThumbnailKind,
 	}).Error; err != nil {
 		slog.Warn("Failed to copy prior video thumbnail", "item_id", item.ID, "error", err)
 	}

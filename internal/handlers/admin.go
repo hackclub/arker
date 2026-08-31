@@ -204,6 +204,79 @@ func RetryAllFailedJobs(c *gin.Context, db *gorm.DB, riverClient *river.Client[p
 	})
 }
 
+// BackfillSocialThumbnails queues one low-priority job per canonical social
+// URL/type group. cost_limit_usd is a hard shared ceiling for provider lookups;
+// zero permits only stored/native work. priority_short_id lets an operator put
+// a known bad capture first without creating a second, independently funded
+// run.
+func BackfillSocialThumbnails(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
+	budget := 0.0
+	if raw := c.Query("cost_limit_usd"); raw != "" {
+		parsed, err := strconv.ParseFloat(raw, 64)
+		if err != nil || parsed < 0 || parsed > 100 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "cost_limit_usd must be between 0 and 100"})
+			return
+		}
+		budget = parsed
+	}
+	summary, err := workers.EnqueueSocialThumbnailBackfill(c.Request.Context(), db, riverClient, workers.SocialThumbnailBackfillOptions{
+		BudgetUSD:       budget,
+		PriorityShortID: c.Query("priority_short_id"),
+		DryRun:          c.Query("dry_run") == "true",
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "summary": summary})
+		return
+	}
+	c.JSON(http.StatusAccepted, summary)
+}
+
+// SocialThumbnailBackfillStatus reports durable progress from archive_items
+// plus River's live job states. Pass ?since=<RFC3339> to include provider spend
+// for a particular run.
+func SocialThumbnailBackfillStatus(c *gin.Context, db *gorm.DB) {
+	base := db.Model(&models.ArchiveItem{}).
+		Where("type IN ? AND status = ?", []string{utils.ArchiveTypeGalleryDl, utils.ArchiveTypeYtDlp}, "completed")
+	var total, originals, fallbacks int64
+	base.Count(&total)
+	base.Where("thumbnail_kind = ?", models.ThumbnailKindSocialOriginal).Count(&originals)
+	base.Where("thumbnail_kind = ?", models.ThumbnailKindSocialFallback).Count(&fallbacks)
+
+	queue := map[string]int64{}
+	var queueRows []struct {
+		State string
+		Count int64
+	}
+	if err := db.Table("river_job").Select("state, COUNT(*) AS count").
+		Where("kind = ?", (workers.SocialThumbnailBackfillJobArgs{}).Kind()).
+		Group("state").Scan(&queueRows).Error; err == nil {
+		for _, row := range queueRows {
+			queue[row.State] = row.Count
+		}
+	}
+
+	response := gin.H{
+		"total_social_items": total,
+		"original":           originals,
+		"fallback":           fallbacks,
+		"remaining":          total - originals - fallbacks,
+		"queue":              queue,
+	}
+	if raw := c.Query("since"); raw != "" {
+		if since, err := time.Parse(time.RFC3339, raw); err == nil {
+			var spend float64
+			if db.Model(&models.BrightDataUsage{}).Where("created_at >= ?", since).
+				Select("COALESCE(SUM(cost_usd), 0)").Scan(&spend).Error == nil {
+				response["provider_cost_usd_since"] = spend
+			}
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "since must be RFC3339"})
+			return
+		}
+	}
+	c.JSON(http.StatusOK, response)
+}
+
 // mediaBackfillURLPattern pre-filters candidate URLs in SQL for each media
 // archive type. Loading every capture and filtering in Go blows Postgres's
 // 65535-parameter limit at production scale (~100k captures); the Go predicate

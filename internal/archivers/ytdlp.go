@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"arker/internal/models"
 	"arker/internal/thumbnail"
 	"arker/internal/utils"
 )
@@ -43,6 +44,58 @@ type YtDlpArchiver struct{}
 
 func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (Result, error) {
 	return a.archive(ctx, url, logWriter, true, VideoMedia{})
+}
+
+// RefreshSocialThumbnail asks yt-dlp for only the platform-authored poster.
+// It deliberately avoids the normal metadata refresh path: that path also
+// probes twice, fetches captions and writes sidecars, which is useful for a new
+// capture but wasteful and unnecessarily noisy for thousands of historical
+// thumbnail repairs.
+func (a *YtDlpArchiver) RefreshSocialThumbnail(ctx context.Context, url string, logWriter io.Writer) (*Thumbnail, error) {
+	if logWriter == nil {
+		logWriter = io.Discard
+	}
+	cookieArgs, cleanupCookies, err := utils.YtDlpCookieArgsForRun()
+	if err != nil {
+		return nil, fmt.Errorf("prepare media cookies: %w", err)
+	}
+	defer cleanupCookies()
+
+	tempBase, err := createTempVideoBase()
+	if err != nil {
+		return nil, fmt.Errorf("create thumbnail temp path: %w", err)
+	}
+	defer cleanupTempVideoFiles(tempBase)
+
+	fetchURL := utils.YtDlpFetchURL(url)
+	args := []string{
+		"--skip-download",
+		"--no-playlist",
+		"--write-thumbnail",
+		"--verbose",
+		"-o", tempBase + ".%(ext)s",
+	}
+	args = append(args, utils.YtDlpImpersonateArgsForURL(url)...)
+	args = append(args, utils.YtDlpRefererArgsForURL(fetchURL)...)
+	args = append(args, cookieArgs...)
+	args = append(args, utils.YtDlpProxyArgs()...)
+	args = append(args, fetchURL)
+
+	redactedLog := utils.NewRedactingWriter(logWriter, utils.YtDlpProxyRedactionSecrets())
+	fmt.Fprintf(logWriter, "Refreshing provider poster with yt-dlp (media download disabled)\n")
+	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
+	cmd.Stdout = redactedLog
+	cmd.Stderr = redactedLog
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("yt-dlp poster refresh failed: %w", err)
+	}
+
+	thumb := videoThumbnail(tempBase, "", logWriter)
+	if thumb == nil {
+		return nil, fmt.Errorf("%w: yt-dlp returned no supported poster image", ErrSocialThumbnailUnavailable)
+	}
+	return thumb, nil
 }
 
 // RefreshVideoMetadata re-runs the extractor with --skip-download to rebuild
@@ -499,7 +552,7 @@ func videoThumbnail(tempBase, videoPath string, logWriter io.Writer) *Thumbnail 
 
 	fmt.Fprintf(logWriter, "Thumbnail captured from %s: %dx%d, %d bytes\n",
 		filepath.Base(path), t.Width, t.Height, len(t.Data))
-	return &Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height}
+	return &Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height, Kind: models.ThumbnailKindSocialOriginal}
 }
 
 // findDownloadedThumbnail locates the poster image among the temp files.

@@ -12,6 +12,7 @@ import (
 	"image/png"
 	"io"
 
+	"arker/internal/models"
 	"arker/internal/thumbnail"
 )
 
@@ -173,7 +174,7 @@ func deriveThumbnail(img image.Image, logWriter io.Writer) *Thumbnail {
 		return nil
 	}
 	fmt.Fprintf(logWriter, "Thumbnail generated: %dx%d, %d bytes\n", t.Width, t.Height, len(t.Data))
-	return &Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height}
+	return &Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height, Kind: models.ThumbnailKindPagePreview}
 }
 
 // selectImageFormat determines the best format based on image dimensions

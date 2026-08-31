@@ -115,6 +115,11 @@ type ArchiveItem struct {
 	ThumbnailWidth  int
 	ThumbnailHeight int
 	ThumbnailStatus string `gorm:"index"` // "" | pending | ready | unavailable
+	// ThumbnailKind records what the bytes actually are. Legacy rows are empty;
+	// that is intentionally distinct from social_original so the bulk backfill
+	// can replace the old 480x270 derivatives once, resume safely after a
+	// restart, and leave already-correct posters alone.
+	ThumbnailKind string `gorm:"index"` // "" | page_preview | social_original | social_fallback
 }
 
 // Archive item source values for ArchiveItem.Source.
@@ -128,6 +133,16 @@ const (
 	ThumbnailStatusPending     = "pending"
 	ThumbnailStatusReady       = "ready"
 	ThumbnailStatusUnavailable = "unavailable"
+)
+
+// Thumbnail kind values for ArchiveItem.ThumbnailKind.
+const (
+	ThumbnailKindPagePreview    = "page_preview"
+	ThumbnailKindSocialOriginal = "social_original"
+	// SocialFallback means a backfill made a conclusive attempt but the post no
+	// longer exposes a real poster. Any existing legacy thumbnail stays in
+	// place; otherwise the capture falls back to its screenshot sibling.
+	ThumbnailKindSocialFallback = "social_fallback"
 )
 
 // BrightDataUsage records one billable Bright Data operation performed by the

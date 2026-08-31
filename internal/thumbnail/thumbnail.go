@@ -12,6 +12,7 @@ package thumbnail
 import (
 	"bufio"
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
@@ -125,33 +126,27 @@ func OriginalFromReader(r io.Reader) (*Thumb, error) {
 		return nil, fmt.Errorf("thumbnail: original image exceeds %d-byte limit", MaxOriginalBytes)
 	}
 
-	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil {
-		return nil, fmt.Errorf("thumbnail: reading source image header: %w", err)
+	width, height, _, _, ok := encodedImageInfo(data)
+	if !ok {
+		return nil, errors.New("thumbnail: unsupported or unreadable source image format")
 	}
-	if _, _, ok := imageFormat(format); !ok {
-		return nil, fmt.Errorf("thumbnail: unsupported source image format %q", format)
+	if width <= 0 || height <= 0 {
+		return nil, fmt.Errorf("thumbnail: source image has invalid dimensions %dx%d", width, height)
 	}
-	if cfg.Width <= 0 || cfg.Height <= 0 {
-		return nil, fmt.Errorf("thumbnail: source image has invalid dimensions %dx%d", cfg.Width, cfg.Height)
-	}
-	if px := int64(cfg.Width) * int64(cfg.Height); px > MaxSourcePixels {
+	if px := int64(width) * int64(height); px > MaxSourcePixels {
 		return nil, fmt.Errorf("%w: %dx%d (%d pixels, limit %d)",
-			ErrSourceTooLarge, cfg.Width, cfg.Height, px, MaxSourcePixels)
+			ErrSourceTooLarge, width, height, px, MaxSourcePixels)
 	}
 
-	return &Thumb{Data: data, Width: cfg.Width, Height: cfg.Height}, nil
+	return &Thumb{Data: data, Width: width, Height: height}, nil
 }
 
 // FileExtension returns the extension matching an encoded thumbnail's real
 // format. It falls back to the historical JPEG extension for old callers and
 // deliberately synthetic test thumbnails that predate format preservation.
 func FileExtension(data []byte) string {
-	_, format, err := image.DecodeConfig(bytes.NewReader(data))
-	if err == nil {
-		if extension, _, ok := imageFormat(format); ok {
-			return extension
-		}
+	if _, _, extension, _, ok := encodedImageInfo(data); ok {
+		return extension
 	}
 	return Extension
 }
@@ -160,13 +155,77 @@ func FileExtension(data []byte) string {
 // thumbnail endpoint. Existing thumbnails are JPEG; new social thumbnails may
 // retain JPEG, PNG, GIF or WebP exactly as the provider published them.
 func ContentTypeForData(data []byte) string {
-	_, format, err := image.DecodeConfig(bytes.NewReader(data))
-	if err == nil {
-		if _, contentType, ok := imageFormat(format); ok {
-			return contentType
-		}
+	if _, _, _, contentType, ok := encodedImageInfo(data); ok {
+		return contentType
 	}
 	return ContentType
+}
+
+// encodedImageInfo recognizes every still format gallery-dl may archive.
+// Go's image packages decode JPEG/PNG/GIF/WebP headers. AVIF and HEIC/HEIF are
+// ISO-BMFF containers; retaining their original bytes needs only the ftyp brand
+// and the standardized ispe (image spatial extents) property, not a pixel
+// decoder or re-encoder.
+func encodedImageInfo(data []byte) (width, height int, extension, contentType string, ok bool) {
+	if cfg, format, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
+		if extension, contentType, ok := imageFormat(format); ok {
+			return cfg.Width, cfg.Height, extension, contentType, true
+		}
+	}
+
+	extension, contentType, ok = bmffImageFormat(data)
+	if !ok {
+		return 0, 0, "", "", false
+	}
+	for i := 4; i+16 <= len(data); i++ {
+		if !bytes.Equal(data[i:i+4], []byte("ispe")) {
+			continue
+		}
+		boxStart := i - 4
+		boxSize := int(binary.BigEndian.Uint32(data[boxStart:i]))
+		if boxSize < 20 || boxStart+boxSize > len(data) {
+			continue
+		}
+		w := binary.BigEndian.Uint32(data[i+8 : i+12])
+		h := binary.BigEndian.Uint32(data[i+12 : i+16])
+		if w == 0 || h == 0 || uint64(w) > uint64(^uint(0)>>1) || uint64(h) > uint64(^uint(0)>>1) {
+			continue
+		}
+		return int(w), int(h), extension, contentType, true
+	}
+	return 0, 0, "", "", false
+}
+
+func bmffImageFormat(data []byte) (extension, contentType string, ok bool) {
+	if len(data) < 16 || !bytes.Equal(data[4:8], []byte("ftyp")) {
+		return "", "", false
+	}
+	boxSize := int(binary.BigEndian.Uint32(data[:4]))
+	if boxSize < 16 || boxSize > len(data) {
+		return "", "", false
+	}
+	brands := data[8:boxSize]
+	hasBrand := func(wants ...string) bool {
+		for i := 0; i+4 <= len(brands); i += 4 {
+			brand := string(brands[i : i+4])
+			for _, want := range wants {
+				if brand == want {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if hasBrand("avif", "avis") {
+		return ".avif", "image/avif", true
+	}
+	if hasBrand("heic", "heix", "hevc", "hevx", "heim", "heis") {
+		return ".heic", "image/heic", true
+	}
+	if hasBrand("heif", "mif1", "msf1") {
+		return ".heif", "image/heif", true
+	}
+	return "", "", false
 }
 
 func imageFormat(format string) (extension, contentType string, ok bool) {

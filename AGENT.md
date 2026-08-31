@@ -298,12 +298,12 @@ is optional and nil is not an error.
 
 Thumbnails are a **derived artifact**, not an archive type — they have no tab,
 no permalink type segment, and no entry in `canonicalArchiveTypes`. They live in
-four columns on `archive_items` (`thumbnail_key/width/height/status`) and are
+five columns on `archive_items` (`thumbnail_key/width/height/status/kind`) and are
 served from `/thumb/{shortid}[/{type}]`.
 
 - **Social thumbnails are originals**: preserve the provider's poster or the
   post's first still byte-for-byte, including its intrinsic dimensions, aspect
-  ratio, and JPEG/PNG/GIF/WebP encoding. Do not crop, scale, or re-encode an
+  ratio, and JPEG/PNG/GIF/WebP/AVIF/HEIC encoding. Do not crop, scale, or re-encode an
   image the poster or platform already authored for the post.
 - **Page screenshot previews are derivatives**: crop the page header and scale
   it to a 480x270 JPEG (`internal/thumbnail`). JPEG is used here because the
@@ -319,11 +319,15 @@ served from `/thumb/{shortid}[/{type}]`.
   | `mhtml`, `git`, `itch` | none — the capture falls back to a sibling item's thumbnail | — |
 - **Only page screenshot previews are cropped.** They use `CropTop` because the
   page's identity is its header. Social images keep their complete framing.
-- **Only `screenshot` can be backfilled** (`CanDeriveFromArchive`). The `/thumb`
-  handler enqueues a `ThumbnailJobArgs` job on the `high_priority` queue the
-  first time somebody views an archive lacking one. Video and gallery posters
-  exist only at capture time, so pre-existing ones stay without a thumbnail by
-  design.
+- Screenshot previews are lazily backfilled from their stored screenshot
+  (`CanDeriveFromArchive`) on the `high_priority` queue. Historical social
+  images use the explicit `/admin/backfill-social-thumbnails` operation and a
+  one-worker `thumbnail_backfill` queue: it reads the first still from stored
+  gallery ZIPs, asks yt-dlp for posters with media downloads disabled, and only
+  then uses the capped Bright Data poster resolver. Duplicate canonical
+  URL/type captures share one object. `thumbnail_kind` makes the operation
+  resumable: `social_original` is complete and `social_fallback` is a
+  conclusive no-poster result that retains any old preview.
 - **Never generate inline in a request** — a full-page screenshot reaches 60
   megapixels (~240MB decoded) and one dashboard render asks for hundreds.
 - **gallery-dl's thumbnail must be built before the ZIP goroutine starts.** That
@@ -334,7 +338,7 @@ served from `/thumb/{shortid}[/{type}]`.
 - **A thumbnail failure must never fail an archive.** The archive is the
   product; the preview is not.
 - Keys carry an upload nonce and their real encoding
-  (`{shortid}/{type}-{nonce}-thumb.{jpg,png,gif,webp}`) because the bucket
+  (`{shortid}/{type}-{nonce}-thumb.{jpg,png,gif,webp,avif,heic,heif}`) because the bucket
   forbids overwrites and deletes. Regenerating means writing a new object and
   repointing the row.
 - `/thumb` always returns an image, falling back to a generated SVG placeholder

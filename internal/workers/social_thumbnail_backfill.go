@@ -1,0 +1,532 @@
+package workers
+
+import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/riverqueue/river"
+	"gorm.io/gorm"
+
+	"arker/internal/archivers"
+	"arker/internal/models"
+	"arker/internal/storage"
+	"arker/internal/thumbnail"
+	"arker/internal/utils"
+)
+
+const (
+	socialThumbnailBackfillQueue = "thumbnail_backfill"
+	maxBackfillGalleryBuffer     = 200 << 20
+	maxGalleryMetadataBytes      = 4 << 20
+	backfillJobTimeout           = 8 * time.Minute
+)
+
+var errThumbnailBudgetExhausted = errors.New("social thumbnail provider budget exhausted")
+
+// SocialThumbnailProvider is the paid/free provider fallback used only after
+// stored gallery media and native yt-dlp cannot recover the published image.
+// The implementation resolves a poster, never the archived video itself.
+type SocialThumbnailProvider interface {
+	ResolveSocialThumbnail(ctx context.Context, targetURL, itemType string, logWriter io.Writer, db *gorm.DB, itemID uint) (*archivers.Thumbnail, error)
+	SocialThumbnailCostUSD(targetURL, itemType string) float64
+	SupportsSocialThumbnail(targetURL, itemType string) bool
+}
+
+// SocialThumbnailBackfillJobArgs addresses one canonical URL/type group. Every
+// duplicate capture in the group shares the one newly stored original object.
+type SocialThumbnailBackfillJobArgs struct {
+	Identity  string  `json:"identity"`
+	URL       string  `json:"url"`
+	ShortID   string  `json:"short_id"`
+	Type      string  `json:"type"`
+	StartedAt int64   `json:"started_at"`
+	BudgetUSD float64 `json:"budget_usd"`
+}
+
+func (SocialThumbnailBackfillJobArgs) Kind() string { return "social_thumbnail_backfill" }
+
+// SocialThumbnailBackfillWorker replaces legacy social derivatives with the
+// exact provider poster or first stored still. It runs in a one-worker queue so
+// a bulk repair cannot crowd out archive jobs or race its shared cost cap.
+type SocialThumbnailBackfillWorker struct {
+	river.WorkerDefaults[SocialThumbnailBackfillJobArgs]
+	storage  storage.Storage
+	db       *gorm.DB
+	native   archivers.SocialThumbnailRefresher
+	provider SocialThumbnailProvider
+}
+
+func NewSocialThumbnailBackfillWorker(store storage.Storage, db *gorm.DB, native archivers.SocialThumbnailRefresher, provider SocialThumbnailProvider) *SocialThumbnailBackfillWorker {
+	return &SocialThumbnailBackfillWorker{storage: store, db: db, native: native, provider: provider}
+}
+
+func (w *SocialThumbnailBackfillWorker) Work(ctx context.Context, job *river.Job[SocialThumbnailBackfillJobArgs]) error {
+	jobCtx, cancel := context.WithTimeout(ctx, backfillJobTimeout)
+	defer cancel()
+	return w.generate(jobCtx, job.Args, job.Attempt >= job.MaxAttempts)
+}
+
+func (w *SocialThumbnailBackfillWorker) generate(ctx context.Context, args SocialThumbnailBackfillJobArgs, finalAttempt bool) error {
+	args.Type = utils.NormalizeArchiveType(args.Type)
+	logger := slog.With("worker", "social_thumbnail_backfill", "short_id", args.ShortID, "type", args.Type)
+
+	items, err := w.groupItems(args.Identity, args.Type)
+	if err != nil {
+		return err
+	}
+	if len(items) == 0 {
+		logger.Info("Social thumbnail group no longer has completed items")
+		return nil
+	}
+
+	targets := make([]models.ArchiveItem, 0, len(items))
+	for i := range items {
+		item := items[i]
+		if item.ThumbnailKind == models.ThumbnailKindSocialOriginal ||
+			item.ThumbnailKind == models.ThumbnailKindSocialFallback {
+			continue
+		}
+		targets = append(targets, item)
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+
+	// A newer duplicate may already hold the corrected original. Repoint the
+	// legacy rows to it without another network request or object upload.
+	for i := range items {
+		item := items[i]
+		if item.ThumbnailKind == models.ThumbnailKindSocialOriginal &&
+			item.ThumbnailStatus == models.ThumbnailStatusReady && item.ThumbnailKey != "" {
+			return w.shareExistingOriginal(&item, targets)
+		}
+	}
+
+	var logs bytes.Buffer
+	var thumb *archivers.Thumbnail
+	var nativeErr error
+
+	if args.Type == utils.ArchiveTypeGalleryDl {
+		thumb, nativeErr = w.thumbnailFromStoredGalleries(items)
+		if nativeErr != nil && !errors.Is(nativeErr, archivers.ErrSocialThumbnailUnavailable) {
+			return nativeErr
+		}
+	}
+
+	// yt-dlp can recover posters for video items and for all-video gallery
+	// bundles (Reddit/X/Instagram/Facebook) without downloading their media.
+	if thumb == nil && w.native != nil {
+		thumb, nativeErr = w.native.RefreshSocialThumbnail(ctx, args.URL, &logs)
+	}
+	if thumb == nil && w.provider != nil && w.provider.SupportsSocialThumbnail(args.URL, args.Type) {
+		if err := w.checkProviderBudget(args); err != nil {
+			logger.Warn("Skipping provider poster because backfill budget is exhausted", "error", err)
+			return nil // leave unmarked so a later funded run can resume it
+		}
+		providerThumb, providerErr := w.provider.ResolveSocialThumbnail(ctx, args.URL, args.Type, &logs, w.db, targets[0].ID)
+		switch {
+		case providerErr == nil:
+			thumb = providerThumb
+		case errors.Is(providerErr, archivers.ErrSocialThumbnailUnavailable):
+			return w.markSocialFallback(targets, logger, providerErr.Error())
+		default:
+			return fmt.Errorf("social thumbnail provider refresh: %w", providerErr)
+		}
+	}
+
+	if thumb == nil {
+		if !finalAttempt && nativeErr != nil {
+			return fmt.Errorf("native social thumbnail refresh: %w", nativeErr)
+		}
+		reason := "no provider-authored poster is available"
+		if nativeErr != nil {
+			reason = nativeErr.Error()
+		}
+		return w.markSocialFallback(targets, logger, reason)
+	}
+
+	thumb.Kind = models.ThumbnailKindSocialOriginal
+	key := fmt.Sprintf("%s/%s-%s-backfill-thumb%s", args.ShortID, args.Type, uploadNonce(), thumbnail.FileExtension(thumb.Data))
+	if err := w.storeForGroup(thumb, key, targets); err != nil {
+		return err
+	}
+	logger.Info("Social thumbnail backfilled",
+		"key", key, "width", thumb.Width, "height", thumb.Height,
+		"bytes", len(thumb.Data), "items", len(targets))
+	return nil
+}
+
+func (w *SocialThumbnailBackfillWorker) groupItems(identity, archiveType string) ([]models.ArchiveItem, error) {
+	var items []models.ArchiveItem
+	err := w.db.Model(&models.ArchiveItem{}).
+		Joins("JOIN captures ON captures.id = archive_items.capture_id").
+		Joins("JOIN archived_urls ON archived_urls.id = captures.archived_url_id").
+		Where("archive_items.type = ? AND archive_items.status = ?", archiveType, "completed").
+		Where("archive_items.deleted_at IS NULL AND captures.deleted_at IS NULL AND archived_urls.deleted_at IS NULL").
+		Where("COALESCE(NULLIF(archived_urls.canonical_url, ''), archived_urls.original) = ?", identity).
+		Order("archive_items.id DESC").Find(&items).Error
+	if err != nil {
+		return nil, fmt.Errorf("load social thumbnail group: %w", err)
+	}
+	return items, nil
+}
+
+func (w *SocialThumbnailBackfillWorker) storeForGroup(thumb *archivers.Thumbnail, key string, targets []models.ArchiveItem) error {
+	if len(targets) == 0 {
+		return nil
+	}
+	if err := StoreThumbnail(thumb, key, w.storage, w.db, &targets[0]); err != nil {
+		return fmt.Errorf("store social thumbnail object: %w", err)
+	}
+	ids := archiveItemIDs(targets)
+	return w.db.Model(&models.ArchiveItem{}).Where("id IN ?", ids).Updates(map[string]interface{}{
+		"thumbnail_key":    key,
+		"thumbnail_width":  thumb.Width,
+		"thumbnail_height": thumb.Height,
+		"thumbnail_status": models.ThumbnailStatusReady,
+		"thumbnail_kind":   models.ThumbnailKindSocialOriginal,
+	}).Error
+}
+
+func (w *SocialThumbnailBackfillWorker) shareExistingOriginal(source *models.ArchiveItem, targets []models.ArchiveItem) error {
+	return w.db.Model(&models.ArchiveItem{}).Where("id IN ?", archiveItemIDs(targets)).Updates(map[string]interface{}{
+		"thumbnail_key":    source.ThumbnailKey,
+		"thumbnail_width":  source.ThumbnailWidth,
+		"thumbnail_height": source.ThumbnailHeight,
+		"thumbnail_status": models.ThumbnailStatusReady,
+		"thumbnail_kind":   models.ThumbnailKindSocialOriginal,
+	}).Error
+}
+
+func (w *SocialThumbnailBackfillWorker) markSocialFallback(targets []models.ArchiveItem, logger *slog.Logger, reason string) error {
+	ids := archiveItemIDs(targets)
+	logger.Info("No real social thumbnail available; retaining capture fallback", "items", len(ids), "reason", reason)
+	return w.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.ArchiveItem{}).Where("id IN ?", ids).
+			Update("thumbnail_kind", models.ThumbnailKindSocialFallback).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&models.ArchiveItem{}).Where("id IN ? AND thumbnail_key <> ''", ids).
+			Update("thumbnail_status", models.ThumbnailStatusReady).Error; err != nil {
+			return err
+		}
+		return tx.Model(&models.ArchiveItem{}).Where("id IN ? AND (thumbnail_key IS NULL OR thumbnail_key = '')", ids).
+			Update("thumbnail_status", models.ThumbnailStatusUnavailable).Error
+	})
+}
+
+func archiveItemIDs(items []models.ArchiveItem) []uint {
+	ids := make([]uint, len(items))
+	for i := range items {
+		ids[i] = items[i].ID
+	}
+	return ids
+}
+
+func (w *SocialThumbnailBackfillWorker) checkProviderBudget(args SocialThumbnailBackfillJobArgs) error {
+	estimated := w.provider.SocialThumbnailCostUSD(args.URL, args.Type)
+	if estimated <= 0 {
+		return nil
+	}
+	if args.BudgetUSD <= 0 || args.StartedAt <= 0 {
+		return errThumbnailBudgetExhausted
+	}
+	var spent float64
+	if err := w.db.Model(&models.BrightDataUsage{}).
+		Where("created_at >= ?", time.Unix(args.StartedAt, 0).UTC()).
+		Select("COALESCE(SUM(cost_usd), 0)").Scan(&spent).Error; err != nil {
+		return fmt.Errorf("read provider spend: %w", err)
+	}
+	if spent+estimated > args.BudgetUSD {
+		return fmt.Errorf("%w: spent $%.4f, next lookup at most $%.4f, cap $%.2f",
+			errThumbnailBudgetExhausted, spent, estimated, args.BudgetUSD)
+	}
+	return nil
+}
+
+// thumbnailFromStoredGalleries tries newest duplicates first. A readable ZIP
+// with no still is a conclusive miss; an S3/range-read failure is retryable.
+func (w *SocialThumbnailBackfillWorker) thumbnailFromStoredGalleries(items []models.ArchiveItem) (*archivers.Thumbnail, error) {
+	var lastErr error
+	for i := range items {
+		thumb, err := w.thumbnailFromStoredGallery(&items[i])
+		if err == nil {
+			return thumb, nil
+		}
+		if errors.Is(err, archivers.ErrSocialThumbnailUnavailable) {
+			lastErr = err
+			continue
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = archivers.ErrSocialThumbnailUnavailable
+	}
+	return nil, lastErr
+}
+
+func (w *SocialThumbnailBackfillWorker) thumbnailFromStoredGallery(item *models.ArchiveItem) (*archivers.Thumbnail, error) {
+	zr, cleanup, err := openBackfillGalleryZip(w.storage, item.StorageKey)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	byName := make(map[string]*zip.File, len(zr.File))
+	for _, f := range zr.File {
+		byName[f.Name] = f
+	}
+
+	var metadata archivers.GalleryMetadata
+	if metaFile := byName["metadata.json"]; metaFile != nil {
+		r, openErr := metaFile.Open()
+		if openErr != nil {
+			return nil, fmt.Errorf("open gallery metadata: %w", openErr)
+		}
+		raw, readErr := io.ReadAll(io.LimitReader(r, maxGalleryMetadataBytes+1))
+		r.Close()
+		if readErr == nil && len(raw) <= maxGalleryMetadataBytes && json.Unmarshal(raw, &metadata) == nil {
+			for _, media := range metadata.Files {
+				if media.IsVideo || media.Name == "" || !strings.HasPrefix(media.ContentType, "image/") {
+					continue
+				}
+				if file := byName[media.Name]; file != nil {
+					if thumb, err := originalFromZipFile(file); err == nil {
+						return thumb, nil
+					}
+				}
+			}
+		}
+	}
+
+	// Very old bundles predate metadata.json. Their flat, zero-padded media
+	// names preserve slide order, so scan image extensions in ZIP order.
+	for _, file := range zr.File {
+		if file.FileInfo().IsDir() || strings.HasSuffix(strings.ToLower(file.Name), ".json") || !galleryImageExtension(file.Name) {
+			continue
+		}
+		if thumb, err := originalFromZipFile(file); err == nil {
+			return thumb, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: stored gallery contains no supported still image", archivers.ErrSocialThumbnailUnavailable)
+}
+
+func originalFromZipFile(file *zip.File) (*archivers.Thumbnail, error) {
+	if file.UncompressedSize64 > thumbnail.MaxOriginalBytes {
+		return nil, fmt.Errorf("gallery image %s exceeds thumbnail byte limit", file.Name)
+	}
+	r, err := file.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	t, err := thumbnail.OriginalFromReader(r)
+	if err != nil {
+		return nil, err
+	}
+	return &archivers.Thumbnail{
+		Data: t.Data, Width: t.Width, Height: t.Height,
+		Kind: models.ThumbnailKindSocialOriginal,
+	}, nil
+}
+
+func galleryImageExtension(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".heic", ".heif":
+		return true
+	default:
+		return false
+	}
+}
+
+type lockedSeekerReaderAt struct {
+	mu sync.Mutex
+	r  storage.ReadSeekCloser
+}
+
+func (r *lockedSeekerReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, err := r.r.Seek(off, io.SeekStart); err != nil {
+		return 0, err
+	}
+	n, err := io.ReadFull(r.r, p)
+	if err == io.ErrUnexpectedEOF {
+		err = io.EOF
+	}
+	return n, err
+}
+
+func openBackfillGalleryZip(store storage.Storage, key string) (*zip.Reader, func(), error) {
+	size, err := store.Size(key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("stat stored gallery: %w", err)
+	}
+	if seekable, ok := store.(storage.SeekableStorage); ok {
+		r, seekErr := seekable.SeekableReader(key)
+		if seekErr == nil {
+			zr, zipErr := zip.NewReader(&lockedSeekerReaderAt{r: r}, size)
+			if zipErr == nil {
+				return zr, func() { _ = r.Close() }, nil
+			}
+			_ = r.Close()
+		}
+	}
+	if size > maxBackfillGalleryBuffer {
+		return nil, nil, fmt.Errorf("stored gallery is %d bytes and storage cannot seek", size)
+	}
+	r, err := store.Reader(key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open stored gallery: %w", err)
+	}
+	data, readErr := io.ReadAll(io.LimitReader(r, maxBackfillGalleryBuffer+1))
+	r.Close()
+	if readErr != nil {
+		return nil, nil, fmt.Errorf("read stored gallery: %w", readErr)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, nil, fmt.Errorf("stored gallery is not a readable ZIP: %w", err)
+	}
+	return zr, func() {}, nil
+}
+
+// SocialThumbnailBackfillOptions controls one resumable bulk enqueue.
+type SocialThumbnailBackfillOptions struct {
+	BudgetUSD       float64
+	PriorityShortID string
+	DryRun          bool
+}
+
+type SocialThumbnailBackfillSummary struct {
+	RunID        string  `json:"run_id"`
+	StartedAt    string  `json:"started_at"`
+	BudgetUSD    float64 `json:"budget_usd"`
+	TargetItems  int     `json:"target_items"`
+	TargetGroups int     `json:"target_groups"`
+	Enqueued     int     `json:"enqueued"`
+	DryRun       bool    `json:"dry_run"`
+}
+
+type socialThumbnailCandidate struct {
+	ItemID       uint
+	ShortID      string
+	Type         string
+	Original     string
+	CanonicalURL string
+	Source       string
+	Priority     bool
+}
+
+// EnqueueSocialThumbnailBackfill groups every legacy social item by canonical
+// URL and archive type, newest first within a group. One job repairs every
+// duplicate, making the work idempotent and avoiding repeated platform calls.
+func EnqueueSocialThumbnailBackfill(ctx context.Context, db *gorm.DB, client *river.Client[pgx.Tx], opts SocialThumbnailBackfillOptions) (SocialThumbnailBackfillSummary, error) {
+	started := time.Now().UTC()
+	summary := SocialThumbnailBackfillSummary{
+		RunID: started.Format("20060102T150405Z"), StartedAt: started.Format(time.RFC3339),
+		BudgetUSD: opts.BudgetUSD, DryRun: opts.DryRun,
+	}
+
+	var rows []socialThumbnailCandidate
+	err := db.Table("archive_items").Select(`
+		archive_items.id AS item_id,
+		captures.short_id,
+		archive_items.type,
+		archived_urls.original,
+		archived_urls.canonical_url,
+		archive_items.source`).
+		Joins("JOIN captures ON captures.id = archive_items.capture_id").
+		Joins("JOIN archived_urls ON archived_urls.id = captures.archived_url_id").
+		Where("archive_items.type IN ?", []string{utils.ArchiveTypeGalleryDl, utils.ArchiveTypeYtDlp}).
+		Where("archive_items.status = ?", "completed").
+		Where("archive_items.deleted_at IS NULL AND captures.deleted_at IS NULL AND archived_urls.deleted_at IS NULL").
+		Where("COALESCE(archive_items.thumbnail_kind, '') NOT IN ?", []string{models.ThumbnailKindSocialOriginal, models.ThumbnailKindSocialFallback}).
+		Order("archive_items.id DESC").Scan(&rows).Error
+	if err != nil {
+		return summary, fmt.Errorf("query social thumbnail candidates: %w", err)
+	}
+	summary.TargetItems = len(rows)
+
+	groups := make(map[string]socialThumbnailCandidate)
+	for _, row := range rows {
+		identity := strings.TrimSpace(row.CanonicalURL)
+		if identity == "" {
+			identity = row.Original
+		}
+		key := row.Type + "\x00" + identity
+		row.Priority = row.ShortID == opts.PriorityShortID
+		current, exists := groups[key]
+		if !exists || (row.Priority && !current.Priority) {
+			row.CanonicalURL = identity
+			// Rows are newest-first, except an explicitly prioritized short ID
+			// becomes the representative for its whole duplicate group.
+			groups[key] = row
+		}
+	}
+	candidates := make([]socialThumbnailCandidate, 0, len(groups))
+	for _, row := range groups {
+		candidates = append(candidates, row)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		iPriority := candidates[i].Priority
+		jPriority := candidates[j].Priority
+		if iPriority != jPriority {
+			return iPriority
+		}
+		iGallery := candidates[i].Type == utils.ArchiveTypeGalleryDl
+		jGallery := candidates[j].Type == utils.ArchiveTypeGalleryDl
+		if iGallery != jGallery {
+			return iGallery // cheap stored-ZIP repairs first
+		}
+		iBD := candidates[i].Source == models.ArchiveSourceBrightData
+		jBD := candidates[j].Source == models.ArchiveSourceBrightData
+		if iBD != jBD {
+			return iBD
+		}
+		return candidates[i].ItemID > candidates[j].ItemID
+	})
+	summary.TargetGroups = len(candidates)
+	if opts.DryRun {
+		return summary, nil
+	}
+	if client == nil {
+		return summary, errors.New("River client is not configured")
+	}
+
+	for i, candidate := range candidates {
+		args := SocialThumbnailBackfillJobArgs{
+			Identity:  candidate.CanonicalURL,
+			URL:       candidate.Original,
+			ShortID:   candidate.ShortID,
+			Type:      candidate.Type,
+			StartedAt: started.Unix(),
+			BudgetUSD: opts.BudgetUSD,
+		}
+		_, err := client.Insert(ctx, args, &river.InsertOpts{
+			Queue: socialThumbnailBackfillQueue, MaxAttempts: 2,
+			Priority:    4,
+			ScheduledAt: started.Add(time.Duration(i) * time.Second),
+			Tags:        []string{"thumbnail-backfill", candidate.Type, "run-" + strings.ReplaceAll(summary.RunID, ":", "")},
+			UniqueOpts:  river.UniqueOpts{ByArgs: true, ByPeriod: 24 * time.Hour},
+		})
+		if err != nil {
+			return summary, fmt.Errorf("enqueue social thumbnail group %s/%s: %w", candidate.ShortID, candidate.Type, err)
+		}
+		summary.Enqueued++
+	}
+	return summary, nil
+}

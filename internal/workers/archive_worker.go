@@ -371,11 +371,22 @@ func StoreThumbnail(thumb *archivers.Thumbnail, key string, store storage.Storag
 		return fmt.Errorf("failed writing thumbnail: %w", copyErr)
 	}
 
+	kind := thumb.Kind
+	if kind == "" && item != nil {
+		switch utils.NormalizeArchiveType(item.Type) {
+		case utils.ArchiveTypeGalleryDl, utils.ArchiveTypeYtDlp:
+			kind = models.ThumbnailKindSocialOriginal
+		case utils.ArchiveTypeScreenshot:
+			kind = models.ThumbnailKindPagePreview
+		}
+	}
+
 	return db.Model(item).Updates(map[string]interface{}{
 		"thumbnail_key":    key,
 		"thumbnail_width":  thumb.Width,
 		"thumbnail_height": thumb.Height,
 		"thumbnail_status": models.ThumbnailStatusReady,
+		"thumbnail_kind":   kind,
 	}).Error
 }
 

@@ -268,6 +268,23 @@ func ensureCanonicalURLSchema(db *gorm.DB) error {
 	return nil
 }
 
+// ensureThumbnailKindSchema adds the source marker used by the social
+// thumbnail backfill. AutoMigrate cannot alter existing production tables with
+// this repo's current GORM/pgx pairing (see ensureCanonicalURLSchema), so the
+// additive column and index must be explicit and idempotent.
+func ensureThumbnailKindSchema(db *gorm.DB) error {
+	if db.Dialector.Name() != "postgres" {
+		return nil
+	}
+	if err := db.Exec(`ALTER TABLE archive_items ADD COLUMN IF NOT EXISTS thumbnail_kind text`).Error; err != nil {
+		return fmt.Errorf("add archive_items.thumbnail_kind: %w", err)
+	}
+	if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_archive_items_thumbnail_kind ON archive_items (thumbnail_kind)`).Error; err != nil {
+		return fmt.Errorf("index archive_items.thumbnail_kind: %w", err)
+	}
+	return nil
+}
+
 // canonicalURLBackfillBatch bounds how many rows one transaction rewrites.
 // Small enough that no statement holds row locks on a meaningful slice of the
 // table, large enough that 50k rows is 50 round trips rather than 50k.
@@ -453,6 +470,9 @@ func main() {
 	if err := utils.EnsureCompletenessSchema(db); err != nil {
 		slog.Error("Completeness column migration failed", "error", err)
 	}
+	if err := ensureThumbnailKindSchema(db); err != nil {
+		slog.Error("Thumbnail kind schema configuration failed", "error", err)
+	}
 	if err := utils.ConfigureArchiveItemLogSchema(db); err != nil {
 		slog.Error("Archive log schema configuration failed", "error", err)
 	} else if err := utils.BackfillLegacyArchiveItemLogs(db); err != nil {
@@ -613,6 +633,7 @@ func main() {
 	// a covered URL (Instagram, YouTube, TikTok, Reddit, X) gets one paid
 	// second chance. Native flows stay preferred; the fallback only runs after
 	// they fail.
+	var socialThumbnailProvider workers.SocialThumbnailProvider
 	if cfg.BrightDataAPIKey != "" {
 		bdClient := brightdata.New(context.Background(), brightdata.Config{
 			APIKey:               cfg.BrightDataAPIKey,
@@ -626,6 +647,7 @@ func main() {
 		})
 		archiversMap[utils.ArchiveTypeYtDlp] = brightdata.WithFallback(archiversMap[utils.ArchiveTypeYtDlp], utils.ArchiveTypeYtDlp, bdClient)
 		archiversMap[utils.ArchiveTypeGalleryDl] = brightdata.WithFallback(archiversMap[utils.ArchiveTypeGalleryDl], utils.ArchiveTypeGalleryDl, bdClient)
+		socialThumbnailProvider = bdClient
 		// Routing asks the client itself whether a login-only URL has a paid
 		// path to success before queueing an item for it, so the coverage
 		// table lives in exactly one place.
@@ -673,6 +695,12 @@ func main() {
 	// Backfills thumbnails for archives captured before the feature existed.
 	// New captures produce theirs inline and never enqueue this.
 	river.AddWorker(riverWorkers, workers.NewThumbnailWorker(storageInstance, db))
+	// Bulk historical repair runs separately with one worker: it may make
+	// thousands of lightweight platform requests and must never crowd out new
+	// archives. Duplicate captures share one job and one corrected object.
+	river.AddWorker(riverWorkers, workers.NewSocialThumbnailBackfillWorker(
+		storageInstance, db, &archivers.YtDlpArchiver{}, socialThumbnailProvider,
+	))
 	// Create River client with configuration
 	errorHandler := &CustomErrorHandler{db: db}
 	timeoutConfig := utils.DefaultTimeoutConfig()
@@ -680,8 +708,9 @@ func main() {
 	rescueStuckJobsAfter := jobTimeout + 5*time.Minute
 	riverConfig := &river.Config{
 		Queues: map[string]river.QueueConfig{
-			river.QueueDefault: {MaxWorkers: cfg.MaxWorkers},
-			"high_priority":    {MaxWorkers: max(2, cfg.MaxWorkers/2)}, // At least 2 workers, or half of total workers
+			river.QueueDefault:   {MaxWorkers: cfg.MaxWorkers},
+			"high_priority":      {MaxWorkers: max(2, cfg.MaxWorkers/2)}, // At least 2 workers, or half of total workers
+			"thumbnail_backfill": {MaxWorkers: 1},                        // gradual, resumable historical social-poster repair
 		},
 		Workers:              riverWorkers,
 		JobTimeout:           jobTimeout,
@@ -786,6 +815,8 @@ func main() {
 	admin.POST("/retry-failed", func(c *gin.Context) { handlers.RetryAllFailedJobs(c, db, riverClient) })
 	admin.GET("/brightdata-usage", func(c *gin.Context) { handlers.BrightDataUsage(c, db) })
 	admin.POST("/backfill-media", func(c *gin.Context) { handlers.BackfillMissingMediaItems(c, db, riverClient) })
+	admin.POST("/backfill-social-thumbnails", func(c *gin.Context) { handlers.BackfillSocialThumbnails(c, db, riverClient) })
+	admin.GET("/backfill-social-thumbnails", func(c *gin.Context) { handlers.SocialThumbnailBackfillStatus(c, db) })
 	// Retained: the previous name for the endpoint above, kept working for
 	// existing operator scripts and runbooks.
 	admin.POST("/backfill-videos", func(c *gin.Context) { handlers.BackfillMissingMediaItems(c, db, riverClient) })

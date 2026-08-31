@@ -111,7 +111,10 @@ func (w *ThumbnailWorker) generate(ctx context.Context, args ThumbnailJobArgs) e
 	}
 
 	key := fmt.Sprintf("%s/%s-%s-thumb%s", args.ShortID, args.Type, uploadNonce(), thumbnail.Extension)
-	if err := StoreThumbnail(&archivers.Thumbnail{Data: thumb.Data, Width: thumb.Width, Height: thumb.Height}, key, w.storage, w.db, &item); err != nil {
+	if err := StoreThumbnail(&archivers.Thumbnail{
+		Data: thumb.Data, Width: thumb.Width, Height: thumb.Height,
+		Kind: models.ThumbnailKindPagePreview,
+	}, key, w.storage, w.db, &item); err != nil {
 		return fmt.Errorf("thumbnail: storing %s: %w", key, err)
 	}
 

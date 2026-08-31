@@ -2,10 +2,16 @@ package archivers
 
 import (
 	"context"
+	"errors"
 	"io"
 
 	"gorm.io/gorm"
 )
+
+// ErrSocialThumbnailUnavailable means a successful, conclusive lookup found no
+// provider-authored poster. Backfill workers preserve any legacy preview and
+// mark the group attempted instead of retrying this permanent condition.
+var ErrSocialThumbnailUnavailable = errors.New("social thumbnail unavailable")
 
 // Thumbnail is an encoded preview image produced alongside the main artifact.
 //
@@ -19,6 +25,10 @@ type Thumbnail struct {
 	Data   []byte
 	Width  int
 	Height int
+	// Kind describes whether Data is a provider-authored social image or an
+	// Arker-derived page preview. It is stored with the archive item so legacy
+	// social derivatives can be identified and backfilled exactly once.
+	Kind string
 }
 
 // Sidecar is a small durable artifact stored beside the primary archive.
@@ -96,4 +106,11 @@ type Archiver interface {
 // carries no Data: the caller reuses the bytes that are already in storage.
 type VideoMetadataRefresher interface {
 	RefreshVideoMetadata(ctx context.Context, url string, logWriter io.Writer, media VideoMedia) (Result, error)
+}
+
+// SocialThumbnailRefresher fetches only a video's provider-authored poster.
+// Unlike VideoMetadataRefresher it does not download media, captions, or
+// sidecars, which makes it safe to run gradually across the historical corpus.
+type SocialThumbnailRefresher interface {
+	RefreshSocialThumbnail(ctx context.Context, url string, logWriter io.Writer) (*Thumbnail, error)
 }

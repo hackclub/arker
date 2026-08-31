@@ -569,7 +569,7 @@ func galleryThumbnailFromDir(dir string, meta *archivers.GalleryMetadata, logWri
 			fmt.Fprintf(logWriter, "Thumbnail from %s skipped: %v\n", file.Name, err)
 			continue
 		}
-		return &archivers.Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height}
+		return &archivers.Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height, Kind: models.ThumbnailKindSocialOriginal}
 	}
 	return nil
 }
@@ -577,28 +577,40 @@ func galleryThumbnailFromDir(dir string, meta *archivers.GalleryMetadata, logWri
 // thumbnailFromURL downloads and retains a provider's poster image as the item
 // thumbnail. Failures return nil: previews are cosmetic.
 func (c *Client) thumbnailFromURL(ctx context.Context, imageURL string, logWriter io.Writer) *archivers.Thumbnail {
-	if imageURL == "" {
-		return nil
-	}
-	tmpPath, _, err := c.downloadToTemp(ctx, imageURL, "arker-bd-thumb-*")
+	thumb, err := c.thumbnailFromURLStrict(ctx, imageURL, logWriter)
 	if err != nil {
 		fmt.Fprintf(logWriter, "Could not download poster image: %v\n", err)
 		return nil
+	}
+	return thumb
+}
+
+// thumbnailFromURLStrict is the error-preserving form used by the historical
+// backfill. Capture-time callers intentionally treat a missing poster as
+// cosmetic and use thumbnailFromURL; a backfill needs the error so River can
+// retry a transient CDN failure instead of incorrectly marking the post as
+// permanently unavailable.
+func (c *Client) thumbnailFromURLStrict(ctx context.Context, imageURL string, logWriter io.Writer) (*archivers.Thumbnail, error) {
+	if imageURL == "" {
+		return nil, fmt.Errorf("%w: provider record has no poster URL", archivers.ErrSocialThumbnailUnavailable)
+	}
+	tmpPath, _, err := c.downloadToTemp(ctx, imageURL, "arker-bd-thumb-*")
+	if err != nil {
+		return nil, err
 	}
 	defer removeFile(tmpPath)
 
 	f, err := os.Open(tmpPath)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer f.Close()
 	t, err := thumbnail.OriginalFromReader(f)
 	if err != nil {
-		fmt.Fprintf(logWriter, "Thumbnail capture skipped: %v\n", err)
-		return nil
+		return nil, fmt.Errorf("decode provider poster: %w", err)
 	}
 	fmt.Fprintf(logWriter, "Thumbnail captured: %dx%d, %d bytes\n", t.Width, t.Height, len(t.Data))
-	return &archivers.Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height}
+	return &archivers.Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height, Kind: models.ThumbnailKindSocialOriginal}, nil
 }
 
 // logInstagramMetadata writes the post's human-relevant metadata into the
