@@ -155,10 +155,11 @@ func serveStoredThumbnail(c *gin.Context, store storage.Storage, item models.Arc
 	}
 	defer reader.Close()
 
-	// Buffer rather than stream. Thumbnails are tens of KB by construction, and
-	// reading first means a storage error still falls back to the placeholder
-	// instead of truncating a response we already committed to -- and it lets
-	// us send a Content-Length, which caches and HEAD callers expect.
+	// Buffer rather than stream. Reading first means a storage error still falls
+	// back to the placeholder instead of truncating a response we already
+	// committed to, and it lets us send a Content-Length, which caches and HEAD
+	// callers expect. Social thumbnails retain the provider's original bytes,
+	// so they can be larger than the derived screenshot previews.
 	data, err := io.ReadAll(reader)
 	if err != nil || len(data) == 0 {
 		return false
@@ -167,7 +168,7 @@ func serveStoredThumbnail(c *gin.Context, store storage.Storage, item models.Arc
 	c.Header("ETag", etag)
 	c.Header("Cache-Control", "public, max-age=86400")
 	c.Header("Content-Length", strconv.Itoa(len(data)))
-	c.Data(http.StatusOK, thumbnail.ContentType, data)
+	c.Data(http.StatusOK, thumbnail.ContentTypeForData(data), data)
 	return true
 }
 

@@ -251,6 +251,57 @@ func TestFromReaderDecodesEveryStoredScreenshotFormat(t *testing.T) {
 	}
 }
 
+func TestOriginalFromReaderPreservesSocialImageBytesAndDimensions(t *testing.T) {
+	src := banded(321, 517, color.RGBA{200, 30, 30, 255}, color.RGBA{30, 30, 200, 255})
+
+	var pngBuf, jpgBuf, webpBuf bytes.Buffer
+	if err := png.Encode(&pngBuf, src); err != nil {
+		t.Fatalf("png encode: %v", err)
+	}
+	if err := jpeg.Encode(&jpgBuf, src, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatalf("jpeg encode: %v", err)
+	}
+	if err := nativewebp.Encode(&webpBuf, src, nil); err != nil {
+		t.Fatalf("webp encode: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name        string
+		data        []byte
+		extension   string
+		contentType string
+	}{
+		{"png", pngBuf.Bytes(), ".png", "image/png"},
+		{"jpeg", jpgBuf.Bytes(), ".jpg", "image/jpeg"},
+		{"webp", webpBuf.Bytes(), ".webp", "image/webp"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := OriginalFromReader(bytes.NewReader(tc.data))
+			if err != nil {
+				t.Fatalf("OriginalFromReader: %v", err)
+			}
+			if !bytes.Equal(got.Data, tc.data) {
+				t.Error("social image was cropped, scaled, or re-encoded")
+			}
+			if got.Width != 321 || got.Height != 517 {
+				t.Errorf("dimensions = %dx%d, want the source's 321x517", got.Width, got.Height)
+			}
+			if extension := FileExtension(got.Data); extension != tc.extension {
+				t.Errorf("extension = %q, want %q", extension, tc.extension)
+			}
+			if contentType := ContentTypeForData(got.Data); contentType != tc.contentType {
+				t.Errorf("content type = %q, want %q", contentType, tc.contentType)
+			}
+		})
+	}
+}
+
+func TestOriginalFromReaderRejectsInvalidImage(t *testing.T) {
+	if _, err := OriginalFromReader(bytes.NewReader([]byte("not an image"))); err == nil {
+		t.Fatal("expected invalid provider image to be rejected")
+	}
+}
+
 // hugePNGHeader builds just enough valid PNG for DecodeConfig to report a huge
 // size. Encoding a real 50-megapixel image would cost hundreds of megabytes,
 // which is precisely what the guard exists to avoid.

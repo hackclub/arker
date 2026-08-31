@@ -1,4 +1,6 @@
-// Package thumbnail derives small preview images from archived content.
+// Package thumbnail prepares preview images from archived content. Page
+// screenshots become compact derived previews; social posters and post images
+// keep their original bytes and intrinsic geometry.
 //
 // Thumbnails are a derived artifact, not an archive type: they are generated as
 // a side effect of the job that produced their source, stored as their own
@@ -59,6 +61,12 @@ const (
 	// headerPeek is how far we look ahead to read image dimensions without
 	// consuming the stream. Every format's header fits comfortably inside this.
 	headerPeek = 256 << 10
+
+	// MaxOriginalBytes bounds a platform poster or social post image retained
+	// byte-for-byte. These are normally hundreds of kilobytes; the generous
+	// ceiling prevents a bogus provider response from turning a cosmetic
+	// artifact into an unbounded allocation.
+	MaxOriginalBytes = 32 << 20
 )
 
 // ErrSourceTooLarge is returned when a source image exceeds MaxSourcePixels.
@@ -91,6 +99,89 @@ type Thumb struct {
 	Data   []byte
 	Width  int
 	Height int
+}
+
+// OriginalFromReader validates a social post's own preview image and retains
+// it byte-for-byte, including its intrinsic aspect ratio, dimensions and
+// encoding. Social thumbnails are already deliberately framed by the poster
+// or platform; cropping them to 16:9 and re-encoding them would replace that
+// authored image with an Arker derivative.
+//
+// Screenshot previews still go through FromReader/FromImage below: a full-page
+// screenshot is not a usable card image until it has been cropped and scaled.
+func OriginalFromReader(r io.Reader) (*Thumb, error) {
+	if r == nil {
+		return nil, errors.New("thumbnail: nil source reader")
+	}
+
+	data, err := io.ReadAll(io.LimitReader(r, MaxOriginalBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("thumbnail: reading original image: %w", err)
+	}
+	if len(data) == 0 {
+		return nil, errors.New("thumbnail: source image is empty")
+	}
+	if len(data) > MaxOriginalBytes {
+		return nil, fmt.Errorf("thumbnail: original image exceeds %d-byte limit", MaxOriginalBytes)
+	}
+
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("thumbnail: reading source image header: %w", err)
+	}
+	if _, _, ok := imageFormat(format); !ok {
+		return nil, fmt.Errorf("thumbnail: unsupported source image format %q", format)
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return nil, fmt.Errorf("thumbnail: source image has invalid dimensions %dx%d", cfg.Width, cfg.Height)
+	}
+	if px := int64(cfg.Width) * int64(cfg.Height); px > MaxSourcePixels {
+		return nil, fmt.Errorf("%w: %dx%d (%d pixels, limit %d)",
+			ErrSourceTooLarge, cfg.Width, cfg.Height, px, MaxSourcePixels)
+	}
+
+	return &Thumb{Data: data, Width: cfg.Width, Height: cfg.Height}, nil
+}
+
+// FileExtension returns the extension matching an encoded thumbnail's real
+// format. It falls back to the historical JPEG extension for old callers and
+// deliberately synthetic test thumbnails that predate format preservation.
+func FileExtension(data []byte) string {
+	_, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err == nil {
+		if extension, _, ok := imageFormat(format); ok {
+			return extension
+		}
+	}
+	return Extension
+}
+
+// ContentTypeForData returns the media type matching the bytes served by the
+// thumbnail endpoint. Existing thumbnails are JPEG; new social thumbnails may
+// retain JPEG, PNG, GIF or WebP exactly as the provider published them.
+func ContentTypeForData(data []byte) string {
+	_, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err == nil {
+		if _, contentType, ok := imageFormat(format); ok {
+			return contentType
+		}
+	}
+	return ContentType
+}
+
+func imageFormat(format string) (extension, contentType string, ok bool) {
+	switch format {
+	case "jpeg":
+		return ".jpg", "image/jpeg", true
+	case "png":
+		return ".png", "image/png", true
+	case "gif":
+		return ".gif", "image/gif", true
+	case "webp":
+		return ".webp", "image/webp", true
+	default:
+		return "", "", false
+	}
 }
 
 // CanDeriveFromArchive reports whether the stored artifact for an archive type

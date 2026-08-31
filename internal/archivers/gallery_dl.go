@@ -450,16 +450,17 @@ func galleryThumbnail(dir string, metadata *GalleryMetadata, logWriter io.Writer
 			fmt.Fprintf(logWriter, "Could not open %s for thumbnail: %v\n", file.Name, err)
 			continue
 		}
-		// CropCenter: social photos frame their subject in the middle, and a
-		// portrait post cropped from the top loses it entirely.
-		t, err := thumbnail.FromReader(f, thumbnail.CropCenter)
+		// A post image is already the real, authored preview. Preserve its bytes,
+		// format, dimensions and aspect ratio rather than turning it into an
+		// Arker-framed 16:9 JPEG.
+		t, err := thumbnail.OriginalFromReader(f)
 		f.Close()
 		if err != nil {
 			fmt.Fprintf(logWriter, "Thumbnail from %s skipped: %v\n", file.Name, err)
 			continue
 		}
 
-		fmt.Fprintf(logWriter, "Thumbnail generated from %s: %dx%d, %d bytes\n",
+		fmt.Fprintf(logWriter, "Thumbnail captured from %s: %dx%d, %d bytes\n",
 			file.Name, t.Width, t.Height, len(t.Data))
 		return &Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height}
 	}

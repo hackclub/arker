@@ -12,8 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"arker/internal/thumbnail"
 )
 
 func TestYtDlpDownloadArgsWriteRemuxedMP4File(t *testing.T) {
@@ -305,7 +303,8 @@ func TestVideoThumbnailToleratesBadInput(t *testing.T) {
 	}
 }
 
-// The happy path: a real poster image becomes a real thumbnail.
+// The happy path: the platform's real poster is retained byte-for-byte rather
+// than being cropped and re-encoded into Arker's old 16:9 JPEG tile.
 func TestVideoThumbnailFromRealImage(t *testing.T) {
 	base := filepath.Join(t.TempDir(), "arker-video-abc")
 	if err := os.WriteFile(base+".mp4", []byte("video"), 0o600); err != nil {
@@ -338,27 +337,10 @@ func TestVideoThumbnailFromRealImage(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected a thumbnail")
 	}
-	if got.Width != thumbnail.Width || got.Height != thumbnail.Height {
-		t.Errorf("size = %dx%d, want %dx%d", got.Width, got.Height, thumbnail.Width, thumbnail.Height)
+	if got.Width != 1080 || got.Height != 1920 {
+		t.Errorf("size = %dx%d, want the source's 1080x1920", got.Width, got.Height)
 	}
-
-	// Center-cropped, so the middle (green) band must dominate.
-	out, err := jpeg.Decode(bytes.NewReader(got.Data))
-	if err != nil {
-		t.Fatalf("decode result: %v", err)
-	}
-	var sr, sg, sb, n int
-	b := out.Bounds()
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			cr, cg, cb, _ := out.At(x, y).RGBA()
-			sr += int(cr >> 8)
-			sg += int(cg >> 8)
-			sb += int(cb >> 8)
-			n++
-		}
-	}
-	if sg/n < 200 || sr/n > 60 || sb/n > 60 {
-		t.Errorf("avg rgb(%d,%d,%d): want green-dominant (center band of a portrait poster)", sr/n, sg/n, sb/n)
+	if !bytes.Equal(got.Data, buf.Bytes()) {
+		t.Error("video poster was cropped, scaled, or re-encoded")
 	}
 }

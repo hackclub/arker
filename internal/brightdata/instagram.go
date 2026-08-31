@@ -281,6 +281,13 @@ func (c *Client) instagramGallery(ctx context.Context, targetURL string, logWrit
 	c.recordUsage(db, usage)
 
 	thumb := galleryThumbnailFromDir(tmpDir, meta, logWriter)
+	if thumb == nil {
+		// /p/ URLs use the gallery route even when the post is one video. The
+		// dataset publishes the post's real cover separately from that MP4; it
+		// is the only correct preview for an all-video bundle (and is exactly
+		// what capture mrQQB was missing).
+		thumb = c.thumbnailFromURL(ctx, stringField(record, "thumbnail"), logWriter)
+	}
 
 	reader, err := openTempFileReader(zipPath)
 	if err != nil {
@@ -556,7 +563,7 @@ func galleryThumbnailFromDir(dir string, meta *archivers.GalleryMetadata, logWri
 		if err != nil {
 			continue
 		}
-		t, err := thumbnail.FromReader(f, thumbnail.CropCenter)
+		t, err := thumbnail.OriginalFromReader(f)
 		f.Close()
 		if err != nil {
 			fmt.Fprintf(logWriter, "Thumbnail from %s skipped: %v\n", file.Name, err)
@@ -567,7 +574,7 @@ func galleryThumbnailFromDir(dir string, meta *archivers.GalleryMetadata, logWri
 	return nil
 }
 
-// thumbnailFromURL downloads a poster image and encodes it as the item
+// thumbnailFromURL downloads and retains a provider's poster image as the item
 // thumbnail. Failures return nil: previews are cosmetic.
 func (c *Client) thumbnailFromURL(ctx context.Context, imageURL string, logWriter io.Writer) *archivers.Thumbnail {
 	if imageURL == "" {
@@ -585,12 +592,12 @@ func (c *Client) thumbnailFromURL(ctx context.Context, imageURL string, logWrite
 		return nil
 	}
 	defer f.Close()
-	t, err := thumbnail.FromReader(f, thumbnail.CropCenter)
+	t, err := thumbnail.OriginalFromReader(f)
 	if err != nil {
-		fmt.Fprintf(logWriter, "Thumbnail generation skipped: %v\n", err)
+		fmt.Fprintf(logWriter, "Thumbnail capture skipped: %v\n", err)
 		return nil
 	}
-	fmt.Fprintf(logWriter, "Thumbnail generated: %dx%d, %d bytes\n", t.Width, t.Height, len(t.Data))
+	fmt.Fprintf(logWriter, "Thumbnail captured: %dx%d, %d bytes\n", t.Width, t.Height, len(t.Data))
 	return &archivers.Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height}
 }
 

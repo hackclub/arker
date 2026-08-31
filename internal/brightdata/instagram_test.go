@@ -219,6 +219,49 @@ func TestInstagramGalleryFallbackRecordsVideoIntrinsics(t *testing.T) {
 	}
 }
 
+// Instagram /p/ URLs use the gallery route even when the post is a single
+// video. The provider record carries that video's authored cover separately;
+// capture it rather than letting /thumb fall through to the browser screenshot
+// of Instagram's page chrome (the production failure demonstrated by mrQQB).
+func TestInstagramVideoPostGalleryUsesPublishedThumbnail(t *testing.T) {
+	targetURL := "https://www.instagram.com/p/DcRwIs0oE2s/"
+	mediaURL := "https://scontent.example/reel.mp4"
+	thumbnailURL := "https://scontent.example/reel-cover.png"
+	poster := fakePNG(t)
+	record := map[string]any{
+		"shortcode":   "DcRwIs0oE2s",
+		"url":         targetURL,
+		"user_posted": "irtaza.dev.stuff",
+		"thumbnail":   thumbnailURL,
+		"post_content": []any{
+			map[string]any{"index": float64(0), "type": "Video", "url": mediaURL},
+		},
+	}
+	network := newFakeNetwork(record)
+	network.serve(mediaURL, fakeMP4(1024))
+	network.serve(thumbnailURL, poster)
+	installInstagramGalleryFFprobe(t)
+	client, db := newTestClient(t, network)
+
+	result, err := client.ArchiveFallback(context.Background(), targetURL, utils.ArchiveTypeGalleryDl, io.Discard, db, 42)
+	if err != nil {
+		t.Fatalf("ArchiveFallback: %v", err)
+	}
+	defer closeResultData(result)
+	if result.Thumbnail == nil {
+		t.Fatal("video post did not capture its published thumbnail")
+	}
+	if !bytes.Equal(result.Thumbnail.Data, poster) {
+		t.Error("published thumbnail was cropped, scaled, or re-encoded")
+	}
+	if result.Thumbnail.Width != 8 || result.Thumbnail.Height != 8 {
+		t.Errorf("thumbnail dimensions = %dx%d, want provider image's 8x8", result.Thumbnail.Width, result.Thumbnail.Height)
+	}
+	if !network.requested(thumbnailURL) {
+		t.Error("provider thumbnail URL was never fetched")
+	}
+}
+
 func installInstagramGalleryFFprobe(t *testing.T) {
 	t.Helper()
 	bin := t.TempDir()

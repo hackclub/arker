@@ -88,9 +88,9 @@ unexpected error, 4 extraction/download failed, 8 anti-bot challenge, 16
 authentication required, 32 bad input, 64 no extractor, 128 filesystem error.
 
 Media bytes are synthesized, not committed. Images are real JPEGs encoded at
-test time by `PlaceholderJPEG`, because both archivers decode the first still
-image to build a thumbnail — filler bytes would silently take the "no usable
-cover" branch and stop that path from being tested at all. Video payloads are
+test time by `PlaceholderJPEG`, because both archivers validate and preserve
+the first still as the social thumbnail — filler bytes would silently take the
+"no usable cover" branch and stop that path from being tested at all. Video payloads are
 deterministic filler, since Arker only ever stores and sizes them.
 
 The harness has its own tests in `internal/testfixtures/fakeextract_test.go`.

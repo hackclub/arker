@@ -99,7 +99,7 @@ When using Amp with `make dev` running in another window:
 │   │   ├── direct.go       # DirectURLStorage interface
 │   │   └── memory_storage.go # In-memory storage (tests)
 │   ├── thumbnail/          # Derived preview images
-│   │   └── thumbnail.go    # Crop/scale/encode helper
+│   │   └── thumbnail.go    # Preserve social originals or derive page previews
 │   ├── monitoring/         # Browser process monitoring
 │   ├── utils/              # Shared utilities
 │   └── workers/            # Async job processing
@@ -166,7 +166,7 @@ When using Amp with `make dev` running in another window:
 - `GET /video/:shortid/raw` - Sanitized raw yt-dlp/Bright Data provider record
 - `GET /video/:shortid/subtitle/:name` - One stored caption track (`name` is `<lang>.<format>`, e.g. `en.vtt`); only tracks the archive's own metadata records are servable
 - `GET /video/:shortid/transcript` - Plain-text transcript derived from the best caption track
-- `GET|HEAD /thumb/:shortid` - Preview image for a capture (480x270 JPEG); falls back to an SVG placeholder and queues generation
+- `GET|HEAD /thumb/:shortid` - Preview image for a capture (the original social poster/image when available; otherwise a 480x270 JPEG page preview); falls back to an SVG placeholder and queues generation
 - `GET|HEAD /thumb/:shortid/:type` - Preview image for one archive type
 
 ### Admin Interface (Session Authentication)
@@ -301,22 +301,24 @@ no permalink type segment, and no entry in `canonicalArchiveTypes`. They live in
 four columns on `archive_items` (`thumbnail_key/width/height/status`) and are
 served from `/thumb/{shortid}[/{type}]`.
 
-- **Size/format**: 480x270 JPEG (`internal/thumbnail`). JPEG because the only
-  WebP encoder in the tree (`nativewebp`) is lossless-only — it produced a
-  ~490KB "thumbnail" in testing versus ~35KB for JPEG, and it panics on some
-  low-colour-count inputs. `x/image/webp` is decode-only and reads back what
-  `nativewebp` wrote.
+- **Social thumbnails are originals**: preserve the provider's poster or the
+  post's first still byte-for-byte, including its intrinsic dimensions, aspect
+  ratio, and JPEG/PNG/GIF/WebP encoding. Do not crop, scale, or re-encode an
+  image the poster or platform already authored for the post.
+- **Page screenshot previews are derivatives**: crop the page header and scale
+  it to a 480x270 JPEG (`internal/thumbnail`). JPEG is used here because the
+  only WebP encoder in the tree (`nativewebp`) is lossless-only — it produced a
+  ~490KB derivative versus ~35KB for JPEG and panics on some low-colour inputs.
 - **Each archiver supplies its own source**, inline, from work it already does:
-  | Type | Source | Crop |
+  | Type | Source | Treatment |
   | --- | --- | --- |
   | `screenshot` | the full-page image it already decoded — no extra browser work | `CropTop` |
-  | `yt-dlp` | the platform's own poster via `--write-thumbnail` (YouTube serves **WebP**) | `CropCenter` |
-  | `gallery-dl` | the post's first still image, from the temp dir before it is zipped | `CropCenter` |
+  | `yt-dlp` | the platform's own poster via `--write-thumbnail` (YouTube serves **WebP**) | preserve original |
+  | `gallery-dl` | the post's first still image, from the temp dir before it is zipped | preserve original |
+  | Bright Data video-only gallery | the provider record's published poster when available | preserve original |
   | `mhtml`, `git`, `itch` | none — the capture falls back to a sibling item's thumbnail | — |
-- **The crop anchor is a required argument, and it matters.** A page screenshot
-  is `CropTop` (its identity is the header). A video or photo thumbnail is
-  `CropCenter` — a 9:16 reel cover frames its subject in the middle, and
-  top-cropping returns the empty space above their head.
+- **Only page screenshot previews are cropped.** They use `CropTop` because the
+  page's identity is its header. Social images keep their complete framing.
 - **Only `screenshot` can be backfilled** (`CanDeriveFromArchive`). The `/thumb`
   handler enqueues a `ThumbnailJobArgs` job on the `high_priority` queue the
   first time somebody views an archive lacking one. Video and gallery posters
@@ -331,9 +333,10 @@ served from `/thumb/{shortid}[/{type}]`.
   re-enqueues the same impossible job on every page view.
 - **A thumbnail failure must never fail an archive.** The archive is the
   product; the preview is not.
-- Keys carry an upload nonce like archive keys (`{shortid}/{type}-{nonce}-thumb.jpg`)
-  because the bucket forbids overwrites and deletes. Regenerating means writing a
-  new object and repointing the row.
+- Keys carry an upload nonce and their real encoding
+  (`{shortid}/{type}-{nonce}-thumb.{jpg,png,gif,webp}`) because the bucket
+  forbids overwrites and deletes. Regenerating means writing a new object and
+  repointing the row.
 - `/thumb` always returns an image, falling back to a generated SVG placeholder
   with a short `max-age` so a refresh picks up the real one. Callers can render
   a card unconditionally.

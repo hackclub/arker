@@ -9,11 +9,12 @@ import (
 
 // Thumbnail is an encoded preview image produced alongside the main artifact.
 //
-// It carries bytes rather than an io.Reader on purpose. Thumbnails are small
-// (tens of KB), and the main artifact's reader is already a live process or a
-// goroutine writing into an io.Pipe whose close semantics are delicate. A
-// second reader with the same lifetime rules would be a second way to leak a
-// blocked goroutine for no benefit.
+// It carries bytes rather than an io.Reader on purpose. Derived screenshot
+// previews are tens of KB and original social posters are explicitly bounded
+// by the thumbnail package. The main artifact's reader is already a live
+// process or a goroutine writing into an io.Pipe whose close semantics are
+// delicate; a second reader with the same lifetime rules would be a second way
+// to leak a blocked goroutine for no benefit.
 type Thumbnail struct {
 	Data   []byte
 	Width  int

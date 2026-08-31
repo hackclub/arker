@@ -135,7 +135,7 @@ func refreshVideoFromStored(ctx context.Context, jobArgs ArchiveJobArgs, item, p
 	// The preview is cosmetic and must never fail the item. Prefer the fresh
 	// poster; fall back to sharing the earlier capture's thumbnail object.
 	if result.Thumbnail != nil {
-		thumbKey := fmt.Sprintf("%s-thumb%s", keyBase, thumbnail.Extension)
+		thumbKey := fmt.Sprintf("%s-thumb%s", keyBase, thumbnail.FileExtension(result.Thumbnail.Data))
 		if err := StoreThumbnail(result.Thumbnail, thumbKey, store, db, item); err != nil {
 			slog.Warn("Failed to save refreshed thumbnail", "short_id", jobArgs.ShortID, "error", err)
 			fmt.Fprintf(logWriter, "\nWarning: failed to save thumbnail: %v\n", err)

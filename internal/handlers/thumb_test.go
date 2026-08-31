@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"bytes"
 	"image"
 	"image/color"
 	"image/jpeg"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -162,6 +164,47 @@ func TestServeThumbnailReturnsStoredImage(t *testing.T) {
 	}
 }
 
+func TestServeThumbnailRetainsOriginalSocialFormatAndDimensions(t *testing.T) {
+	db := newThumbTestDB(t)
+	store := storage.NewMemoryStorage()
+	seedCapture(t, db, store, "soc01", "https://www.instagram.com/p/example/", []seedSpec{
+		{typ: "gallery-dl", status: "completed"},
+	})
+
+	var source bytes.Buffer
+	if err := png.Encode(&source, banded(137, 251, color.RGBA{200, 20, 20, 255}, color.RGBA{20, 20, 200, 255})); err != nil {
+		t.Fatalf("encode source: %v", err)
+	}
+	var item models.ArchiveItem
+	if err := db.Where("type = ?", "gallery-dl").First(&item).Error; err != nil {
+		t.Fatalf("load item: %v", err)
+	}
+	key := "soc01/gallery-dl-abcd1234-thumb.png"
+	if err := workers.StoreThumbnail(&archivers.Thumbnail{Data: source.Bytes(), Width: 137, Height: 251}, key, store, db, &item); err != nil {
+		t.Fatalf("store thumbnail: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	newThumbRouter(db, store).ServeHTTP(w, httptest.NewRequest("GET", "/thumb/soc01", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if contentType := w.Header().Get("Content-Type"); contentType != "image/png" {
+		t.Errorf("Content-Type = %q, want image/png", contentType)
+	}
+	if !bytes.Equal(w.Body.Bytes(), source.Bytes()) {
+		t.Error("served social thumbnail differs from the stored provider image")
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(w.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if cfg.Width != 137 || cfg.Height != 251 {
+		t.Errorf("served dimensions = %dx%d, want 137x251", cfg.Width, cfg.Height)
+	}
+}
+
 // Caches and link-preview crawlers probe with HEAD before fetching.
 func TestServeThumbnailSupportsHEAD(t *testing.T) {
 	db := newThumbTestDB(t)
@@ -296,6 +339,28 @@ func TestServeThumbnailPrefersViewerDefaultType(t *testing.T) {
 	r, _, b := dominantColor(t, w.Body.Bytes())
 	if r < 150 || b > 100 {
 		t.Errorf("served the wrong item's thumbnail: avg r=%d b=%d, want the preferred (mhtml/red) one", r, b)
+	}
+}
+
+func TestServeThumbnailPrefersSocialPosterOverPageScreenshot(t *testing.T) {
+	db := newThumbTestDB(t)
+	store := storage.NewMemoryStorage()
+	posterRed := color.RGBA{200, 20, 20, 255}
+	pageBlue := color.RGBA{20, 20, 200, 255}
+	// A social capture has both a browser screenshot and its media item's own
+	// poster. The latter must represent the capture even when the screenshot row
+	// was created first.
+	seedCapture(t, db, store, "soc02", "https://www.instagram.com/p/example/", []seedSpec{
+		{typ: "screenshot", status: "completed", thumbColor: &pageBlue},
+		{typ: "gallery-dl", status: "completed", thumbColor: &posterRed},
+	})
+
+	w := httptest.NewRecorder()
+	newThumbRouter(db, store).ServeHTTP(w, httptest.NewRequest("GET", "/thumb/soc02", nil))
+
+	r, _, b := dominantColor(t, w.Body.Bytes())
+	if r < 150 || b > 100 {
+		t.Errorf("served page screenshot instead of social poster: avg r=%d b=%d", r, b)
 	}
 }
 

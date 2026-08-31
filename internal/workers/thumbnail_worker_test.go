@@ -6,7 +6,9 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"image/png"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -221,6 +223,45 @@ func TestProcessArchiveJobPersistsInlineThumbnail(t *testing.T) {
 	}
 	if exists, _ := store.Exists(got.ThumbnailKey); !exists {
 		t.Errorf("thumbnail object %q was not written", got.ThumbnailKey)
+	}
+}
+
+func TestProcessArchiveJobKeepsSocialThumbnailExtension(t *testing.T) {
+	db := newWorkerTestDB(t)
+	store := storage.NewMemoryStorage()
+	item := seedItem(t, db, "soc01", "gallery-dl", "processing", "")
+
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, bandedImage(137, 251, color.RGBA{10, 200, 10, 255}, color.RGBA{10, 10, 200, 255})); err != nil {
+		t.Fatalf("encode thumbnail: %v", err)
+	}
+	m := map[string]archivers.Archiver{"gallery-dl": thumbArchiver{
+		payload: []byte("fake gallery bytes"),
+		thumb:   &archivers.Thumbnail{Data: encoded.Bytes(), Width: 137, Height: 251},
+	}}
+	args := ArchiveJobArgs{ShortID: "soc01", Type: "gallery-dl", URL: "https://www.instagram.com/p/example/"}
+	if err := processArchiveJob(context.Background(), args, &item, store, db, m); err != nil {
+		t.Fatalf("processArchiveJob: %v", err)
+	}
+
+	got := reload(t, db, item.ID)
+	if !strings.HasSuffix(got.ThumbnailKey, "-thumb.png") {
+		t.Errorf("thumbnail key = %q, want the provider's .png format", got.ThumbnailKey)
+	}
+	if got.ThumbnailWidth != 137 || got.ThumbnailHeight != 251 {
+		t.Errorf("stored dimensions = %dx%d, want 137x251", got.ThumbnailWidth, got.ThumbnailHeight)
+	}
+	r, err := store.Reader(got.ThumbnailKey)
+	if err != nil {
+		t.Fatalf("open stored thumbnail: %v", err)
+	}
+	defer r.Close()
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stored thumbnail: %v", err)
+	}
+	if !bytes.Equal(data, encoded.Bytes()) {
+		t.Error("stored social thumbnail was re-encoded")
 	}
 }
 

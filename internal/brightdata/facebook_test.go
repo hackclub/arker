@@ -1,6 +1,7 @@
 package brightdata
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"strings"
@@ -184,8 +185,10 @@ func TestArchiveFacebookPostPermalinkWrappingAVideo(t *testing.T) {
 		t.Fatalf("fixture entries = %v; want one video", entries)
 	}
 	video := fakeMP4(2048)
+	poster := fakePNG(t)
 	network := newFakeNetwork(record)
 	network.serve(entries[0].URL, video)
+	network.serve(facebookPosterURL(record), poster)
 
 	client, db := newTestClient(t, network)
 	result, err := client.archiveFacebook(context.Background(), "https://www.facebook.com/NASA/posts/pfbid0video/", utils.ArchiveTypeGalleryDl, io.Discard, db, 33, "fbp02")
@@ -196,6 +199,9 @@ func TestArchiveFacebookPostPermalinkWrappingAVideo(t *testing.T) {
 	reader := resultZip(t, result)
 	if got := zipEntry(t, reader, "001.mp4"); len(got) != len(video) {
 		t.Errorf("stored video is %d bytes; want %d", len(got), len(video))
+	}
+	if result.Thumbnail == nil || !bytes.Equal(result.Thumbnail.Data, poster) {
+		t.Error("video post did not retain its published attachment thumbnail")
 	}
 	meta := videoMetadataFromSidecar(t, result.Metadata)
 	if meta.Platform != "facebook" {

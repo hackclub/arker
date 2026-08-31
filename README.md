@@ -82,6 +82,11 @@ refresh fails — a deleted post, a platform refusal — the new capture inherit
 the earlier sidecars instead of failing, since the archive already holds the
 product.
 
+`GET /thumb/:shortid` preserves a social post's own poster or first still
+byte-for-byte, with its original aspect ratio, dimensions, and image format.
+Ordinary web pages still use a compact 480x270 preview derived from the page
+screenshot.
+
 For manual installs, prefer:
 
 ```bash

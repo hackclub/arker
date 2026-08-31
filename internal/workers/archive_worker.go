@@ -180,7 +180,7 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 	// not, and failing an otherwise-good capture over a cosmetic artifact would
 	// burn a River attempt and re-run the whole download.
 	if result.Thumbnail != nil {
-		thumbKey := fmt.Sprintf("%s/%s-%s-thumb%s", jobArgs.ShortID, jobArgs.Type, nonce, thumbnail.Extension)
+		thumbKey := fmt.Sprintf("%s/%s-%s-thumb%s", jobArgs.ShortID, jobArgs.Type, nonce, thumbnail.FileExtension(result.Thumbnail.Data))
 		if err := StoreThumbnail(result.Thumbnail, thumbKey, storage, db, item); err != nil {
 			slog.Warn("Failed to save thumbnail", "short_id", jobArgs.ShortID, "type", jobArgs.Type, "error", err)
 			fmt.Fprintf(dbLogWriter, "\nWarning: failed to save thumbnail: %v\n", err)

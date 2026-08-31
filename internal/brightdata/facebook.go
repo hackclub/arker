@@ -142,6 +142,12 @@ func (c *Client) facebookGallery(ctx context.Context, targetURL string, logWrite
 		c.recordUsage(db, usage)
 		return archivers.Result{}, err
 	}
+	if result.Thumbnail == nil {
+		// A /posts/ permalink can contain one video. Its attachment publishes a
+		// separate cover image just like the dedicated video route, so do not
+		// fall back to a screenshot merely because the bundle has no still card.
+		result.Thumbnail = c.thumbnailFromURL(ctx, facebookPosterURL(record), logWriter)
+	}
 
 	if videoURL := singleFacebookVideo(entries); videoURL != "" {
 		size := storedFileSize(meta, func(f archivers.GalleryFile) bool { return f.IsVideo })

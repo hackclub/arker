@@ -488,15 +488,16 @@ func videoThumbnail(tempBase, videoPath string, logWriter io.Writer) *Thumbnail 
 	}
 	defer f.Close()
 
-	// CropCenter, not CropTop: a vertical reel cover frames its subject in the
-	// middle, so taking the top band would return the empty space above them.
-	t, err := thumbnail.FromReader(f, thumbnail.CropCenter)
+	// Keep the platform's actual poster. It is already authored and framed for
+	// this video; cropping it to Arker's old 16:9 JPEG tile loses both the image
+	// and its intrinsic dimensions.
+	t, err := thumbnail.OriginalFromReader(f)
 	if err != nil {
-		fmt.Fprintf(logWriter, "Thumbnail generation skipped: %v\n", err)
+		fmt.Fprintf(logWriter, "Thumbnail capture skipped: %v\n", err)
 		return nil
 	}
 
-	fmt.Fprintf(logWriter, "Thumbnail generated from %s: %dx%d, %d bytes\n",
+	fmt.Fprintf(logWriter, "Thumbnail captured from %s: %dx%d, %d bytes\n",
 		filepath.Base(path), t.Width, t.Height, len(t.Data))
 	return &Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height}
 }
