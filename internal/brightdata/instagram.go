@@ -412,6 +412,15 @@ func instagramVideoTitle(record map[string]any) string {
 	if len(entries) != 1 || !entries[0].isVideo() {
 		return ""
 	}
+	// The posts dataset's accessibility text starts with the display-name
+	// title Instagram itself exposes ("Video by Anna Codes on August 19, ...").
+	// Keep only that title prefix; the rest is an accessibility description,
+	// not part of the title.
+	if alt := strings.TrimSpace(stringField(record, "alt_text")); strings.HasPrefix(alt, "Video by ") {
+		if end := strings.Index(alt, " on "); end > len("Video by ") {
+			return alt[:end]
+		}
+	}
 	author := stringField(record, "user_posted", "username", "owner_username")
 	if author == "" {
 		return ""

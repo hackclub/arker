@@ -177,6 +177,7 @@ func TestInstagramGalleryFallbackRecordsVideoIntrinsics(t *testing.T) {
 		"url":          targetURL,
 		"content_type": "Reel",
 		"user_posted":  "anna.codes.stuff",
+		"alt_text":     "Video by Anna Codes on August 19, 2026. May be an image of text.",
 		"description":  "A fixture caption",
 		"likes":        float64(177),
 		"num_comments": float64(5),
@@ -213,7 +214,7 @@ func TestInstagramGalleryFallbackRecordsVideoIntrinsics(t *testing.T) {
 	if meta.Likes == nil || *meta.Likes != 177 || meta.Comments == nil || *meta.Comments != 5 {
 		t.Errorf("engagement = likes %v, comments %v; want 177/5", meta.Likes, meta.Comments)
 	}
-	if meta.Title != "Video by anna.codes.stuff" {
+	if meta.Title != "Video by Anna Codes" {
 		t.Errorf("title = %q; want a stable single-video title", meta.Title)
 	}
 }
