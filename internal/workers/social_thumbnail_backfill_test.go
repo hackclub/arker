@@ -10,7 +10,6 @@ import (
 	"image/color"
 	"image/png"
 	"io"
-	"os"
 	"testing"
 	"time"
 
@@ -130,33 +129,6 @@ func TestSocialThumbnailBackfillProviderRescuesAllVideoGallery(t *testing.T) {
 	}
 	if native.calls != 1 || provider.calls != 1 {
 		t.Fatalf("calls native=%d provider=%d, want 1 each", native.calls, provider.calls)
-	}
-}
-
-func TestSocialThumbnailBackfillUsesStoredVideoFrameBeforeProviders(t *testing.T) {
-	db := newWorkerTestDB(t)
-	store := storage.NewMemoryStorage()
-	video, err := os.ReadFile("../archivers/testdata/muxed_video_audio_sample.mp4")
-	if err != nil {
-		t.Fatalf("read video fixture: %v", err)
-	}
-	videoBundle := backfillGalleryZIP(t, "001.mp4", video, true)
-	item := seedSocialBackfillItem(t, db, store, "vid02", "https://www.instagram.com/p/FRAME/", "https://www.instagram.com/p/FRAME/", utils.ArchiveTypeGalleryDl, videoBundle)
-	native := &fakeSocialRefresher{err: errors.New("native must not run")}
-	provider := &fakeSocialProvider{err: errors.New("provider must not run"), supported: true}
-	w := NewSocialThumbnailBackfillWorker(store, db, native, provider)
-	if err := w.generate(context.Background(), SocialThumbnailBackfillJobArgs{
-		Identity: "https://www.instagram.com/p/FRAME/", URL: "https://www.instagram.com/p/FRAME/",
-		ShortID: "vid02", Type: utils.ArchiveTypeGalleryDl,
-	}, false); err != nil {
-		t.Fatalf("generate: %v", err)
-	}
-	got := reload(t, db, item.ID)
-	if got.ThumbnailKind != models.ThumbnailKindSocialOriginal || got.ThumbnailWidth != 64 || got.ThumbnailHeight != 64 {
-		t.Fatalf("stored video frame not used at intrinsic dimensions: %+v", got)
-	}
-	if native.calls != 0 || provider.calls != 0 {
-		t.Fatalf("calls native=%d provider=%d, want neither", native.calls, provider.calls)
 	}
 }
 

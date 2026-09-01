@@ -259,7 +259,7 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 	// Build the thumbnail before the ZIP goroutine starts. That goroutine owns
 	// cleanupTmp, so once it is running the downloaded files can vanish at any
 	// moment; reading them here is the only safe window.
-	thumb := galleryThumbnail(ctx, tmpDir, metadata, logWriter)
+	thumb := galleryThumbnail(tmpDir, metadata, logWriter)
 
 	// Stream the ZIP so a large carousel never has to sit in memory.
 	pipeReader, pipeWriter := io.Pipe()
@@ -426,31 +426,21 @@ func galleryFileIndex(name string) int {
 	return index
 }
 
-// galleryThumbnail previews a post using its first usable media item.
+// galleryThumbnail previews a post using its first still image.
 //
-// Slide 1 is what the post leads with, so it is the natural cover. Authored
-// stills retain their exact bytes; videos contribute their first decoded frame
-// at the archived media's intrinsic dimensions. This avoids substituting the
-// small CDN preview images social providers often expose for reels.
+// Slide 1 is what the post leads with, so it is the natural cover. Videos are
+// skipped because gallery-dl stores the media itself, not a poster frame, and
+// decoding a video here is out of scope; a carousel that opens with a video
+// falls back to its first photo, and an all-video post gets no thumbnail.
 //
 // Returns nil on any failure. A post with no usable cover is not an error.
-func galleryThumbnail(ctx context.Context, dir string, metadata *GalleryMetadata, logWriter io.Writer) *Thumbnail {
+func galleryThumbnail(dir string, metadata *GalleryMetadata, logWriter io.Writer) *Thumbnail {
 	if metadata == nil {
 		return nil
 	}
 	for _, file := range metadata.Files {
-		if file.Name == "" {
+		if file.IsVideo || file.Name == "" {
 			continue
-		}
-		if file.IsVideo || strings.HasPrefix(file.ContentType, "video/") {
-			t, err := VideoFrameThumbnailFile(ctx, filepath.Join(dir, file.Name))
-			if err != nil {
-				fmt.Fprintf(logWriter, "Thumbnail frame from %s skipped: %v\n", file.Name, err)
-				continue
-			}
-			fmt.Fprintf(logWriter, "Thumbnail captured from first frame of %s: %dx%d, %d bytes\n",
-				file.Name, t.Width, t.Height, len(t.Data))
-			return t
 		}
 		if !strings.HasPrefix(file.ContentType, "image/") {
 			continue
@@ -476,7 +466,7 @@ func galleryThumbnail(ctx context.Context, dir string, metadata *GalleryMetadata
 		return &Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height, Kind: models.ThumbnailKindSocialOriginal}
 	}
 
-	fmt.Fprintf(logWriter, "No usable gallery media available for a thumbnail\n")
+	fmt.Fprintf(logWriter, "No still image available for a thumbnail\n")
 	return nil
 }
 

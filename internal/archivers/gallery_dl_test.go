@@ -3,7 +3,6 @@ package archivers
 import (
 	"archive/zip"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"image"
@@ -15,8 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"arker/internal/models"
 )
 
 // writeGalleryFixture lays out a directory the way gallery-dl does with the
@@ -589,7 +586,7 @@ func TestGalleryThumbnailUsesFirstStillImage(t *testing.T) {
 		{Name: "002.jpg", ContentType: "image/jpeg"},
 	}}
 
-	got := galleryThumbnail(context.Background(), dir, meta, io.Discard)
+	got := galleryThumbnail(dir, meta, io.Discard)
 	if got == nil {
 		t.Fatal("expected a thumbnail")
 	}
@@ -612,7 +609,7 @@ func TestGalleryThumbnailSkipsLeadingVideo(t *testing.T) {
 		{Name: "002.jpg", ContentType: "image/jpeg"},
 	}}
 
-	got := galleryThumbnail(context.Background(), dir, meta, io.Discard)
+	got := galleryThumbnail(dir, meta, io.Discard)
 	if got == nil {
 		t.Fatal("expected the photo slide to be used")
 	}
@@ -629,33 +626,8 @@ func TestGalleryThumbnailReturnsNilWhenNoStillImage(t *testing.T) {
 	meta := &GalleryMetadata{Files: []GalleryFile{
 		{Name: "001.mp4", ContentType: "video/mp4", IsVideo: true},
 	}}
-	if got := galleryThumbnail(context.Background(), dir, meta, io.Discard); got != nil {
+	if got := galleryThumbnail(dir, meta, io.Discard); got != nil {
 		t.Errorf("all-video post produced a thumbnail: %+v", got)
-	}
-}
-
-func TestGalleryThumbnailUsesFullSizeFrameForVideoOnlyPost(t *testing.T) {
-	dir := t.TempDir()
-	video, err := os.ReadFile(filepath.Join("testdata", "muxed_video_audio_sample.mp4"))
-	if err != nil {
-		t.Fatalf("read video fixture: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "001.mp4"), video, 0o600); err != nil {
-		t.Fatalf("write video: %v", err)
-	}
-	meta := &GalleryMetadata{Files: []GalleryFile{
-		{Name: "001.mp4", ContentType: "video/mp4", IsVideo: true},
-	}}
-
-	got := galleryThumbnail(context.Background(), dir, meta, io.Discard)
-	if got == nil {
-		t.Fatal("expected a frame thumbnail")
-	}
-	if got.Width != 64 || got.Height != 64 {
-		t.Errorf("frame dimensions = %dx%d, want the video's intrinsic 64x64", got.Width, got.Height)
-	}
-	if got.Kind != models.ThumbnailKindSocialOriginal {
-		t.Errorf("kind = %q, want social original", got.Kind)
 	}
 }
 
@@ -672,7 +644,7 @@ func TestGalleryThumbnailSkipsCorruptImage(t *testing.T) {
 		{Name: "002.jpg", ContentType: "image/jpeg"},
 	}}
 
-	got := galleryThumbnail(context.Background(), dir, meta, io.Discard)
+	got := galleryThumbnail(dir, meta, io.Discard)
 	if got == nil {
 		t.Fatal("expected fallback to the second slide")
 	}
@@ -682,7 +654,7 @@ func TestGalleryThumbnailSkipsCorruptImage(t *testing.T) {
 }
 
 func TestGalleryThumbnailToleratesNilMetadata(t *testing.T) {
-	if got := galleryThumbnail(context.Background(), t.TempDir(), nil, io.Discard); got != nil {
+	if got := galleryThumbnail(t.TempDir(), nil, io.Discard); got != nil {
 		t.Errorf("expected nil, got %+v", got)
 	}
 }

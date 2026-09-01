@@ -102,7 +102,7 @@ func (c *Client) buildGalleryArchive(ctx context.Context, entries []mediaEntry, 
 		return archivers.Result{}, completeness, totalBytes, err
 	}
 
-	thumb := galleryThumbnailFromDir(ctx, tmpDir, meta, logWriter)
+	thumb := galleryThumbnailFromDir(tmpDir, meta, logWriter)
 
 	reader, err := openTempFileReader(zipPath)
 	if err != nil {
