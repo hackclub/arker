@@ -48,14 +48,18 @@ func getPastArchives(c *gin.Context, db *gorm.DB) {
 	}
 
 	var captures []models.Capture
-	db.Where("archived_url_id = ?", archivedURL.ID).Order("created_at DESC").Limit(10).Find(&captures)
+	db.Where("archived_url_id = ?", archivedURL.ID).Preload("ArchiveItems").Order("created_at DESC").Limit(10).Find(&captures)
 
 	response := make([]PastArchiveResponse, len(captures))
 	for i, capture := range captures {
+		thumbnailKey := ""
+		if ready, _ := selectThumbnailItem(capture.ArchiveItems, defaultTypePreference(archivedURL.Original)); ready != nil {
+			thumbnailKey = ready.ThumbnailKey
+		}
 		response[i] = PastArchiveResponse{
 			ShortID:      capture.ShortID,
 			Timestamp:    capture.Timestamp,
-			ThumbnailURL: ThumbnailURL(c, capture.ShortID),
+			ThumbnailURL: ThumbnailURL(c, capture.ShortID, thumbnailKey),
 		}
 	}
 

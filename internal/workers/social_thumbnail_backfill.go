@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -30,6 +31,7 @@ const (
 	socialThumbnailBackfillQueue = "thumbnail_backfill"
 	maxBackfillGalleryBuffer     = 200 << 20
 	maxGalleryMetadataBytes      = 4 << 20
+	maxBackfillVideoFrameBytes   = 2 << 30
 	backfillJobTimeout           = 8 * time.Minute
 )
 
@@ -58,8 +60,9 @@ type SocialThumbnailBackfillJobArgs struct {
 func (SocialThumbnailBackfillJobArgs) Kind() string { return "social_thumbnail_backfill" }
 
 // SocialThumbnailBackfillWorker replaces legacy social derivatives with the
-// exact provider poster or first stored still. It runs in a one-worker queue so
-// a bulk repair cannot crowd out archive jobs or race its shared cost cap.
+// first stored image/video frame or an exact provider poster. It runs in a
+// one-worker queue so a bulk repair cannot crowd out archive jobs or race its
+// shared cost cap.
 type SocialThumbnailBackfillWorker struct {
 	river.WorkerDefaults[SocialThumbnailBackfillJobArgs]
 	storage  storage.Storage
@@ -119,7 +122,7 @@ func (w *SocialThumbnailBackfillWorker) generate(ctx context.Context, args Socia
 	var nativeErr error
 
 	if args.Type == utils.ArchiveTypeGalleryDl {
-		thumb, nativeErr = w.thumbnailFromStoredGalleries(items)
+		thumb, nativeErr = w.thumbnailFromStoredGalleries(ctx, items)
 		if nativeErr != nil && !errors.Is(nativeErr, archivers.ErrSocialThumbnailUnavailable) {
 			return nativeErr
 		}
@@ -257,11 +260,12 @@ func (w *SocialThumbnailBackfillWorker) checkProviderBudget(args SocialThumbnail
 }
 
 // thumbnailFromStoredGalleries tries newest duplicates first. A readable ZIP
-// with no still is a conclusive miss; an S3/range-read failure is retryable.
-func (w *SocialThumbnailBackfillWorker) thumbnailFromStoredGalleries(items []models.ArchiveItem) (*archivers.Thumbnail, error) {
+// with no usable media is a conclusive miss; an S3/range-read failure is
+// retryable.
+func (w *SocialThumbnailBackfillWorker) thumbnailFromStoredGalleries(ctx context.Context, items []models.ArchiveItem) (*archivers.Thumbnail, error) {
 	var lastErr error
 	for i := range items {
-		thumb, err := w.thumbnailFromStoredGallery(&items[i])
+		thumb, err := w.thumbnailFromStoredGallery(ctx, &items[i])
 		if err == nil {
 			return thumb, nil
 		}
@@ -277,7 +281,7 @@ func (w *SocialThumbnailBackfillWorker) thumbnailFromStoredGalleries(items []mod
 	return nil, lastErr
 }
 
-func (w *SocialThumbnailBackfillWorker) thumbnailFromStoredGallery(item *models.ArchiveItem) (*archivers.Thumbnail, error) {
+func (w *SocialThumbnailBackfillWorker) thumbnailFromStoredGallery(ctx context.Context, item *models.ArchiveItem) (*archivers.Thumbnail, error) {
 	zr, cleanup, err := openBackfillGalleryZip(w.storage, item.StorageKey)
 	if err != nil {
 		return nil, err
@@ -299,10 +303,20 @@ func (w *SocialThumbnailBackfillWorker) thumbnailFromStoredGallery(item *models.
 		r.Close()
 		if readErr == nil && len(raw) <= maxGalleryMetadataBytes && json.Unmarshal(raw, &metadata) == nil {
 			for _, media := range metadata.Files {
-				if media.IsVideo || media.Name == "" || !strings.HasPrefix(media.ContentType, "image/") {
+				if media.Name == "" {
 					continue
 				}
-				if file := byName[media.Name]; file != nil {
+				file := byName[media.Name]
+				if file == nil {
+					continue
+				}
+				if media.IsVideo || strings.HasPrefix(media.ContentType, "video/") {
+					if thumb, err := videoFrameFromZipFile(ctx, file); err == nil {
+						return thumb, nil
+					}
+					continue
+				}
+				if strings.HasPrefix(media.ContentType, "image/") {
 					if thumb, err := originalFromZipFile(file); err == nil {
 						return thumb, nil
 					}
@@ -321,7 +335,39 @@ func (w *SocialThumbnailBackfillWorker) thumbnailFromStoredGallery(item *models.
 			return thumb, nil
 		}
 	}
-	return nil, fmt.Errorf("%w: stored gallery contains no supported still image", archivers.ErrSocialThumbnailUnavailable)
+	return nil, fmt.Errorf("%w: stored gallery contains no supported thumbnail media", archivers.ErrSocialThumbnailUnavailable)
+}
+
+func videoFrameFromZipFile(ctx context.Context, file *zip.File) (*archivers.Thumbnail, error) {
+	if file.UncompressedSize64 > maxBackfillVideoFrameBytes {
+		return nil, fmt.Errorf("gallery video %s exceeds frame extraction byte limit", file.Name)
+	}
+	r, err := file.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	ext := filepath.Ext(file.Name)
+	tmp, err := os.CreateTemp("", "arker-gallery-video-*"+ext)
+	if err != nil {
+		return nil, err
+	}
+	path := tmp.Name()
+	defer os.Remove(path)
+
+	written, copyErr := io.Copy(tmp, io.LimitReader(r, maxBackfillVideoFrameBytes+1))
+	closeErr := tmp.Close()
+	if copyErr != nil {
+		return nil, copyErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if written > maxBackfillVideoFrameBytes {
+		return nil, fmt.Errorf("gallery video %s exceeds frame extraction byte limit", file.Name)
+	}
+	return archivers.VideoFrameThumbnailFile(ctx, path)
 }
 
 func originalFromZipFile(file *zip.File) (*archivers.Thumbnail, error) {

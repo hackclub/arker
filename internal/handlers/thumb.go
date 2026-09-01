@@ -144,7 +144,7 @@ func serveStoredThumbnail(c *gin.Context, store storage.Storage, item models.Arc
 	etag := `"` + item.ThumbnailKey + `"`
 	if match := c.GetHeader("If-None-Match"); match != "" && strings.Contains(match, etag) {
 		c.Header("ETag", etag)
-		c.Header("Cache-Control", "public, max-age=86400")
+		c.Header("Cache-Control", storedThumbnailCacheControl(c, item.ThumbnailKey))
 		c.Status(http.StatusNotModified)
 		return true
 	}
@@ -166,7 +166,7 @@ func serveStoredThumbnail(c *gin.Context, store storage.Storage, item models.Arc
 	}
 
 	c.Header("ETag", etag)
-	c.Header("Cache-Control", "public, max-age=86400")
+	c.Header("Cache-Control", storedThumbnailCacheControl(c, item.ThumbnailKey))
 	c.Header("Content-Length", strconv.Itoa(len(data)))
 	c.Data(http.StatusOK, thumbnail.ContentTypeForData(data), data)
 	return true
@@ -224,12 +224,32 @@ func hostLabel(raw string) string {
 // Absolute because the consumers are other services rendering archive cards in
 // their own pages, where a root-relative path would resolve against the wrong
 // host.
-func ThumbnailURL(c *gin.Context, shortID string) string {
+func ThumbnailURL(c *gin.Context, shortID string, thumbnailKey ...string) string {
 	scheme := "http"
 	if proto := c.GetHeader("X-Forwarded-Proto"); proto != "" {
 		scheme = proto
 	} else if c.Request != nil && c.Request.TLS != nil {
 		scheme = "https"
 	}
-	return fmt.Sprintf("%s://%s/thumb/%s", scheme, c.Request.Host, shortID)
+	result := fmt.Sprintf("%s://%s/thumb/%s", scheme, c.Request.Host, shortID)
+	if len(thumbnailKey) > 0 && thumbnailKey[0] != "" {
+		result += "?v=" + thumbnailVersionToken(thumbnailKey[0])
+	}
+	return result
+}
+
+func thumbnailVersionToken(thumbnailKey string) string {
+	sum := sha256.Sum256([]byte(thumbnailKey))
+	return fmt.Sprintf("%x", sum[:8])
+}
+
+// /thumb/:shortid is a mutable pointer: a backfill can repoint it to a new,
+// append-only object at any time. Bare aliases therefore must revalidate. URLs
+// emitted by Arker include a token for the current object and can be cached as
+// immutable; a stale or invented token falls back to revalidation.
+func storedThumbnailCacheControl(c *gin.Context, thumbnailKey string) string {
+	if c.Query("v") == thumbnailVersionToken(thumbnailKey) {
+		return "public, max-age=31536000, immutable"
+	}
+	return "public, max-age=0, must-revalidate"
 }

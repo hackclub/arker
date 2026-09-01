@@ -213,6 +213,7 @@ func DisplayDefault(c *gin.Context, db *gorm.DB) {
 	if logs, err := utils.ArchiveItemLogString(db, targetItem.ID, targetItem.Logs); err == nil {
 		targetItem.Logs = logs
 	}
+	thumbnailURL, thumbnailWidth, thumbnailHeight := displayThumbnail(c, capture.ArchiveItems, preference, shortID)
 
 	// Serve the default archive type view directly
 	c.HTML(http.StatusOK, "display_type.html", gin.H{
@@ -227,6 +228,9 @@ func DisplayDefault(c *gin.Context, db *gorm.DB) {
 		"git_repo_name":     gitRepoName,
 		"download_filename": filename,
 		"queue_position":    queuePosition,
+		"thumbnail_url":     thumbnailURL,
+		"thumbnail_width":   thumbnailWidth,
+		"thumbnail_height":  thumbnailHeight,
 	})
 }
 
@@ -280,11 +284,13 @@ func DisplayType(c *gin.Context, db *gorm.DB) {
 	if logs, err := utils.ArchiveItemLogString(db, targetItem.ID, targetItem.Logs); err == nil {
 		targetItem.Logs = logs
 	}
+	preference := defaultTypePreference(archivedURL.Original)
+	thumbnailURL, thumbnailWidth, thumbnailHeight := displayThumbnail(c, capture.ArchiveItems, preference, shortID)
 
 	c.HTML(http.StatusOK, "display_type.html", gin.H{
 		"date":         capture.Timestamp.Format(time.RFC1123),
 		"timestamp":    capture.Timestamp.Format(time.RFC3339), // For JavaScript parsing
-		"tabs":         buildTabs(capture.ArchiveItems, defaultTypePreference(archivedURL.Original), internalTypeToURLType(internalType)),
+		"tabs":         buildTabs(capture.ArchiveItems, preference, internalTypeToURLType(internalType)),
 		"current_item": targetItem,
 		// Canonicalize rather than echoing urlType: a legacy /{id}/youtube
 		// permalink must still match the tab links, which are canonical.
@@ -295,7 +301,18 @@ func DisplayType(c *gin.Context, db *gorm.DB) {
 		"git_repo_name":     gitRepoName,
 		"download_filename": filename,
 		"queue_position":    queuePosition,
+		"thumbnail_url":     thumbnailURL,
+		"thumbnail_width":   thumbnailWidth,
+		"thumbnail_height":  thumbnailHeight,
 	})
+}
+
+func displayThumbnail(c *gin.Context, items []models.ArchiveItem, preference []string, shortID string) (string, int, int) {
+	ready, _ := selectThumbnailItem(items, preference)
+	if ready == nil {
+		return ThumbnailURL(c, shortID), 0, 0
+	}
+	return ThumbnailURL(c, shortID, ready.ThumbnailKey), ready.ThumbnailWidth, ready.ThumbnailHeight
 }
 
 func GetLogs(c *gin.Context, db *gorm.DB) {

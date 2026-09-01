@@ -280,7 +280,7 @@ func (c *Client) instagramGallery(ctx context.Context, targetURL string, logWrit
 	usage.Detail = fmt.Sprintf("gallery %d file(s), %d bytes", len(meta.Files), totalBytes)
 	c.recordUsage(db, usage)
 
-	thumb := galleryThumbnailFromDir(tmpDir, meta, logWriter)
+	thumb := galleryThumbnailFromDir(ctx, tmpDir, meta, logWriter)
 	if thumb == nil {
 		// /p/ URLs use the gallery route even when the post is one video. The
 		// dataset publishes the post's real cover separately from that MP4; it
@@ -552,11 +552,22 @@ func buildGalleryZip(dir string, meta *archivers.GalleryMetadata, record map[str
 	return zipPath, nil
 }
 
-// galleryThumbnailFromDir previews the post from its first still image,
-// matching the native gallery flow's choice of cover.
-func galleryThumbnailFromDir(dir string, meta *archivers.GalleryMetadata, logWriter io.Writer) *archivers.Thumbnail {
+// galleryThumbnailFromDir previews the post from its first usable media item,
+// matching the native gallery flow's choice of cover. Video frames come from
+// the full archived media instead of the provider's small CDN poster.
+func galleryThumbnailFromDir(ctx context.Context, dir string, meta *archivers.GalleryMetadata, logWriter io.Writer) *archivers.Thumbnail {
 	for _, file := range meta.Files {
-		if file.IsVideo || !strings.HasPrefix(file.ContentType, "image/") {
+		if file.IsVideo || strings.HasPrefix(file.ContentType, "video/") {
+			t, err := archivers.VideoFrameThumbnailFile(ctx, filepath.Join(dir, file.Name))
+			if err != nil {
+				fmt.Fprintf(logWriter, "Thumbnail frame from %s skipped: %v\n", file.Name, err)
+				continue
+			}
+			fmt.Fprintf(logWriter, "Thumbnail captured from first frame of %s: %dx%d, %d bytes\n",
+				file.Name, t.Width, t.Height, len(t.Data))
+			return t
+		}
+		if !strings.HasPrefix(file.ContentType, "image/") {
 			continue
 		}
 		f, err := os.Open(filepath.Join(dir, file.Name))

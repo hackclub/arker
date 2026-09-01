@@ -145,8 +145,8 @@ func TestServeThumbnailReturnsStoredImage(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); ct != thumbnail.ContentType {
 		t.Errorf("Content-Type = %q, want %q", ct, thumbnail.ContentType)
 	}
-	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age=86400") {
-		t.Errorf("Cache-Control = %q, want a long max-age for a generated thumbnail", cc)
+	if cc := w.Header().Get("Cache-Control"); cc != "public, max-age=0, must-revalidate" {
+		t.Errorf("Cache-Control = %q, want the mutable short-ID alias to revalidate", cc)
 	}
 	if w.Header().Get("ETag") == "" {
 		t.Error("missing ETag")
@@ -267,6 +267,26 @@ func TestServeThumbnailHonoursIfNoneMatch(t *testing.T) {
 	}
 	if second.Body.Len() != 0 {
 		t.Errorf("304 returned %d bytes, want empty", second.Body.Len())
+	}
+}
+
+func TestServeThumbnailVersionedURLIsImmutable(t *testing.T) {
+	db := newThumbTestDB(t)
+	store := storage.NewMemoryStorage()
+	blue := color.RGBA{20, 20, 200, 255}
+	seedCapture(t, db, store, "abc12", "https://example.com/page", []seedSpec{
+		{typ: "screenshot", status: "completed", thumbColor: &blue},
+	})
+	var item models.ArchiveItem
+	if err := db.Where("type = ?", "screenshot").First(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	path := "/thumb/abc12?v=" + thumbnailVersionToken(item.ThumbnailKey)
+	newThumbRouter(db, store).ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+	if got := w.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Errorf("Cache-Control = %q, want immutable caching for the current object token", got)
 	}
 }
 
@@ -446,5 +466,8 @@ func TestThumbnailURLIsAbsolute(t *testing.T) {
 
 	if got, want := ThumbnailURL(c, "abc12"), "https://archive.example.com/thumb/abc12"; got != want {
 		t.Errorf("ThumbnailURL = %q, want %q", got, want)
+	}
+	if got, want := ThumbnailURL(c, "abc12", "abc12/new-thumb.jpg"), "https://archive.example.com/thumb/abc12?v="+thumbnailVersionToken("abc12/new-thumb.jpg"); got != want {
+		t.Errorf("versioned ThumbnailURL = %q, want %q", got, want)
 	}
 }
