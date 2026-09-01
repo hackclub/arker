@@ -225,13 +225,7 @@ func hostLabel(raw string) string {
 // their own pages, where a root-relative path would resolve against the wrong
 // host.
 func ThumbnailURL(c *gin.Context, shortID string, thumbnailKey ...string) string {
-	scheme := "http"
-	if proto := c.GetHeader("X-Forwarded-Proto"); proto != "" {
-		scheme = proto
-	} else if c.Request != nil && c.Request.TLS != nil {
-		scheme = "https"
-	}
-	result := fmt.Sprintf("%s://%s/thumb/%s", scheme, c.Request.Host, shortID)
+	result := utils.BuildFullURL(c, "thumb/"+shortID)
 	if len(thumbnailKey) > 0 && thumbnailKey[0] != "" {
 		result += "?v=" + thumbnailVersionToken(thumbnailKey[0])
 	}

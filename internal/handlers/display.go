@@ -231,6 +231,7 @@ func DisplayDefault(c *gin.Context, db *gorm.DB) {
 		"thumbnail_url":     thumbnailURL,
 		"thumbnail_width":   thumbnailWidth,
 		"thumbnail_height":  thumbnailHeight,
+		"archive_url":       utils.BuildFullURL(c, shortID),
 	})
 }
 
@@ -304,6 +305,7 @@ func DisplayType(c *gin.Context, db *gorm.DB) {
 		"thumbnail_url":     thumbnailURL,
 		"thumbnail_width":   thumbnailWidth,
 		"thumbnail_height":  thumbnailHeight,
+		"archive_url":       utils.BuildFullURL(c, shortID),
 	})
 }
 

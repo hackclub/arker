@@ -470,4 +470,12 @@ func TestThumbnailURLIsAbsolute(t *testing.T) {
 	if got, want := ThumbnailURL(c, "abc12", "abc12/new-thumb.jpg"), "https://archive.example.com/thumb/abc12?v="+thumbnailVersionToken("abc12/new-thumb.jpg"); got != want {
 		t.Errorf("versioned ThumbnailURL = %q, want %q", got, want)
 	}
+
+	// Production's internal proxy hop can say http even though the public
+	// archive origin is permanently HTTPS.
+	c.Request.Host = "archive.hackclub.com"
+	c.Request.Header.Set("X-Forwarded-Proto", "http")
+	if got, want := ThumbnailURL(c, "abc12"), "https://archive.hackclub.com/thumb/abc12"; got != want {
+		t.Errorf("production ThumbnailURL = %q, want %q", got, want)
+	}
 }
