@@ -117,6 +117,9 @@ func (w *SocialThumbnailBackfillWorker) generate(ctx context.Context, args Socia
 	var logs bytes.Buffer
 	var thumb *archivers.Thumbnail
 	var nativeErr error
+	providerFirst := args.Type == utils.ArchiveTypeGalleryDl &&
+		w.provider != nil && w.provider.SupportsSocialThumbnail(args.URL, args.Type) &&
+		groupHasSource(items, models.ArchiveSourceBrightData)
 
 	if args.Type == utils.ArchiveTypeGalleryDl {
 		thumb, nativeErr = w.thumbnailFromStoredGalleries(items)
@@ -127,7 +130,7 @@ func (w *SocialThumbnailBackfillWorker) generate(ctx context.Context, args Socia
 
 	// yt-dlp can recover posters for video items and for all-video gallery
 	// bundles (Reddit/X/Instagram/Facebook) without downloading their media.
-	if thumb == nil && w.native != nil {
+	if thumb == nil && w.native != nil && !providerFirst {
 		thumb, nativeErr = w.native.RefreshSocialThumbnail(ctx, args.URL, &logs)
 	}
 	if thumb == nil && w.provider != nil && w.provider.SupportsSocialThumbnail(args.URL, args.Type) {
@@ -140,10 +143,21 @@ func (w *SocialThumbnailBackfillWorker) generate(ctx context.Context, args Socia
 		case providerErr == nil:
 			thumb = providerThumb
 		case errors.Is(providerErr, archivers.ErrSocialThumbnailUnavailable):
-			return w.markSocialFallback(targets, logger, providerErr.Error())
+			if !providerFirst {
+				return w.markSocialFallback(targets, logger, providerErr.Error())
+			}
+			nativeErr = providerErr
 		default:
 			return fmt.Errorf("social thumbnail provider refresh: %w", providerErr)
 		}
+	}
+	// A Bright Data artifact proves the native archive path already failed for
+	// this URL. Ask the provider that successfully described the stored post
+	// for its authored cover first; only retry native when that provider says no
+	// cover exists. This keeps large repairs source-faithful without spending a
+	// minute re-running a known-failing Instagram extractor for every reel.
+	if thumb == nil && providerFirst && w.native != nil {
+		thumb, nativeErr = w.native.RefreshSocialThumbnail(ctx, args.URL, &logs)
 	}
 
 	if thumb == nil {
@@ -166,6 +180,15 @@ func (w *SocialThumbnailBackfillWorker) generate(ctx context.Context, args Socia
 		"key", key, "width", thumb.Width, "height", thumb.Height,
 		"bytes", len(thumb.Data), "items", len(targets))
 	return nil
+}
+
+func groupHasSource(items []models.ArchiveItem, source string) bool {
+	for i := range items {
+		if items[i].Source == source {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *SocialThumbnailBackfillWorker) groupItems(identity, archiveType string) ([]models.ArchiveItem, error) {

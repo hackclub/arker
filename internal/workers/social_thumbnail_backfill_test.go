@@ -112,6 +112,9 @@ func TestSocialThumbnailBackfillProviderRescuesAllVideoGallery(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	videoBundle := backfillGalleryZIP(t, "001.mp4", []byte("video"), true)
 	item := seedSocialBackfillItem(t, db, store, "vid01", "https://www.instagram.com/p/VIDEO/", "https://www.instagram.com/p/VIDEO/", utils.ArchiveTypeGalleryDl, videoBundle)
+	if err := db.Model(&item).Update("source", models.ArchiveSourceBrightData).Error; err != nil {
+		t.Fatal(err)
+	}
 	poster := encodeBackfillPNG(t, 720, 1280, color.RGBA{1, 80, 220, 255})
 	native := &fakeSocialRefresher{err: errors.New("native refused")}
 	provider := &fakeSocialProvider{thumb: &archivers.Thumbnail{Data: poster, Width: 720, Height: 1280}, cost: 0.0015, supported: true}
@@ -127,8 +130,8 @@ func TestSocialThumbnailBackfillProviderRescuesAllVideoGallery(t *testing.T) {
 	if got.ThumbnailKind != models.ThumbnailKindSocialOriginal || got.ThumbnailWidth != 720 || got.ThumbnailHeight != 1280 {
 		t.Fatalf("provider poster not stored: %+v", got)
 	}
-	if native.calls != 1 || provider.calls != 1 {
-		t.Fatalf("calls native=%d provider=%d, want 1 each", native.calls, provider.calls)
+	if native.calls != 0 || provider.calls != 1 {
+		t.Fatalf("calls native=%d provider=%d, want the successful archive provider first", native.calls, provider.calls)
 	}
 }
 
