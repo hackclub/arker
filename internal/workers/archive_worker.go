@@ -433,7 +433,7 @@ func saveArchiveData(data io.Reader, key, ext, source string, storage storage.St
 		"extension":   ext,
 		"file_size":   fileSize,
 	}
-	// Source is only written when the archiver declared one (the Bright Data
+	// Source is only written when the archiver declared one (the Apify
 	// fallback does); native archivers leave the column at its default.
 	if source != "" {
 		updates["source"] = source

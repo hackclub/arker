@@ -97,8 +97,8 @@ type ArchiveItem struct {
 	// column to archive_items is a metadata-only change on existing prod rows.
 	Completeness string
 	// Source records which flow produced the stored artifact: "" or "native"
-	// for the regular archivers, "brightdata" when the Bright Data fallback
-	// rescued a failed native run. Provenance matters here: fallback artifacts
+	// for the regular archivers, "apify" (historically "brightdata") when the
+	// paid fallback rescued a failed native run. Provenance matters here: fallback artifacts
 	// can differ in fidelity (e.g. YouTube capped at the progressive stream),
 	// so reviews and audits need to find them without parsing logs.
 	Source string `gorm:"index"`
@@ -124,9 +124,21 @@ type ArchiveItem struct {
 
 // Archive item source values for ArchiveItem.Source.
 const (
-	ArchiveSourceNative     = "native"
+	ArchiveSourceNative = "native"
+	// ArchiveSourceApify marks artifacts produced by the Apify fallback.
+	ArchiveSourceApify = "apify"
+	// ArchiveSourceBrightData marks artifacts produced by the retired Bright
+	// Data fallback. No new rows carry it; readers must keep honoring it.
 	ArchiveSourceBrightData = "brightdata"
 )
+
+// IsFallbackSource reports whether an ArchiveItem.Source value names a paid
+// fallback provider rather than the native flow. Fallback artifacts can differ
+// in fidelity from native ones, so reviews, reuse and backfills treat every
+// provider alike here.
+func IsFallbackSource(source string) bool {
+	return source == ArchiveSourceApify || source == ArchiveSourceBrightData
+}
 
 // Thumbnail status values for ArchiveItem.ThumbnailStatus.
 const (
@@ -149,35 +161,51 @@ const (
 	ThumbnailKindSocialFallback = "social_fallback"
 )
 
-// BrightDataUsage records one billable Bright Data operation performed by the
-// fallback archiver, so operators can see exactly what the fallback is costing
-// without leaving Arker. One archive item can accumulate several rows: a
-// dataset trigger per attempt, or a scrape plus a browser session.
+// FallbackUsage records one billable operation performed by a paid fallback
+// provider, so operators can see exactly what the fallback is costing without
+// leaving Arker. One archive item can accumulate several rows: one actor run
+// per attempt, or a scrape plus a media download.
 //
-// CostUSD is an estimate computed from configured rates (the API key in use
-// cannot read Bright Data's billing endpoints); the true invoice lives in the
-// Bright Data dashboard. Rows are written for failures too, with Success=false,
-// because a failed attempt can still be billable and silent spend is the thing
-// this table exists to prevent.
-type BrightDataUsage struct {
+// Rows are written for failures too, with Success=false, because a failed
+// attempt can still be billable and silent spend is the thing this table
+// exists to prevent.
+//
+// Historical Bright Data rows (Provider "brightdata") were copied in from the
+// retired bright_data_usages table: Product is the Bright Data product,
+// ResourceID the dataset ID and OperationID the snapshot ID. CostUSD for those
+// rows is the rate-based estimate the old client computed. Apify rows carry
+// the actor ID, the run ID and the platform-reported usageTotalUsd.
+type FallbackUsage struct {
 	gorm.Model
 	ArchiveItemID uint   `gorm:"index"`
 	ShortID       string `gorm:"index"`
 	URL           string
-	// Product is the Bright Data product used: "web_scraper" (dataset trigger)
-	// or "browser_api" (remote browser session).
-	Product    string `gorm:"index"`
-	DatasetID  string
-	SnapshotID string
-	// Records is the number of dataset records returned (web_scraper only).
+	// Provider is the paid service: "apify" or (historical) "brightdata".
+	Provider string `gorm:"index"`
+	// Product is the provider's unit of work: an Apify actor ID such as
+	// "clockworks/tiktok-video-scraper", or a Bright Data product name.
+	Product string `gorm:"index"`
+	// ResourceID identifies the provider-side resource the run drew on (an
+	// Apify actor run's default key-value store, a Bright Data dataset).
+	ResourceID string
+	// OperationID identifies the provider-side operation (an Apify run ID, a
+	// Bright Data snapshot ID).
+	OperationID string
+	// Records is the number of dataset items returned.
 	Records int
-	// BytesTransferred is the measured media payload plus a fixed page-load
-	// overhead estimate (browser_api only).
+	// BytesTransferred is the media payload pulled from the provider itself
+	// (bytes served out of an Apify key-value store), not from platform CDNs.
 	BytesTransferred int64
 	CostUSD          float64
 	Success          bool
 	Detail           string
 }
+
+// Fallback provider values for FallbackUsage.Provider.
+const (
+	FallbackProviderApify      = "apify"
+	FallbackProviderBrightData = "brightdata"
+)
 
 // ArchiveItemLog stores immutable log chunks for an archive item.
 type ArchiveItemLog struct {

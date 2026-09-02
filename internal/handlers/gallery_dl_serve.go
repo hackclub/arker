@@ -374,8 +374,8 @@ func ServeGalleryRawMetadata(c *gin.Context, storageInstance storage.Storage, db
 	c.Header("X-Content-Type-Options", "nosniff")
 	response["provider"] = func() string {
 		for _, r := range records {
-			if r.Filename == "brightdata.json" {
-				return "brightdata"
+			if p := fallbackRawRecordProvider(r.Filename); p != "" {
+				return p
 			}
 		}
 		return galleryProvider(item.Source)
@@ -408,10 +408,23 @@ type galleryRawRecord struct {
 }
 
 func galleryProvider(source string) string {
-	if source == models.ArchiveSourceBrightData {
-		return "brightdata"
+	if models.IsFallbackSource(source) {
+		return source
 	}
 	return "gallery-dl"
+}
+
+// fallbackRawRecordProvider names the paid provider whose raw record a bundle
+// entry is, or "" for anything else. Apify bundles carry apify.json; Bright
+// Data bundles archived before the swap carry brightdata.json.
+func fallbackRawRecordProvider(filename string) string {
+	switch filename {
+	case "apify.json":
+		return models.ArchiveSourceApify
+	case "brightdata.json":
+		return models.ArchiveSourceBrightData
+	}
+	return ""
 }
 
 func normalizeGalleryRawFields(raw map[string]interface{}, normalized archivers.GalleryMetadata, photoCount int) {

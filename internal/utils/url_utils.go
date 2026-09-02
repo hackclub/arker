@@ -463,13 +463,13 @@ func ShouldCreateGalleryDLItem(rawURL string) bool {
 	}
 	if GalleryDLURLRequiresCookies(rawURL) && !MediaCookiesConfigured() {
 		// Without cookies the native run is guaranteed to fail, but a
-		// configured Bright Data fallback gives the item a real path to
+		// configured Apify fallback gives the item a real path to
 		// success, so it is worth creating (and paying for) after the native
 		// attempt fails. The fallback client answers for itself which sites it
 		// covers — Instagram, X, Pinterest and Facebook posts today — so a
 		// login-only site it cannot rescue stays excluded rather than queueing
 		// a certain failure.
-		return BrightDataCanRescue(rawURL, ArchiveTypeGalleryDl)
+		return FallbackCanRescue(rawURL, ArchiveTypeGalleryDl)
 	}
 	return true
 }

@@ -36,7 +36,7 @@ func TestApiArchiveResultRecognizesClaimedSocialShapes(t *testing.T) {
 		{"xstt1", "https://x.com/someone/status/1234567890123456789"},
 		{"ytsh1", "https://www.youtube.com/shorts/abc123"},
 		{"fbrl1", "https://www.facebook.com/reel/1234567890"},
-		// Facebook photo posts and post permalinks: unclaimed until the Bright
+		// Facebook photo posts and post permalinks: unclaimed until the Apify
 		// Data per-post pathway made them archivable, so a photo post used to
 		// read as a plain successful web capture.
 		{"fbph1", "https://www.facebook.com/photo/?fbid=123"},

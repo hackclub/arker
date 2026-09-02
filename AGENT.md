@@ -162,8 +162,8 @@ When using Amp with `make dev` running in another window:
 - `GET /gallery/:shortid/manifest` - Gallery capture status, normalized post metadata, and one absolute media URL per card in swipe order (the video manifest's counterpart; what API consumers should use). A post's soundtrack is reported in a top-level `music` block (`status` `stored`/`metadata_only`, title/artist/id, and `audio_url` when the bytes are in the bundle), never as a card: `media_count` is the slide count
 - `GET /gallery/:shortid/list` - JSON post metadata + media file list for a gallery-dl archive (viewer-facing, predates the manifest, shape frozen)
 - `GET /gallery/:shortid/file/*filepath` - Stream one media file out of a gallery-dl archive
-- `GET /video/:shortid/manifest` - Video capture status, normalized post metadata, and archived media URL. `metadata.media_type` is the platform's own delivery format (YouTube reports `short` or `video`), passed through verbatim from the provider record so it always matches `/video/:shortid/raw`; it is absent — never guessed — when the provider names none (Instagram, TikTok, Facebook, and the Bright Data fallbacks) or when the archive predates the field
-- `GET /video/:shortid/raw` - Sanitized raw yt-dlp/Bright Data provider record
+- `GET /video/:shortid/manifest` - Video capture status, normalized post metadata, and archived media URL. `metadata.media_type` is the platform's own delivery format (YouTube reports `short` or `video`), passed through verbatim from the provider record so it always matches `/video/:shortid/raw`; it is absent — never guessed — when the provider names none (Instagram, TikTok, Facebook, and the Apify fallbacks) or when the archive predates the field
+- `GET /video/:shortid/raw` - Sanitized raw yt-dlp/Apify provider record
 - `GET /video/:shortid/subtitle/:name` - One stored caption track (`name` is `<lang>.<format>`, e.g. `en.vtt`); only tracks the archive's own metadata records are servable
 - `GET /video/:shortid/transcript` - Plain-text transcript derived from the best caption track
 - `GET|HEAD /thumb/:shortid` - Preview image for a capture (the original social poster/image when available; otherwise a 480x270 JPEG page preview); falls back to an SVG placeholder and queues generation
@@ -205,10 +205,9 @@ git clone https://archive.hackclub.com/git/{shortid}
 - `YTDLP_IMPERSONATE` - Optional yt-dlp `--impersonate` target for Instagram/TikTok/Facebook video URLs. Docker images default to `chrome` and install `curl-cffi`; set empty to disable for manual installs without curl-cffi.
 - `GALLERYDL_USER_AGENT` - Optional `--user-agent` override for gallery-dl. Leave unset: gallery-dl sets a per-site User-Agent already (Instagram gets a current Chrome UA because it serves lower-quality video to anything else), and this replaces those defaults everywhere.
 - `GALLERYDL_SLEEP_REQUEST` - Optional `--sleep-request` override (`"1"`, `"0.5-1.5"`). Leave unset. gallery-dl ships per-site request intervals (Instagram waits a randomized 6-12s between API calls); because `--sleep-request` is a root config key it *replaces* those rather than acting as a floor, so any value below a site's own default makes throttling more likely, not less. Set it only to slow gallery-dl down further.
-- `BRIGHTDATA_API_KEY` - Enables the paid media fallback (see "Bright Data fallback"). Empty disables it entirely: no dataset is triggered, no browser session is opened, and login-only sites with no cookie jar go back to producing no media item at all.
-- `BRIGHTDATA_BROWSER_ZONE` / `BRIGHTDATA_BROWSER_ZONE_PASSWORD` / `BRIGHTDATA_CUSTOMER_ID` - Browser API credentials. Required only for the platforms whose media is IP-locked to the resolver (YouTube, TikTok video); the customer ID and zone password are resolved from the API at startup when unset. Without them those two fallbacks stay off and the rest keep working.
-- `BRIGHTDATA_SCRAPER_COST_PER_RECORD` / `BRIGHTDATA_BROWSER_COST_PER_GB` - Rates used to estimate spend in `BrightDataUsage` rows (defaults `0.0015` and `8.40`, Bright Data's pay-as-you-go prices). They do not change what is spent, only what Arker reports it spent.
-- `BRIGHTDATA_YT_CLIENT_NAME` / `BRIGHTDATA_YT_CLIENT_VERSION` - The Innertube client the YouTube fallback impersonates (`ANDROID` / a version string). This is the one YouTube-versioned knob in the fallback: when YouTube retires the version, updating the env var fixes it without a code change.
+- `APIFY_API_TOKEN` - Enables the paid media fallback (see "Apify fallback"). Empty disables it entirely: no actor is started, and login-only sites with no cookie jar go back to producing no media item at all.
+- `APIFY_RUN_TIMEOUT` - Bound on one actor run (default `10m`); a run still going at the deadline is aborted so it stops billing.
+- `APIFY_MAX_RUN_COST_USD` - A run whose platform-reported cost exceeds this (default `0.5`) is logged loudly. It does not stop the archive — the money is already spent — but a misconfigured actor cannot go unnoticed.
 
 - `ARKER_SUB_LANGS` - Optional override for which subtitle tracks yt-dlp fetches, passed to `--sub-langs` verbatim. Leave unset: the default is computed per video as its own language plus English, using **exact** codes. Do not "improve" it to `en.*` — yt-dlp matches these as anchored regexes and YouTube names machine-translated auto-captions `<target>-<source>`, so `en.*` also matches `en-de` ("English from German"); on a video offering ~150 translations that fetched three tracks and earned an HTTP 429. Use `all,-live_chat` to deliberately hoard every translation.
 - `LOGIN_TEXT` - Text to display under login form
@@ -316,7 +315,7 @@ served from `/thumb/{shortid}[/{type}]`.
   | `screenshot` | the full-page image it already decoded — no extra browser work | `CropTop` |
   | `yt-dlp` | the platform's own poster via `--write-thumbnail` (YouTube often serves **WebP**) | fit within 480px |
   | `gallery-dl` | the post's first still image, from the temp dir before it is zipped | fit within 480px |
-  | Bright Data video-only gallery | the provider record's published poster when available | fit within 480px |
+  | Apify video-only gallery | the provider record's published poster when available | fit within 480px |
   | `mhtml`, `git`, `itch` | none — the capture falls back to a sibling item's thumbnail | — |
 - **Only page screenshot previews are cropped.** They use `CropTop` because the
   page's identity is its header. Social images keep their complete framing.
@@ -325,7 +324,7 @@ served from `/thumb/{shortid}[/{type}]`.
   images use the explicit `/admin/backfill-social-thumbnails` operation and a
   one-worker `thumbnail_backfill` queue: it reads the first still from stored
   gallery ZIPs, asks yt-dlp for posters with media downloads disabled, and only
-  then uses the capped Bright Data poster resolver. Duplicate canonical
+  then uses the capped Apify poster resolver. Duplicate canonical
   URL/type captures share one object. `thumbnail_kind` makes the operation
   resumable: `social_preview` is contract-ready, a <=480px
   `social_original` is also accepted, and `social_fallback` retains an old
@@ -336,7 +335,7 @@ served from `/thumb/{shortid}[/{type}]`.
   `--skip-download` request, probes the immutable stored media, writes new
   append-only sidecars, and shares them across duplicate canonical URLs. A
   final attempt first recovers embedded schema/Open Graph facts from the
-  sibling MHTML snapshot, then uses a metadata-only Bright Data fallback for
+  sibling MHTML snapshot, then uses a metadata-only Apify fallback for
   covered platforms when the snapshot is insufficient. None of these paths
   downloads the video again.
 - **Never generate inline in a request** — a full-page screenshot reaches 60
@@ -381,7 +380,7 @@ Platform quirks worth knowing before changing a route:
 - **Vimeo** main-site URLs are login-only as of yt-dlp 2026.08.04. The archiver
   fetches `player.vimeo.com/video/<id>` instead (`utils.YtDlpFetchURL`),
   carrying the unlisted-video hash. Player pages carry less metadata: no upload
-  date and no engagement counts. Vimeo has **no Bright Data pathway and should
+  date and no engagement counts. Vimeo has **no Apify pathway and should
   not get one**: the Vimeo Videos dataset crawler errors on exactly the
   DRM-protected class the native path cannot fetch either. DRM is cryptographic
   rather than positional, so a different network position buys nothing.
@@ -396,7 +395,7 @@ Platform quirks worth knowing before changing a route:
   `separateGalleryAudio` renames it to `audio.<ext>` so it is never a slide:
   not in `files`, not in `file_count`, not in completeness (Instagram's count is
   decremented when the audio was stored). Attribution and status live in
-  `metadata.music` (`GalleryMusic`); the Bright Data builders do the same from
+  `metadata.music` (`GalleryMusic`); the Apify builders do the same from
   the record's `music` block (TikTok) or `audio`/`audio_url` (Instagram, which
   the dataset has only ever returned as null). Licensed TikTok tracks arrive as
   M4A whose ISO BMFF brand is `M4A `; the sniffer maps that to `audio/mp4`.
@@ -416,55 +415,55 @@ Platform quirks worth knowing before changing a route:
 - **Login-only sites** (Instagram feed posts, X, Pinterest, Facebook posts) get
   no gallery-dl item without a cookie jar: the run cannot succeed and would
   spend rate limit proving it. The API reports `authentication_required` for
-  those. The exception is a site the Bright Data fallback covers — Instagram,
+  those. The exception is a site the Apify fallback covers — Instagram,
   X, Pinterest and Facebook posts today — which does get an item when the
   fallback is configured, because the
   guaranteed-failed native run is then followed by one that can actually
   succeed. Routing asks the fallback client itself
-  (`utils.SetBrightDataMediaFallback` carries `Client.SupportsFallback`), so
+  (`utils.SetMediaFallback` carries `Client.SupportsFallback`), so
   coverage lives in one place instead of two lists that can drift.
 
-### Bright Data fallback
+### Apify fallback
 
-`internal/brightdata` buys media the free path cannot get. It only ever runs
-after a recorded native failure, only for URLs it can plausibly rescue, and it
-writes a `BrightDataUsage` row per billable operation — including failed ones,
-because a failed attempt can still be billable and silent spend is the thing
-that table exists to prevent. Costs are estimates from configured rates
-(`BRIGHTDATA_SCRAPER_COST_PER_RECORD`, `BRIGHTDATA_BROWSER_COST_PER_GB`); the
-scoped API key cannot read Bright Data's billing endpoints.
+`internal/apify` buys media the free path cannot get. It only ever runs after a
+recorded native failure, only for URLs it can plausibly rescue, and it writes a
+`FallbackUsage` row per actor run — including failed ones, because a failed
+run is still billed for its start and silent spend is the thing that table
+exists to prevent. Costs are the platform-reported `usageTotalUsd` of each
+run, not estimates. `APIFY_MAX_RUN_COST_USD` only warns; it cannot un-spend.
 
-| Platform | Item type | How the bytes are obtained |
-|---|---|---|
-| Instagram reel / feed post | yt-dlp, gallery-dl | Web Scraper dataset, then direct CDN download |
-| YouTube video | yt-dlp | Browser API session: in-page Innertube resolve + ranged fetch |
-| TikTok video | yt-dlp | Dataset resolves the URL; Browser API session fetches the bytes |
-| TikTok photo post | gallery-dl | Dataset, direct CDN download, browser session per refused still |
-| Reddit post | gallery-dl | Dataset, then direct download of the muxed `packaged-media.redd.it` MP4 |
-| X status | gallery-dl | Dataset, then direct `pbs.twimg.com` / `video.twimg.com` download |
-| Pinterest pin | gallery-dl | Dataset, then direct `i.pinimg.com` download |
-| Facebook video permalink | yt-dlp | Dataset, then direct `video.fbcdn.net` download |
-| Facebook photo post / post permalink | gallery-dl | Dataset, then direct `scontent` / `video.fbcdn.net` download |
+| Platform | Item type | Actor | How the bytes are obtained |
+|---|---|---|---|
+| Instagram reel / feed post | yt-dlp, gallery-dl | `data-slayer/instagram-post-details` | direct CDN download; soundtrack from `music_metadata` |
+| TikTok video | yt-dlp | `clockworks/tiktok-video-scraper` | actor stores the MP4 in its key-value store (IP-locked CDN) |
+| TikTok photo post | gallery-dl | `clockworks/tiktok-video-scraper` | direct CDN download, stored copy per refused still |
+| YouTube video | yt-dlp | `epctex/youtube-video-downloader` + `streamers/youtube-scraper` (facts, run concurrently; oEmbed if it fails) | downloader stores the MP4 in its key-value store |
+| Facebook video / reel | yt-dlp | `apify/facebook-posts-scraper` | direct `fbcdn` download; a reel that comes back in post shape is retried as `watch?v=` |
+| Facebook post | gallery-dl | `apify/facebook-posts-scraper` | direct `scontent` download, crop parameter stripped |
+| Reddit post | gallery-dl | `harshmaur/reddit-scraper` | `fallback_url` video + derived `CMAF_AUDIO_128.mp4` muxed with ffmpeg; HLS backstop |
+| X status | gallery-dl | `kaitoeasyapi/twitter-x-data-tweet-scraper-pay-per-result-cheapest` | `pbs.twimg.com?name=orig` / best-bitrate `video.twimg.com` MP4; mock rows filtered by ID |
+| Pinterest pin | gallery-dl | `silentflow/pinterest-scraper-ppr` | `/originals/` image; progressive 720p MP4, HLS backstop |
 
 Vimeo is deliberately absent: see the Vimeo note under platform routing.
 
-The split that matters: **YouTube and TikTok sign their media against the
-resolving IP**, so those bytes can only be fetched from inside a Bright Data
-browser session (`internal/brightdata/browser_fetch.go`) and need
-`BRIGHTDATA_BROWSER_ZONE` credentials. Instagram, Reddit, X, Pinterest and
-Facebook sign but do not IP-lock, so only the resolution is paid for and the
-download runs over Arker's own connection.
-
-Two Facebook-specific traps, both verified against live records: a video
-attachment's `url` is the post's page rather than its media (the bytes are in
-`video_url`), and a video post carries a second `audio` attachment holding the
-DASH audio stream, which is not a second asset of the post.
+Store-served bytes (TikTok, YouTube) are counted in `BytesTransferred` on the
+usage row so provider-side transfer stays visible. The same client also
+implements the social-thumbnail contract (`ResolveSocialThumbnail`: poster only,
+no media download, no store copies; YouTube posters come free from `i.ytimg.com`)
+and the stored-video metadata refresh (`RefreshStoredVideoMetadata`: record
+only, historical media facts preserved).
 
 Raw provider records are sanitized before storage, in the sidecar and inside
 the gallery ZIP: on a signed media host every query parameter is redacted,
 because the credential-bearing parameter names are provider-specific
 (`s`/`e`/`v` on redd.it, `policy`/`signature`/`tk` on TikTok's CDNs) and
-guessing which one is the secret is how one gets left behind.
+guessing which one is the secret is how one gets left behind. Fixtures under
+`internal/apify/testdata` are real records with signed values replaced by
+`SYNTHETIC-NOT-A-REAL-SECRET`; the tests assert that marker never reaches an
+artifact.
+
+Archives rescued before the swap carry `source = "brightdata"` and a
+`brightdata.json` record; readers keep honoring both (`models.IsFallbackSource`).
 
 ### Database Changes
 1. Update models in `internal/models/models.go`

@@ -107,8 +107,8 @@ func projectGalleryVideo(store storage.Storage, db *gorm.DB, shortID string) (*g
 	if provenance == "" {
 		provenance = models.ArchiveSourceNative
 	}
-	if item.Source == models.ArchiveSourceBrightData {
-		provider = "brightdata"
+	if models.IsFallbackSource(item.Source) {
+		provider = item.Source
 	}
 	video := archivers.VideoMetadata{
 		SchemaVersion:        archivers.VideoMetadataSchemaVersion,

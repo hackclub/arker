@@ -392,13 +392,13 @@ func TestCostAccountingSumsUsageRowsIncludingFailures(t *testing.T) {
 		t.Fatalf("load item: %v", err)
 	}
 	db.Model(&item).Updates(map[string]any{
-		"storage_key": "cost1/yt-dlp-abcd.mp4", "source": models.ArchiveSourceBrightData,
+		"storage_key": "cost1/yt-dlp-abcd.mp4", "source": models.ArchiveSourceApify,
 	})
 
-	rows := []models.BrightDataUsage{
-		{ArchiveItemID: item.ID, ShortID: "cost1", Product: "web_scraper", Records: 3, CostUSD: 0.0045, Success: true},
-		{ArchiveItemID: item.ID, ShortID: "cost1", Product: "web_scraper", Records: 1, CostUSD: 0.0015, Success: false},
-		{ArchiveItemID: item.ID, ShortID: "cost1", Product: "browser_api", BytesTransferred: 5_000_000, CostUSD: 0.042, Success: false},
+	rows := []models.FallbackUsage{
+		{ArchiveItemID: item.ID, ShortID: "cost1", Provider: "apify", Product: "epctex/youtube-video-downloader", Records: 3, CostUSD: 0.0045, Success: true},
+		{ArchiveItemID: item.ID, ShortID: "cost1", Provider: "apify", Product: "epctex/youtube-video-downloader", Records: 1, CostUSD: 0.0015, Success: false},
+		{ArchiveItemID: item.ID, ShortID: "cost1", Provider: "apify", Product: "streamers/youtube-scraper", BytesTransferred: 5_000_000, CostUSD: 0.042, Success: false},
 	}
 	for i := range rows {
 		if err := db.Create(&rows[i]).Error; err != nil {
@@ -415,8 +415,8 @@ func TestCostAccountingSumsUsageRowsIncludingFailures(t *testing.T) {
 	if cost["currency"] != "USD" {
 		t.Errorf("currency = %v, want USD", cost["currency"])
 	}
-	if cost["estimated"] != true {
-		t.Error("estimated = false, but Bright Data costs are computed from configured rates")
+	if cost["estimated"] != false {
+		t.Error("estimated = true, but Apify reports the billed cost of every run")
 	}
 	total, _ := cost["total_usd"].(float64)
 	const wantTotal = 0.0045 + 0.0015 + 0.042
@@ -438,9 +438,9 @@ func TestCostAccountingSumsUsageRowsIncludingFailures(t *testing.T) {
 		byProduct[key] = row
 	}
 
-	scraper, ok := byProduct["web_scraper"]
+	scraper, ok := byProduct["epctex/youtube-video-downloader"]
 	if !ok {
-		t.Fatal("no web_scraper breakdown row")
+		t.Fatal("no downloader breakdown row")
 	}
 	if ops, _ := scraper["operations"].(float64); ops != 2 {
 		t.Errorf("web_scraper operations = %v, want 2 (successes and failures both count)", ops)
@@ -452,9 +452,9 @@ func TestCostAccountingSumsUsageRowsIncludingFailures(t *testing.T) {
 		t.Errorf("web_scraper records = %v, want 4", records)
 	}
 
-	browser, ok := byProduct["browser_api"]
+	browser, ok := byProduct["streamers/youtube-scraper"]
 	if !ok {
-		t.Fatal("no browser_api breakdown row")
+		t.Fatal("no scraper breakdown row")
 	}
 	if successes, _ := browser["successes"].(float64); successes != 0 {
 		t.Errorf("browser_api successes = %v, want 0", successes)
@@ -470,9 +470,9 @@ func TestCostAccountingSumsUsageRowsIncludingFailures(t *testing.T) {
 	if costUSD, _ := native["cost_usd"].(float64); costUSD != 0 {
 		t.Errorf("native cost_usd = %v, want 0", costUSD)
 	}
-	// The item was rescued by Bright Data, so it is not a native success.
+	// The item was rescued by Apify, so it is not a native success.
 	if successes, _ := native["successes"].(float64); successes != 0 {
-		t.Errorf("native successes = %v, want 0 for a Bright Data-sourced item", successes)
+		t.Errorf("native successes = %v, want 0 for an Apify-sourced item", successes)
 	}
 }
 
@@ -502,15 +502,15 @@ func TestCostIsZeroAndNotEstimatedWithoutPaidOperations(t *testing.T) {
 	}
 }
 
-// TestBrightDataRescueIsReportedAsFallbackProvenance is contract #3's
+// TestFallbackRescueIsReportedAsFallbackProvenance is contract #3's
 // disclosure rule: a rescued artifact can differ in fidelity, so a caller has
 // to be able to tell.
-func TestBrightDataRescueIsReportedAsFallbackProvenance(t *testing.T) {
+func TestFallbackRescueIsReportedAsFallbackProvenance(t *testing.T) {
 	db := newHandlerLogTestDB(t)
 	store := storage.NewMemoryStorage()
 	capture := seedRealVideoCapture(t, db, store, "bd001", "instagram_reel")
 	if err := db.Model(&models.ArchiveItem{}).Where("capture_id = ?", capture.ID).
-		Update("source", models.ArchiveSourceBrightData).Error; err != nil {
+		Update("source", models.ArchiveSourceApify).Error; err != nil {
 		t.Fatalf("update source: %v", err)
 	}
 
@@ -521,8 +521,8 @@ func TestBrightDataRescueIsReportedAsFallbackProvenance(t *testing.T) {
 	if !ok {
 		t.Fatalf("provenance = %#v", social["provenance"])
 	}
-	if provenance["source"] != "brightdata" || provenance["mode"] != "fallback" {
-		t.Errorf("provenance = %#v, want brightdata/fallback", provenance)
+	if provenance["source"] != "apify" || provenance["mode"] != "fallback" {
+		t.Errorf("provenance = %#v, want apify/fallback", provenance)
 	}
 }
 

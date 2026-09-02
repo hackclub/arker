@@ -187,18 +187,23 @@ type socialProvenance struct {
 	// populated when something actually went wrong, and always best-effort —
 	// logs are rotated and an empty string means "not recorded", never "clean".
 	LastFailureReason string `json:"last_failure_reason,omitempty"`
-	// FallbackOps summarizes the paid Bright Data work done for this item. Cost
-	// is the same estimate the top-level cost block reports; the Bright Data
-	// dashboard remains the invoice of record.
+	// FallbackOps summarizes the paid fallback work done for this item. Cost
+	// is the same figure the top-level cost block reports; the provider's
+	// billing dashboard remains the invoice of record.
 	FallbackOps []socialFallbackOp `json:"fallback_ops,omitempty"`
 }
 
 type socialFallbackOp struct {
-	Product          string   `json:"product"`
-	Operations       int64    `json:"operations"`
-	Successes        int64    `json:"successes"`
-	Records          int64    `json:"records,omitempty"`
-	BytesTransferred int64    `json:"bytes_transferred,omitempty"`
+	Provider         string `json:"provider"`
+	Product          string `json:"product"`
+	Operations       int64  `json:"operations"`
+	Successes        int64  `json:"successes"`
+	Records          int64  `json:"records,omitempty"`
+	BytesTransferred int64  `json:"bytes_transferred,omitempty"`
+	// OperationIDs are the provider-side operation identifiers (Apify run IDs;
+	// Bright Data snapshot IDs for historical rows). snapshot_ids is the
+	// historical name of the same field and is kept for existing readers.
+	OperationIDs     []string `json:"operation_ids,omitempty"`
 	SnapshotIDs      []string `json:"snapshot_ids,omitempty"`
 	EstimatedCostUSD float64  `json:"estimated_cost_usd"`
 }
@@ -272,12 +277,12 @@ func buildArchiveResultCost(db *gorm.DB, items []models.ArchiveItem) (archiveRes
 	cost := archiveResultCost{
 		Currency:  "USD",
 		Breakdown: []archiveResultCostBreakdown{{Provider: "native", Operations: int64(len(items)), CostUSD: 0, Estimated: false}},
-		Note:      "Native archive operations are free. Bright Data costs are estimates computed from configured rates; the Bright Data dashboard is the invoice of record.",
+		Note:      "Native archive operations are free. Apify costs are the platform-reported run cost; historical Bright Data rows are estimates from configured rates. The provider's billing dashboard is the invoice of record.",
 	}
 	ids := make([]uint, 0, len(items))
 	for _, item := range items {
 		ids = append(ids, item.ID)
-		if item.Status == "completed" && item.Source != models.ArchiveSourceBrightData {
+		if item.Status == "completed" && !models.IsFallbackSource(item.Source) {
 			cost.Breakdown[0].Successes++
 		}
 	}
@@ -285,6 +290,7 @@ func buildArchiveResultCost(db *gorm.DB, items []models.ArchiveItem) (archiveRes
 		return cost, nil
 	}
 	var rows []struct {
+		Provider         string
 		Product          string
 		Operations       int64
 		Successes        int64
@@ -292,15 +298,24 @@ func buildArchiveResultCost(db *gorm.DB, items []models.ArchiveItem) (archiveRes
 		BytesTransferred int64
 		CostUSD          float64
 	}
-	if err := db.Model(&models.BrightDataUsage{}).
-		Select("product", "COUNT(*) AS operations", "COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END), 0) AS successes", "COALESCE(SUM(records), 0) AS records", "COALESCE(SUM(bytes_transferred), 0) AS bytes_transferred", "COALESCE(SUM(cost_usd), 0) AS cost_usd").
-		Where("archive_item_id IN ?", ids).Group("product").Order("product").Scan(&rows).Error; err != nil {
+	if err := db.Model(&models.FallbackUsage{}).
+		Select("provider", "product", "COUNT(*) AS operations", "COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END), 0) AS successes", "COALESCE(SUM(records), 0) AS records", "COALESCE(SUM(bytes_transferred), 0) AS bytes_transferred", "COALESCE(SUM(cost_usd), 0) AS cost_usd").
+		Where("archive_item_id IN ?", ids).Group("provider").Group("product").Order("provider").Order("product").Scan(&rows).Error; err != nil {
 		return archiveResultCost{}, err
 	}
 	for _, row := range rows {
-		cost.Breakdown = append(cost.Breakdown, archiveResultCostBreakdown{Provider: "brightdata", Product: row.Product, Operations: row.Operations, Successes: row.Successes, Records: row.Records, BytesTransferred: row.BytesTransferred, CostUSD: row.CostUSD, Estimated: true})
+		provider := row.Provider
+		if provider == "" {
+			provider = models.FallbackProviderBrightData
+		}
+		// Bright Data costs were rate-based estimates; Apify reports the
+		// billed amount for each run.
+		estimated := provider == models.FallbackProviderBrightData
+		cost.Breakdown = append(cost.Breakdown, archiveResultCostBreakdown{Provider: provider, Product: row.Product, Operations: row.Operations, Successes: row.Successes, Records: row.Records, BytesTransferred: row.BytesTransferred, CostUSD: row.CostUSD, Estimated: estimated})
 		cost.TotalUSD += row.CostUSD
-		cost.Estimated = true
+		if estimated {
+			cost.Estimated = true
+		}
 	}
 	return cost, nil
 }
@@ -323,14 +338,14 @@ func buildSocialPost(c *gin.Context, store storage.Storage, db *gorm.DB, capture
 		result.Failure = &socialFailure{Code: code, Message: message, Retryable: retryable}
 		return result
 	}
-	if social.Source == models.ArchiveSourceBrightData {
-		result.Provenance.Source, result.Provenance.Mode = "brightdata", "fallback"
+	if models.IsFallbackSource(social.Source) {
+		result.Provenance.Source, result.Provenance.Mode = social.Source, "fallback"
 	}
 	// Attempts and paid fallback work describe how the archive was obtained, so
 	// they are reported whatever the outcome — including for an item that is
 	// still running or has failed outright.
 	result.Provenance.Attempts = social.RetryCount
-	result.Provenance.FallbackOps = brightDataOps(db, social.ID)
+	result.Provenance.FallbackOps = fallbackOps(db, social.ID)
 
 	switch social.Status {
 	case "processing":
@@ -625,25 +640,30 @@ func sanitizeFailureReason(line string) string {
 	return utils.TruncateForLog(strings.Join(strings.Fields(line), " "), 300)
 }
 
-// brightDataOps summarizes the paid fallback work recorded against one item.
-// Rows are few (a dataset trigger per attempt, or a scrape plus a browser
-// session), so they are aggregated in Go rather than in SQL: it keeps snapshot
-// ID collection dialect-independent and the ordering deterministic.
-func brightDataOps(db *gorm.DB, itemID uint) []socialFallbackOp {
+// fallbackOps summarizes the paid fallback work recorded against one item.
+// Rows are few (an actor run per attempt, or a scrape plus a download), so
+// they are aggregated in Go rather than in SQL: it keeps operation ID
+// collection dialect-independent and the ordering deterministic.
+func fallbackOps(db *gorm.DB, itemID uint) []socialFallbackOp {
 	if db == nil || itemID == 0 {
 		return nil
 	}
-	var rows []models.BrightDataUsage
+	var rows []models.FallbackUsage
 	if err := db.Where("archive_item_id = ?", itemID).Order("id").Limit(200).Find(&rows).Error; err != nil || len(rows) == 0 {
 		return nil
 	}
 	byProduct := make(map[string]*socialFallbackOp, len(rows))
 	seenSnapshot := make(map[string]bool, len(rows))
 	for _, row := range rows {
-		op, ok := byProduct[row.Product]
+		provider := row.Provider
+		if provider == "" {
+			provider = models.FallbackProviderBrightData
+		}
+		key := provider + "\x00" + row.Product
+		op, ok := byProduct[key]
 		if !ok {
-			op = &socialFallbackOp{Product: row.Product}
-			byProduct[row.Product] = op
+			op = &socialFallbackOp{Provider: provider, Product: row.Product}
+			byProduct[key] = op
 		}
 		op.Operations++
 		if row.Success {
@@ -653,16 +673,22 @@ func brightDataOps(db *gorm.DB, itemID uint) []socialFallbackOp {
 		op.BytesTransferred += row.BytesTransferred
 		// Failed operations are billable too, so their cost counts.
 		op.EstimatedCostUSD += row.CostUSD
-		if row.SnapshotID != "" && !seenSnapshot[row.Product+"\x00"+row.SnapshotID] {
-			seenSnapshot[row.Product+"\x00"+row.SnapshotID] = true
-			op.SnapshotIDs = append(op.SnapshotIDs, row.SnapshotID)
+		if row.OperationID != "" && !seenSnapshot[key+"\x00"+row.OperationID] {
+			seenSnapshot[key+"\x00"+row.OperationID] = true
+			op.OperationIDs = append(op.OperationIDs, row.OperationID)
+			op.SnapshotIDs = op.OperationIDs
 		}
 	}
 	ops := make([]socialFallbackOp, 0, len(byProduct))
 	for _, op := range byProduct {
 		ops = append(ops, *op)
 	}
-	sort.Slice(ops, func(i, j int) bool { return ops[i].Product < ops[j].Product })
+	sort.Slice(ops, func(i, j int) bool {
+		if ops[i].Provider != ops[j].Provider {
+			return ops[i].Provider < ops[j].Provider
+		}
+		return ops[i].Product < ops[j].Product
+	})
 	return ops
 }
 
@@ -805,8 +831,8 @@ func buildGallerySocial(c *gin.Context, store storage.Storage, shortID string, i
 	out.BundleURL = &bundle
 	provider := "gallery-dl"
 	for _, f := range zipReader.File {
-		if f.Name == "brightdata.json" {
-			provider = "brightdata"
+		if p := fallbackRawRecordProvider(f.Name); p != "" {
+			provider = p
 			break
 		}
 	}

@@ -1,0 +1,94 @@
+[
+ {
+  "type": "pin",
+  "id": "31103053674023753",
+  "url": "https://www.pinterest.com/pin/31103053674023753/",
+  "seoTitle": "Videos de natureza para baixar | Vídeo da natureza, Paisagens naturais, Cachoeiras naturais",
+  "seoDescription": "13 de jul. de 2026 — Vídeos de paisagens, Lindas paisagens, Paisagem",
+  "imageUrl": "https://i.pinimg.com/originals/68/ff/79/68ff79682966056af0a80118a7898933.jpg",
+  "imageUrls": {
+   "original": "https://i.pinimg.com/originals/68/ff/79/68ff79682966056af0a80118a7898933.jpg",
+   "736x": "https://i.pinimg.com/736x/68/ff/79/68ff79682966056af0a80118a7898933.jpg",
+   "564x": "https://i.pinimg.com/564x/68/ff/79/68ff79682966056af0a80118a7898933.jpg",
+   "474x": "https://i.pinimg.com/474x/68/ff/79/68ff79682966056af0a80118a7898933.jpg",
+   "236x": "https://i.pinimg.com/236x/68/ff/79/68ff79682966056af0a80118a7898933.jpg",
+   "170x": "https://i.pinimg.com/236x/68/ff/79/68ff79682966056af0a80118a7898933.jpg",
+   "thumbnail": "https://i.pinimg.com/236x/68/ff/79/68ff79682966056af0a80118a7898933.jpg"
+  },
+  "videoUrl": "https://v1.pinimg.com/videos/iht/hls/v2/c3/ba/ec/c3baec1477f8a6756b2bd791c355237e.m3u8",
+  "isVideo": true,
+  "videos": {
+   "videoList": {
+    "V_HLSV3_MOBILE": {
+     "url": "https://v1.pinimg.com/videos/iht/hls/v2/c3/ba/ec/c3baec1477f8a6756b2bd791c355237e.m3u8",
+     "width": 720,
+     "height": 1280,
+     "thumbnail": "https://i.pinimg.com/videos/thumbnails/originals/c3/ba/ec/c3baec1477f8a6756b2bd791c355237e.0000000.jpg"
+    }
+   }
+  },
+  "saves": 4756,
+  "repinCount": 2710,
+  "comments": 252,
+  "reactions": 4756,
+  "createdAt": "Wed, 09 Apr 2025 01:57:57 +0000",
+  "pinner": {
+   "id": "31103191085010559",
+   "username": "biodiv0106",
+   "fullName": "Наталья",
+   "firstName": "Наталья",
+   "followerCount": 28,
+   "profileUrl": "https://www.pinterest.com/biodiv0106/",
+   "imageUrl": "https://i.pinimg.com/75x75_RS/ed/cb/88/edcb8803d88d259459577baef4e535b0.jpg"
+  },
+  "nativeCreator": {
+   "id": "819022019642406706",
+   "username": "Carl0s_Alberto",
+   "fullName": "Carlos Alberto",
+   "firstName": "Carlos Alberto",
+   "followerCount": 7260,
+   "profileUrl": "https://www.pinterest.com/Carl0s_Alberto/",
+   "imageUrl": "https://i.pinimg.com/75x75_RS/81/2e/de/812ededb45d15658f289590b3cf6c858.jpg"
+  },
+  "via": {
+   "id": "321092785841125821",
+   "username": "lauralsatchwell",
+   "fullName": "Laura Satchwell",
+   "firstName": "Laura",
+   "followerCount": 27,
+   "profileUrl": "https://www.pinterest.com/lauralsatchwell/",
+   "imageUrl": "https://i.pinimg.com/75x75_RS/9f/44/6b/9f446bfdba007b49a9b978924e82706f.jpg"
+  },
+  "board": {
+   "id": "31103122365855045",
+   "name": "Понравившееся",
+   "url": "https://www.pinterest.com/biodiv0106/%D0%BF%D0%BE%D0%BD%D1%80%D0%B0%D0%B2%D0%B8%D0%B2%D1%88%D0%B5%D0%B5%D1%81%D1%8F/",
+   "imageUrl": "https://i.pinimg.com/200x150/ca/78/48/ca7848fe497a391f1b06866fe88f4c11.jpg",
+   "owner": {
+    "id": "31103191085010559",
+    "username": "biodiv0106",
+    "fullName": "Наталья",
+    "firstName": "Наталья",
+    "followerCount": 28,
+    "profileUrl": "https://www.pinterest.com/biodiv0106/",
+    "imageUrl": "https://i.pinimg.com/75x75_RS/ed/cb/88/edcb8803d88d259459577baef4e535b0.jpg"
+   }
+  },
+  "domain": "Uploaded by user",
+  "trackingLink": "CwABAAAAEDExNDgzOTkwMDEyNDgwOTkLAAcAAAAPdW5rbm93bi91bmtub3duAA",
+  "dominantColor": "#1d3634",
+  "width": 720,
+  "height": 1280,
+  "priceCurrency": "USD",
+  "isRepin": true,
+  "isStoryPin": true,
+  "storyPinData": {
+   "pageCount": 1,
+   "pages": [
+    "593033171"
+   ]
+  },
+  "scrapedAt": "2026-09-02T19:23:50.358303291Z",
+  "source": "pin_detail"
+ }
+]

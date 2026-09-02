@@ -143,8 +143,9 @@ func separateGalleryAudio(dir string, media []string, sidecars map[string]string
 //   - TikTok: a "music" object {id, title, authorName, original, duration}
 //   - Instagram: flat audio_title / audio_artist / audio_user /
 //     audio_duration, written by gallery-dl's _extract_audio
-//   - Bright Data TikTok: a "music" object with lowercase keys
-//     {id, title, authorname, original, playurl}
+//   - Historical Bright Data TikTok bundles: a "music" object with lowercase
+//     keys {id, title, authorname, original, playurl}. Apify bundles do not
+//     go through here; the builder sets GalleryMusic directly.
 func galleryMusicFromSidecar(raw map[string]interface{}) *GalleryMusic {
 	if raw == nil {
 		return nil

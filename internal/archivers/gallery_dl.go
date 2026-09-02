@@ -458,7 +458,7 @@ func galleryMissingIndices(expected int, media []string) []int {
 }
 
 // galleryFileIndex reads the leading slide number off a stored filename.
-// Returns 0 for any name that is not numbered, so a Bright Data or legacy
+// Returns 0 for any name that is not numbered, so a fallback or legacy
 // layout degrades to "cannot tell which are missing" instead of guessing.
 func galleryFileIndex(name string) int {
 	base := name

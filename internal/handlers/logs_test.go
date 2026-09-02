@@ -24,7 +24,7 @@ func newHandlerLogTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
 	}
-	if err := db.AutoMigrate(&models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.ArchiveItemLog{}, &models.BrightDataUsage{}); err != nil {
+	if err := db.AutoMigrate(&models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.ArchiveItemLog{}, &models.FallbackUsage{}); err != nil {
 		t.Fatalf("migrate sqlite db: %v", err)
 	}
 	return db

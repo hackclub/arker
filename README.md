@@ -10,7 +10,7 @@ The API-key-protected `POST /api/v1/archive` returns the original public `url`
 plus `short_id` and `result_url`. Poll `GET /api/v1/archive/:shortid` for the
 schema-versioned unified result: all capture items, normalized social metadata,
 Arker-stored media URLs, provenance, sanitized provider-metadata links, and a
-USD cost summary. Native operations are surfaced as free; Bright Data usage
+USD cost summary. Native operations are surfaced as free; Apify usage
 includes successful and failed billable attempts and is marked as estimated.
 Known captures return 200 even while pending or after a partial/failed result;
 unknown IDs return 404. Capture aliases expose both requested and canonical IDs.
@@ -68,7 +68,7 @@ Arker shells out to `yt-dlp` for YouTube/Vimeo/Instagram-reel/TikTok/Facebook-st
 
 Each new video capture stores three durable objects: the playable/remuxed media,
 a normalized provider-neutral post record, and the sanitized raw yt-dlp or
-Bright Data provider record. `GET /video/:shortid/manifest` returns the capture
+Apify provider record. `GET /video/:shortid/manifest` returns the capture
 status, the existing `/archive/:shortid/yt-dlp` media URL, and normalized
 metadata. `GET /video/:shortid/raw` returns the sanitized raw record for audits.
 Older completed videos remain playable; their manifest explicitly returns
@@ -101,7 +101,7 @@ two-worker queue makes one bounded, media-disabled yt-dlp request, probes the
 already-stored video for intrinsic dimensions/duration, and shares fresh
 normalized/raw sidecars across duplicate canonical URLs. On the final attempt,
 it first recovers embedded post facts from the sibling MHTML captured with the
-video; covered platform failures then use a metadata-only Bright Data lookup.
+video; covered platform failures then use a metadata-only Apify lookup.
 That lookup buys the post record (or a YouTube page resolution) but never
 downloads or replaces the stored video. `GET` on the same endpoint reports
 coverage and queue progress.
@@ -153,45 +153,34 @@ override to "be safe": gallery-dl already waits a randomized 6-12 seconds betwee
 Instagram API calls, and that setting replaces the per-site default rather than
 acting as a floor.
 
-### Bright Data Fallback (Instagram & YouTube)
+### Apify Fallback (Instagram, TikTok, YouTube, Facebook, Reddit, X, Pinterest)
 
 The native yt-dlp/gallery-dl flows fail in ways Arker cannot fix from its own
 network position: Instagram login walls and account throttles, YouTube
-geo-blocks and bot checks. With a Bright Data API key configured, a failed
-native run on an Instagram or YouTube URL gets one paid second chance. The
-native flows always run first and their successes are always preferred — the
-fallback spends money only after a native failure.
+geo-blocks and bot checks. With an Apify API token configured, a failed native
+run on a covered URL gets one paid second chance. The native flows always run
+first and their successes are always preferred — the fallback spends money
+only after a native failure.
 
-- **Instagram** uses Bright Data's Web Scraper API (the maintained
-  Instagram-specific scrapers): one dataset trigger returns post metadata plus
-  direct CDN media URLs, and the media itself downloads over Arker's own
-  connection for free. Reels become the usual `.mp4` artifact; feed posts
-  become the usual gallery ZIP with `metadata.json` (plus the raw Bright Data
-  record as `brightdata.json`), so viewers and the API see no difference.
-- **YouTube** cannot be served by the scraper alone: its `video_url` is signed
-  for Bright Data's own exit IP (deliberately scrambled `ip=` parameter), and
-  their proxy products refuse YouTube. Instead the fallback opens a Bright
-  Data **Browser API** session and resolves the video via YouTube's Innertube
-  player API from inside that session — no scraping of the rendered page —
-  then pulls the progressive MP4 through the same session. Progressive streams
-  top out at 360p/720p; provenance is recorded on the archive item
-  (`source = "brightdata"`) so fidelity can be audited later.
+Each platform runs one purpose-built Apify actor (`internal/apify/actors.go`)
+that returns the post record plus direct media URLs; the media then downloads
+over Arker's own connection. TikTok and YouTube sign their media against the
+resolving IP, so those actors copy the bytes into the run's key-value store
+and Arker pulls them from there. Reddit videos have their DASH audio muxed in
+with ffmpeg. Artifacts are the same as native ones — `.mp4` for videos, the
+gallery ZIP with `metadata.json` (plus the raw provider record as
+`apify.json`) for posts — so viewers and the API see no difference beyond
+provenance (`source = "apify"`), which is recorded so fidelity can be audited.
 
-Every Bright Data operation writes a row to the `bright_data_usages` table with
-an estimated cost; `GET /admin/brightdata-usage` (admin session) reports totals,
-per-product and per-day spend, and recent events. Costs are computed from the
-configured rates below — the Bright Data dashboard remains the invoice of
-record.
+Every actor run writes a row to the `fallback_usages` table with the
+platform-reported cost; `GET /admin/fallback-usage` (admin session) reports
+totals, per-actor and per-day spend, and recent events. Historical Bright Data
+rows are carried over into the same table with their original estimates.
 
 ```bash
-BRIGHTDATA_API_KEY=...                      # required to enable the fallback
-BRIGHTDATA_CUSTOMER_ID=...                  # optional; resolved via the API at startup
-BRIGHTDATA_BROWSER_ZONE=mcp_browser_no_ratelimit  # Browser API zone for YouTube
-BRIGHTDATA_BROWSER_ZONE_PASSWORD=...        # optional; resolved via the API at startup
-BRIGHTDATA_SCRAPER_COST_PER_RECORD=0.0015   # USD per Web Scraper API record
-BRIGHTDATA_BROWSER_COST_PER_GB=8.40         # USD per GB of Browser API traffic
-BRIGHTDATA_YT_CLIENT_NAME=ANDROID           # Innertube client for YouTube resolution
-BRIGHTDATA_YT_CLIENT_VERSION=20.10.38       # bump via env if YouTube retires it
+APIFY_API_TOKEN=...            # required to enable the fallback
+APIFY_RUN_TIMEOUT=10m          # bound on one actor run; overrunning runs are aborted
+APIFY_MAX_RUN_COST_USD=0.5     # a run costing more than this is logged loudly
 ```
 
 With the fallback enabled, Instagram gallery items are created even when no

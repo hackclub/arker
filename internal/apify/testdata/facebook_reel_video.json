@@ -1,0 +1,144 @@
+[
+ {
+  "facebookUrl": "https://www.facebook.com/cybernewscom/posts/you-can-play-doom-on-a-pdf-doom-gaming/1141884761280547/",
+  "__typename": "Video",
+  "preferred_thumbnail": {
+   "image": {
+    "uri": "https://scontent-iad3-1.xx.fbcdn.net/v/t15.5256-10/473787967_609592271653110_8152337678132441498_n.jpg?stp=dst-jpg_tt6&cstp=mx1080x1920&ctp=s960x960&_nc_cat=101&ccb=1-7&_nc_sid=be8305&_nc_ohc=SYNTHETIC-NOT-A-REAL-SECRET&_nc_oc=SYNTHETIC-NOT-A-REAL-SECRET&_nc_zt=23&_nc_ht=SYNTHETIC-NOT-A-REAL-SECRET&_nc_gid=SYNTHETIC-NOT-A-REAL-SECRET&_nc_ss=72289&oh=SYNTHETIC-NOT-A-REAL-SECRET&oe=6A9E401C"
+   },
+   "image_preview_payload": null,
+   "id": "609592258319778"
+  },
+  "id": "1121155692481577",
+  "animated_image_caption": null,
+  "width": 1080,
+  "height": 1920,
+  "broadcaster_origin": null,
+  "broadcast_id": null,
+  "broadcast_status": null,
+  "is_live_streaming": false,
+  "is_live_trace_enabled": false,
+  "is_looping": false,
+  "is_video_broadcast": false,
+  "is_podcast_video": false,
+  "loop_count": 0,
+  "is_spherical": false,
+  "is_spherical_enabled": true,
+  "unsupported_browser_message": null,
+  "pmv_metadata": null,
+  "latency_sensitive_config": null,
+  "live_playback_instrumentation_configs": null,
+  "is_ncsr": false,
+  "permalink_url": "https://www.facebook.com/reel/1121155692481577/",
+  "captions_url": null,
+  "seo_web_crawler_lookaside_url": null,
+  "dash_prefetch_experimental": [],
+  "video_available_captions_locales": [],
+  "video_status_type": "OK",
+  "can_use_oz": true,
+  "min_quality_preference": null,
+  "spherical_video_fallback_urls": null,
+  "comet_video_player_nextgendash_availability": "AVAILABLE",
+  "videoDeliveryLegacyFields": {
+   "dash_manifest_xml_string": null,
+   "dash_manifest_url": null,
+   "browser_native_sd_url": "https://video-iad6-1.xx.fbcdn.net/o1/v/t2/f2/m412/AQMwCQsXmgxKbk2kJUAVy6uW4PttthiWQyF9Z6oghzm8Bk-fsdKvBJr0AAcAIO1BMJAJozzi5Hzsbw6tj6WeBog6.mp4?_nc_cat=102&_nc_sid=8bf8fe&_nc_ht=SYNTHETIC-NOT-A-REAL-SECRET&_nc_ohc=SYNTHETIC-NOT-A-REAL-SECRET&efg=SYNTHETIC-NOT-A-REAL-SECRET&ccb=17-1&_nc_gid=SYNTHETIC-NOT-A-REAL-SECRET&_nc_ss=72289&_nc_zt=28&oh=SYNTHETIC-NOT-A-REAL-SECRET&oe=6A9E47D3&bitrate=230344&tag=sve_sd",
+   "browser_native_hd_url": null,
+   "id": "1121155692481577"
+  },
+  "videoDeliveryResponseFragment": null,
+  "is_gaming_video": false,
+  "is_latency_menu_enabled": false,
+  "fbls_tier": null,
+  "is_latency_sensitive_broadcast": false,
+  "video_player_shaka_performance_logger_init": {
+   "__typename": "VideoPlayerShakaPerformanceLoggerInit",
+   "__module_operation_useVideoPlayerShakaPerformanceLoggerRelayImpl_video": {
+    "__dr": "useVideoPlayerShakaPerformanceLoggerRelayImpl_init$normalization.graphql"
+   },
+   "__module_component_useVideoPlayerShakaPerformanceLoggerRelayImpl_video": {
+    "__dr": "VideoPlayerShakaPerformanceLogger"
+   }
+  },
+  "video_player_shaka_performance_logger_should_sample": false,
+  "video_player_shaka_performance_logger_init2": {
+   "__typename": "VideoPlayerShakaPerformanceLoggerInit",
+   "__module_operation_useVideoPlayerShakaPerformanceLoggerBuilder_video": {
+    "__dr": "useVideoPlayerShakaPerformanceLoggerBuilder_init$normalization.graphql"
+   },
+   "__module_component_useVideoPlayerShakaPerformanceLoggerBuilder_video": {
+    "__dr": "VideoPlayerShakaPerformanceLoggerBuilder"
+   },
+   "per_session_sampling_rate": null
+  },
+  "autoplay_gating_result": "all_page_organic_allowed",
+  "viewer_autoplay_setting": "default_autoplay",
+  "can_autoplay": true,
+  "drm_info": "{\"video_license_uri_map\":{},\"graph_api_video_license_uri\":null,\"fairplay_cert\":null,\"widevine_cert\":\"CsECCAMSEBcFuRfMEgSGiwYzOi93KowYgrSCkgUijgIwggEKAoIBAQCZ7Vs7Mn2rXiTvw7YqlbWYUgrVvMs3UD4GRbgU2Ha430BRBEGtjOOtsRu4jE5yWl5KngeVKR1YWEAjp+GvDjipEnk5MAhhC28VjIeMfiG\\/+\\/7qd+EBnh5XgeikX0YmPRTmDoBYqGB63OBPrIRXsTeo1nzN6zNwXZg6IftO7L1KEMpHSQykfqpdQ4IY3brxyt4zkvE9b\\/tkQv0x4b9AsMYE0cS6TJUgpL+X7r1gkpr87vVbuvVk4tDnbNfFXHOggrmWEguDWe3OJHBwgmgNb2fG2CxKxfMTRJCnTuw3r0svAQxZ6ChD4lgvC2ufXbD8Xm7fZPvTCLRxG88SUAGcn1oJAgMBAAE6FGxpY2Vuc2Uud2lkZXZpbmUuY29tEoADrjRzFLWoNSl\\/JxOI+3u4y1J30kmCPN3R2jC5MzlRHrPMveoEuUS5J8EhNG79verJ1BORfm7BdqEEOEYKUDvBlSubpOTOD8S\\/wgqYCKqvS\\/zRnB3PzfV0zKwo0bQQQWz53ogEMBy9szTK\\/NDUCXhCOmQuVGE98K\\/PlspKkknYVeQrOnA+8XZ\\/apvTbWv4K+drvwy6T95Z0qvMdv62Qke4XEMfvKUiZrYZ\\/DaXlUP8qcu9u\\/r6DhpV51Wjx7zmVflkb1gquc9wqgi5efhn9joLK3\\/bNixbxOzVVdhbyqnFk8ODyFfUnaq3fkC3hR3f0kmYgI41sljnXXjqwMoW9wRzBMINk+3k6P8cbxfmJD4\\/Paj8FwmHDsRfuoI6Jj8M76H3CTsZCZKDJjM3BQQ6Kb2m+bQ0LMjfVDyxoRgvfF\\/\\/M\\/EEkPrKWyU2C3YBXpxaBquO4C8A0ujVmGEEqsxN1HX9lu6c5OMm8huDxwWFd7OHMs3avGpr7RP7DUnTikXrh6X0\"}",
+  "p2p_settings": null,
+  "audio_settings": null,
+  "captions_settings": null,
+  "broadcast_low_latency_config": null,
+  "audio_availability": "AVAILABLE",
+  "muted_segments": [],
+  "spherical_video_renderer": null,
+  "video_imf_data": null,
+  "playback_language_on_comet": null,
+  "is_clipping_enabled": false,
+  "live_rewind_enabled": false,
+  "owner": {
+   "__typename": "User",
+   "id": "100063771003139",
+   "__isVideoOwner": "User",
+   "has_professional_features_for_watch": true
+  },
+  "playable_duration_in_ms": 42000,
+  "is_huddle": false,
+  "url": "https://www.facebook.com/reel/1121155692481577/",
+  "if_viewer_can_use_latency_menu": null,
+  "if_viewer_can_use_latency_menu_toggle": null,
+  "if_viewer_can_see_community_moderation_tools": null,
+  "if_viewer_can_use_live_rewind": null,
+  "if_viewer_can_use_clipping": null,
+  "if_viewer_can_see_costreaming_tools": null,
+  "video_player_scrubber_preview_renderer": {
+   "__typename": "XFBVideoPlayerScrubberDefaultPreviewRenderer",
+   "video": {
+    "scrubber_preview_thumbnail_information": {
+     "sprite_uris": [],
+     "thumbnail_width": 0,
+     "thumbnail_height": 0,
+     "has_preview_thumbnails": false,
+     "num_images_per_row": 0,
+     "max_number_of_images_per_sprite": 0,
+     "time_interval_between_image": 0
+    },
+    "id": "1121155692481577"
+   },
+   "__module_operation_VideoPlayerScrubberPreview_video": {
+    "__dr": "VideoPlayerScrubberDefaultPreview_video$normalization.graphql"
+   },
+   "__module_component_VideoPlayerScrubberPreview_video": {
+    "__dr": "VideoPlayerScrubberDefaultPreview.react"
+   }
+  },
+  "video_player_scrubber_base_content_renderer": null,
+  "recipient_group": null,
+  "breakingStatus": false,
+  "videoId": "1121155692481577",
+  "isPremiere": false,
+  "liveViewerCount": 0,
+  "rehearsalInfo": null,
+  "publish_time": 1737225924,
+  "comet_product_tag_feed_overlay_renderer": null,
+  "__isNode": "Video",
+  "likes": 22,
+  "comments": 3,
+  "reactionLikeCount": 16,
+  "reactionHahaCount": 4,
+  "reactionLoveCount": 1,
+  "reactionCareCount": 1,
+  "facebookId": "1121155692481577",
+  "pageName": "reel"
+ }
+]

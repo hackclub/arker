@@ -59,8 +59,8 @@ func assertArchiveTypes(t *testing.T, url string, want ...string) {
 // login-only capture.
 func TestArchiveTypeMatrixWithoutCookies(t *testing.T) {
 	configureMediaCookies(t, false)
-	SetBrightDataMediaFallback(nil)
-	t.Cleanup(func() { SetBrightDataMediaFallback(nil) })
+	SetMediaFallback(nil)
+	t.Cleanup(func() { SetMediaFallback(nil) })
 
 	base := []string{ArchiveTypeMHTML, ArchiveTypeScreenshot}
 	withYtDlp := append(append([]string{}, base...), ArchiveTypeYtDlp)
@@ -182,18 +182,18 @@ func TestArchiveTypeMatrixWithCookies(t *testing.T) {
 }
 
 // A login-only site with no cookie jar gets its media item back when the
-// Bright Data fallback covers it: the native run still fails first, but it is
+// Apify fallback covers it: the native run still fails first, but it is
 // now followed by one that can succeed, so the item is worth creating. This is
 // the routing half of the fallback contract — the client's coverage decides,
 // not a list kept here.
-func TestArchiveTypeMatrixWithoutCookiesButWithBrightDataFallback(t *testing.T) {
+func TestArchiveTypeMatrixWithoutCookiesButWithFallback(t *testing.T) {
 	configureMediaCookies(t, false)
-	// Stands in for brightdata.Client.SupportsFallback, which covers Instagram
+	// Stands in for apify.Client.SupportsFallback, which covers Instagram
 	// and X for gallery items but not Pinterest.
-	SetBrightDataMediaFallback(func(rawURL, itemType string) bool {
+	SetMediaFallback(func(rawURL, itemType string) bool {
 		return itemType == ArchiveTypeGalleryDl && (IsInstagramURL(rawURL) || IsXPostURL(rawURL))
 	})
-	t.Cleanup(func() { SetBrightDataMediaFallback(nil) })
+	t.Cleanup(func() { SetMediaFallback(nil) })
 
 	base := []string{ArchiveTypeMHTML, ArchiveTypeScreenshot}
 	withGallery := append(append([]string{}, base...), ArchiveTypeGalleryDl)
@@ -230,14 +230,14 @@ func TestArchiveTypeMatrixWithoutCookiesButWithBrightDataFallback(t *testing.T) 
 // Pinterest pathway existed it produced no media item at all — an MHTML of the
 // login wall and nothing else. With the pathway enabled the pin gets its
 // gallery item back.
-func TestArchiveTypeMatrixPinterestWithBrightDataFallback(t *testing.T) {
+func TestArchiveTypeMatrixPinterestWithFallback(t *testing.T) {
 	configureMediaCookies(t, false)
-	// Stands in for brightdata.Client.SupportsFallback with the Pinterest
+	// Stands in for apify.Client.SupportsFallback with the Pinterest
 	// pathway configured.
-	SetBrightDataMediaFallback(func(rawURL, itemType string) bool {
+	SetMediaFallback(func(rawURL, itemType string) bool {
 		return itemType == ArchiveTypeGalleryDl && IsPinterestPinURL(rawURL)
 	})
-	t.Cleanup(func() { SetBrightDataMediaFallback(nil) })
+	t.Cleanup(func() { SetMediaFallback(nil) })
 
 	base := []string{ArchiveTypeMHTML, ArchiveTypeScreenshot}
 	withGallery := append(append([]string{}, base...), ArchiveTypeGalleryDl)

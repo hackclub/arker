@@ -1,0 +1,202 @@
+[
+ {
+  "facebookUrl": "https://www.facebook.com/1667393145425469/videos/1847881915262822",
+  "previewTitle": "We've got Sean visiting us this week at Hack Club HQ 🌉 It's been a great week!",
+  "previewDescription": "We've got Sean visiting us this week at Hack Club HQ 🌉 It's been a great week!",
+  "id": "1847881915262822",
+  "comment_rendering_instance": {
+   "comments": {
+    "total_count": 0
+   }
+  },
+  "cross_universe_feedback_info": {
+   "aggregated_comment_count": null
+  },
+  "i18n_reaction_count": "6",
+  "important_reactors": {
+   "nodes": []
+  },
+  "reaction_count": {
+   "count": 6,
+   "is_empty": false
+  },
+  "top_reactions": {
+   "edges": [
+    {
+     "visible_in_bling_bar": true,
+     "node": {
+      "id": "1678524932434102",
+      "localized_name": "Love"
+     },
+     "i18n_reaction_count": "5",
+     "reaction_count": 5
+    },
+    {
+     "visible_in_bling_bar": true,
+     "node": {
+      "id": "1635855486666999",
+      "localized_name": "Like"
+     },
+     "i18n_reaction_count": "1",
+     "reaction_count": 1
+    }
+   ]
+  },
+  "total_comment_count": 0,
+  "video_view_count_renderer": {
+   "__typename": "UFI2ViewCountRenderer",
+   "feedback": {
+    "associated_video": {
+     "is_live_streaming": false,
+     "is_profile_video": false,
+     "id": "1847881915262822"
+    },
+    "video_view_count": 124,
+    "video_view_count_reduced": "124",
+    "total_video_posts": 1,
+    "video_post_view_count": 124,
+    "should_show_play_count": false,
+    "play_count_reduced": "124",
+    "play_count": 124,
+    "is_play_count_supported": false,
+    "id": "ZmVlZGJhY2s6MTg0Nzg4MTkxNTI2MjgyMg=="
+   },
+   "__module_operation_CometVideoHomeFeedUnitUFISummary_feedback__video_view_count": {
+    "__dr": "UFI2ViewCountRenderer_data$normalization.graphql"
+   },
+   "__module_component_CometVideoHomeFeedUnitUFISummary_feedback__video_view_count": {
+    "__dr": "UFI2ViewCountRenderer.react"
+   }
+  },
+  "__typename": "Video",
+  "preferred_thumbnail": null,
+  "animated_image_caption": null,
+  "width": 1920,
+  "height": 1216,
+  "broadcaster_origin": null,
+  "broadcast_id": null,
+  "broadcast_status": null,
+  "is_live_streaming": false,
+  "is_live_trace_enabled": false,
+  "is_looping": true,
+  "is_video_broadcast": false,
+  "is_podcast_video": false,
+  "loop_count": 13,
+  "is_spherical": false,
+  "is_spherical_enabled": true,
+  "unsupported_browser_message": null,
+  "pmv_metadata": null,
+  "latency_sensitive_config": null,
+  "live_playback_instrumentation_configs": null,
+  "is_ncsr": false,
+  "permalink_url": "https://www.facebook.com/HackClubHQ/videos/1847881915262822/",
+  "captions_url": null,
+  "seo_web_crawler_lookaside_url": null,
+  "dash_prefetch_experimental": [],
+  "video_available_captions_locales": [],
+  "video_status_type": "OK",
+  "can_use_oz": true,
+  "min_quality_preference": null,
+  "spherical_video_fallback_urls": null,
+  "comet_video_player_nextgendash_availability": "AVAILABLE",
+  "videoDeliveryLegacyFields": {
+   "dash_manifest_xml_string": null,
+   "dash_manifest_url": null,
+   "browser_native_sd_url": "https://video-iad3-1.xx.fbcdn.net/o1/v/t2/f2/m412/AQP-_HOzxKQnj5tPiImuMdb5uchAmhVjn3QYfyswjJ2n9yVWM52B7p907bqUW0IdPGG-Gl4DT7lgZllopkatDeNG.mp4?_nc_cat=104&_nc_sid=8bf8fe&_nc_ht=SYNTHETIC-NOT-A-REAL-SECRET&_nc_ohc=SYNTHETIC-NOT-A-REAL-SECRET&efg=SYNTHETIC-NOT-A-REAL-SECRET&ccb=17-1&_nc_gid=SYNTHETIC-NOT-A-REAL-SECRET&_nc_ss=73289&_nc_zt=28&oh=SYNTHETIC-NOT-A-REAL-SECRET&oe=6A9E371D&bitrate=64862&tag=sve_sd",
+   "browser_native_hd_url": null,
+   "id": "1847881915262822"
+  },
+  "videoDeliveryResponseFragment": null,
+  "is_gaming_video": false,
+  "is_latency_menu_enabled": false,
+  "fbls_tier": null,
+  "is_latency_sensitive_broadcast": false,
+  "video_player_shaka_performance_logger_init": {
+   "__typename": "VideoPlayerShakaPerformanceLoggerInit",
+   "__module_operation_useVideoPlayerShakaPerformanceLoggerRelayImpl_video": {
+    "__dr": "useVideoPlayerShakaPerformanceLoggerRelayImpl_init$normalization.graphql"
+   },
+   "__module_component_useVideoPlayerShakaPerformanceLoggerRelayImpl_video": {
+    "__dr": "VideoPlayerShakaPerformanceLogger"
+   }
+  },
+  "video_player_shaka_performance_logger_should_sample": false,
+  "video_player_shaka_performance_logger_init2": {
+   "__typename": "VideoPlayerShakaPerformanceLoggerInit",
+   "__module_operation_useVideoPlayerShakaPerformanceLoggerBuilder_video": {
+    "__dr": "useVideoPlayerShakaPerformanceLoggerBuilder_init$normalization.graphql"
+   },
+   "__module_component_useVideoPlayerShakaPerformanceLoggerBuilder_video": {
+    "__dr": "VideoPlayerShakaPerformanceLoggerBuilder"
+   },
+   "per_session_sampling_rate": null
+  },
+  "autoplay_gating_result": "all_page_organic_allowed",
+  "viewer_autoplay_setting": "default_autoplay",
+  "can_autoplay": true,
+  "drm_info": "{\"video_license_uri_map\":{},\"graph_api_video_license_uri\":null,\"fairplay_cert\":null,\"widevine_cert\":\"CsECCAMSEBcFuRfMEgSGiwYzOi93KowYgrSCkgUijgIwggEKAoIBAQCZ7Vs7Mn2rXiTvw7YqlbWYUgrVvMs3UD4GRbgU2Ha430BRBEGtjOOtsRu4jE5yWl5KngeVKR1YWEAjp+GvDjipEnk5MAhhC28VjIeMfiG\\/+\\/7qd+EBnh5XgeikX0YmPRTmDoBYqGB63OBPrIRXsTeo1nzN6zNwXZg6IftO7L1KEMpHSQykfqpdQ4IY3brxyt4zkvE9b\\/tkQv0x4b9AsMYE0cS6TJUgpL+X7r1gkpr87vVbuvVk4tDnbNfFXHOggrmWEguDWe3OJHBwgmgNb2fG2CxKxfMTRJCnTuw3r0svAQxZ6ChD4lgvC2ufXbD8Xm7fZPvTCLRxG88SUAGcn1oJAgMBAAE6FGxpY2Vuc2Uud2lkZXZpbmUuY29tEoADrjRzFLWoNSl\\/JxOI+3u4y1J30kmCPN3R2jC5MzlRHrPMveoEuUS5J8EhNG79verJ1BORfm7BdqEEOEYKUDvBlSubpOTOD8S\\/wgqYCKqvS\\/zRnB3PzfV0zKwo0bQQQWz53ogEMBy9szTK\\/NDUCXhCOmQuVGE98K\\/PlspKkknYVeQrOnA+8XZ\\/apvTbWv4K+drvwy6T95Z0qvMdv62Qke4XEMfvKUiZrYZ\\/DaXlUP8qcu9u\\/r6DhpV51Wjx7zmVflkb1gquc9wqgi5efhn9joLK3\\/bNixbxOzVVdhbyqnFk8ODyFfUnaq3fkC3hR3f0kmYgI41sljnXXjqwMoW9wRzBMINk+3k6P8cbxfmJD4\\/Paj8FwmHDsRfuoI6Jj8M76H3CTsZCZKDJjM3BQQ6Kb2m+bQ0LMjfVDyxoRgvfF\\/\\/M\\/EEkPrKWyU2C3YBXpxaBquO4C8A0ujVmGEEqsxN1HX9lu6c5OMm8huDxwWFd7OHMs3avGpr7RP7DUnTikXrh6X0\"}",
+  "p2p_settings": null,
+  "audio_settings": null,
+  "captions_settings": null,
+  "broadcast_low_latency_config": null,
+  "audio_availability": "UNAVAILABLE",
+  "muted_segments": [],
+  "spherical_video_renderer": null,
+  "video_imf_data": null,
+  "playback_language_on_comet": null,
+  "is_clipping_enabled": false,
+  "live_rewind_enabled": false,
+  "owner": {
+   "__typename": "User",
+   "id": "100064643981468",
+   "__isVideoOwner": "User",
+   "has_professional_features_for_watch": true
+  },
+  "playable_duration_in_ms": 7000,
+  "is_huddle": false,
+  "url": "https://www.facebook.com/HackClubHQ/videos/1847881915262822/",
+  "if_viewer_can_use_latency_menu": null,
+  "if_viewer_can_use_latency_menu_toggle": null,
+  "if_viewer_can_see_community_moderation_tools": null,
+  "if_viewer_can_use_live_rewind": null,
+  "if_viewer_can_use_clipping": null,
+  "if_viewer_can_see_costreaming_tools": null,
+  "video_player_scrubber_preview_renderer": {
+   "__typename": "XFBVideoPlayerScrubberDefaultPreviewRenderer",
+   "video": {
+    "scrubber_preview_thumbnail_information": {
+     "sprite_uris": [],
+     "thumbnail_width": 0,
+     "thumbnail_height": 0,
+     "has_preview_thumbnails": false,
+     "num_images_per_row": 0,
+     "max_number_of_images_per_sprite": 0,
+     "time_interval_between_image": 0
+    },
+    "id": "1847881915262822"
+   },
+   "__module_operation_VideoPlayerScrubberPreview_video": {
+    "__dr": "VideoPlayerScrubberDefaultPreview_video$normalization.graphql"
+   },
+   "__module_component_VideoPlayerScrubberPreview_video": {
+    "__dr": "VideoPlayerScrubberDefaultPreview.react"
+   }
+  },
+  "video_player_scrubber_base_content_renderer": null,
+  "recipient_group": null,
+  "breakingStatus": false,
+  "videoId": "1847881915262822",
+  "isPremiere": false,
+  "liveViewerCount": 0,
+  "rehearsalInfo": null,
+  "publish_time": 1522293620,
+  "comet_product_tag_feed_overlay_renderer": null,
+  "__isNode": "Video",
+  "likes": 6,
+  "comments": 0,
+  "reactionLoveCount": 5,
+  "reactionLikeCount": 1,
+  "facebookId": "1847881915262822",
+  "pageName": "reel"
+ }
+]

@@ -1,0 +1,246 @@
+[
+ {
+  "facebookUrl": "https://www.facebook.com/reel/1121155692481577/",
+  "likers": {
+   "count": 22
+  },
+  "unified_reactors": {
+   "count": 22
+  },
+  "total_comment_count": 3,
+  "cross_universe_feedback_info": {
+   "ig_comment_count": null
+  },
+  "id": "UzpfSTEwMDA2Mzc3MTAwMzEzOTpWSzoxMTIxMTU1NjkyNDgxNTc3",
+  "share_count_reduced": "12",
+  "tracking": "{\"top_level_post_id\":\"1121155692481577\",\"content_owner_id_new\":\"100063771003139\",\"page_id\":\"107799854043159\",\"story_location\":12,\"story_attachment_style\":\"video_autoplay\",\"video_id\":\"1121155692481577\",\"ent_attachement_type\":\"FBShortsCreationAttachment\",\"app_id\":\"2392950137\",\"page_insights\":{\"100063771003139\":{\"page_id\":\"100063771003139\",\"page_id_type\":\"page\",\"actor_id\":\"100063771003139\",\"dm\":{\"isShare\":0,\"originalPostOwnerID\":0,\"sharedMediaID\":0,\"sharedMediaOwnerID\":0},\"psn\":\"EntFBShortsVideoCreationStory\",\"post_context\":{\"object_fbtype\":1,\"publish_time\":1737225924,\"story_name\":\"EntFBShortsVideoCreationStory\",\"story_fbid\":[\"1121155692481577\"]},\"role\":1,\"sl\":12,\"targets\":[{\"actor_id\":\"100063771003139\",\"page_id\":\"100063771003139\",\"post_id\":\"1121155692481577\",\"role\":1,\"share_id\":0}]}},\"profile_id\":\"100063771003139\",\"actrs\":\"100063771003139\",\"tds_flgs\":3}",
+  "short_form_video_context": {
+   "self_view_boost": null,
+   "video": {
+    "id": "1121155692481577",
+    "first_frame_thumbnail": "https://scontent-den2-1.xx.fbcdn.net/v/t15.5256-10/474063133_596165816496573_4712940026441703494_n.jpg?stp=dst-jpg_tt6&cstp=mx1080x1920&ctp=s960x960&_nc_cat=110&ccb=1-7&_nc_sid=b5ba86&_nc_ohc=SYNTHETIC-NOT-A-REAL-SECRET&_nc_oc=SYNTHETIC-NOT-A-REAL-SECRET&_nc_zt=23&_nc_ht=SYNTHETIC-NOT-A-REAL-SECRET&_nc_gid=SYNTHETIC-NOT-A-REAL-SECRET&_nc_ss=79289&oh=SYNTHETIC-NOT-A-REAL-SECRET&oe=6A9E3A35",
+    "__typename": "Video",
+    "playable_duration_in_ms": 42000,
+    "embeddable": true,
+    "owner": {
+     "__typename": "User",
+     "id": "100063771003139"
+    },
+    "audio_availability": "AVAILABLE",
+    "seo_llm_content": null
+   },
+   "if_should_change_url_for_reels": null,
+   "shareable_url": "https://www.facebook.com/reel/1121155692481577",
+   "playback_video": {
+    "aspect_ratio": 0.5625,
+    "height": 1920,
+    "width": 1080,
+    "length_in_second": 42,
+    "id": "1121155692481577",
+    "dubbed_track_mapping": [],
+    "thumbnailImage": {
+     "uri": "https://scontent-den2-1.xx.fbcdn.net/v/t15.5256-10/473787967_609592271653110_8152337678132441498_n.jpg?stp=dst-jpg_tt6&cstp=mx1080x1920&ctp=s960x960&_nc_cat=101&ccb=1-7&_nc_sid=73dd82&_nc_ohc=SYNTHETIC-NOT-A-REAL-SECRET&_nc_oc=SYNTHETIC-NOT-A-REAL-SECRET&_nc_zt=23&_nc_ht=SYNTHETIC-NOT-A-REAL-SECRET&_nc_gid=SYNTHETIC-NOT-A-REAL-SECRET&_nc_ss=79289&oh=SYNTHETIC-NOT-A-REAL-SECRET&oe=6A9E401C"
+    },
+    "animated_image_caption": null,
+    "broadcaster_origin": null,
+    "broadcast_id": null,
+    "broadcast_status": null,
+    "is_live_streaming": false,
+    "is_live_trace_enabled": false,
+    "is_looping": false,
+    "is_video_broadcast": false,
+    "is_podcast_video": false,
+    "loop_count": 0,
+    "is_spherical": false,
+    "is_spherical_enabled": true,
+    "unsupported_browser_message": null,
+    "pmv_metadata": null,
+    "latency_sensitive_config": null,
+    "live_playback_instrumentation_configs": null,
+    "is_ncsr": false,
+    "permalink_url": "https://www.facebook.com/reel/1121155692481577/",
+    "captions_url": null,
+    "seo_web_crawler_lookaside_url": null,
+    "dash_prefetch_experimental": [],
+    "video_available_captions_locales": [],
+    "video_status_type": "OK",
+    "can_use_oz": true,
+    "min_quality_preference": null,
+    "spherical_video_fallback_urls": null,
+    "comet_video_player_nextgendash_availability": "AVAILABLE",
+    "videoDeliveryLegacyFields": {
+     "dash_manifest_xml_string": null,
+     "dash_manifest_url": null,
+     "browser_native_sd_url": "https://video-den2-1.xx.fbcdn.net/o1/v/t2/f2/m412/AQMwCQsXmgxKbk2kJUAVy6uW4PttthiWQyF9Z6oghzm8Bk-fsdKvBJr0AAcAIO1BMJAJozzi5Hzsbw6tj6WeBog6.mp4?_nc_cat=102&_nc_sid=8bf8fe&_nc_ht=SYNTHETIC-NOT-A-REAL-SECRET&_nc_ohc=SYNTHETIC-NOT-A-REAL-SECRET&efg=SYNTHETIC-NOT-A-REAL-SECRET&ccb=17-1&_nc_gid=SYNTHETIC-NOT-A-REAL-SECRET&_nc_ss=79289&_nc_zt=28&oh=SYNTHETIC-NOT-A-REAL-SECRET&oe=6A9E47D3&bitrate=230344&tag=sve_sd",
+     "browser_native_hd_url": null,
+     "id": "1121155692481577"
+    },
+    "videoDeliveryResponseFragment": null,
+    "is_gaming_video": false,
+    "is_latency_menu_enabled": false,
+    "fbls_tier": null,
+    "is_latency_sensitive_broadcast": false,
+    "video_player_shaka_performance_logger_init": null,
+    "video_player_shaka_performance_logger_should_sample": false,
+    "video_player_shaka_performance_logger_init2": null,
+    "autoplay_gating_result": "all_page_organic_allowed",
+    "viewer_autoplay_setting": "default_autoplay",
+    "can_autoplay": true,
+    "drm_info": "{\"video_license_uri_map\":{},\"graph_api_video_license_uri\":null,\"fairplay_cert\":null,\"widevine_cert\":\"CsECCAMSEBcFuRfMEgSGiwYzOi93KowYgrSCkgUijgIwggEKAoIBAQCZ7Vs7Mn2rXiTvw7YqlbWYUgrVvMs3UD4GRbgU2Ha430BRBEGtjOOtsRu4jE5yWl5KngeVKR1YWEAjp+GvDjipEnk5MAhhC28VjIeMfiG\\/+\\/7qd+EBnh5XgeikX0YmPRTmDoBYqGB63OBPrIRXsTeo1nzN6zNwXZg6IftO7L1KEMpHSQykfqpdQ4IY3brxyt4zkvE9b\\/tkQv0x4b9AsMYE0cS6TJUgpL+X7r1gkpr87vVbuvVk4tDnbNfFXHOggrmWEguDWe3OJHBwgmgNb2fG2CxKxfMTRJCnTuw3r0svAQxZ6ChD4lgvC2ufXbD8Xm7fZPvTCLRxG88SUAGcn1oJAgMBAAE6FGxpY2Vuc2Uud2lkZXZpbmUuY29tEoADrjRzFLWoNSl\\/JxOI+3u4y1J30kmCPN3R2jC5MzlRHrPMveoEuUS5J8EhNG79verJ1BORfm7BdqEEOEYKUDvBlSubpOTOD8S\\/wgqYCKqvS\\/zRnB3PzfV0zKwo0bQQQWz53ogEMBy9szTK\\/NDUCXhCOmQuVGE98K\\/PlspKkknYVeQrOnA+8XZ\\/apvTbWv4K+drvwy6T95Z0qvMdv62Qke4XEMfvKUiZrYZ\\/DaXlUP8qcu9u\\/r6DhpV51Wjx7zmVflkb1gquc9wqgi5efhn9joLK3\\/bNixbxOzVVdhbyqnFk8ODyFfUnaq3fkC3hR3f0kmYgI41sljnXXjqwMoW9wRzBMINk+3k6P8cbxfmJD4\\/Paj8FwmHDsRfuoI6Jj8M76H3CTsZCZKDJjM3BQQ6Kb2m+bQ0LMjfVDyxoRgvfF\\/\\/M\\/EEkPrKWyU2C3YBXpxaBquO4C8A0ujVmGEEqsxN1HX9lu6c5OMm8huDxwWFd7OHMs3avGpr7RP7DUnTikXrh6X0\"}",
+    "p2p_settings": null,
+    "audio_settings": null,
+    "captions_settings": null,
+    "broadcast_low_latency_config": null,
+    "audio_availability": "AVAILABLE",
+    "muted_segments": [],
+    "spherical_video_renderer": null,
+    "preferred_thumbnail": {
+     "image": {
+      "uri": "https://scontent-den2-1.xx.fbcdn.net/v/t15.5256-10/473787967_609592271653110_8152337678132441498_n.jpg?stp=dst-jpg_tt6&cstp=mx1080x1920&ctp=s960x960&_nc_cat=101&ccb=1-7&_nc_sid=be8305&_nc_ohc=SYNTHETIC-NOT-A-REAL-SECRET&_nc_oc=SYNTHETIC-NOT-A-REAL-SECRET&_nc_zt=23&_nc_ht=SYNTHETIC-NOT-A-REAL-SECRET&_nc_gid=SYNTHETIC-NOT-A-REAL-SECRET&_nc_ss=79289&oh=SYNTHETIC-NOT-A-REAL-SECRET&oe=6A9E401C"
+     },
+     "image_preview_payload": null,
+     "id": "609592258319778"
+    },
+    "video_imf_data": null,
+    "playback_language_on_comet": null,
+    "warning_screen_renderer": null,
+    "cix_screen": null
+   },
+   "video_owner": {
+    "__typename": "User",
+    "id": "100063771003139",
+    "__isActor": "User",
+    "name": "CyberNews",
+    "enable_reels_tab_deeplink": true,
+    "is_verified": true,
+    "url": "https://www.facebook.com/cybernewscom",
+    "displayPicture": {
+     "uri": "https://scontent-den2-1.xx.fbcdn.net/v/t39.30808-1/297403298_465245062277857_5637687846832563897_n.jpg?stp=SYNTHETIC-NOT-A-REAL-SECRET&cstp=mx708x708&ctp=s80x80&_nc_cat=1&ccb=1-7&_nc_sid=2d3e12&_nc_ohc=SYNTHETIC-NOT-A-REAL-SECRET&_nc_oc=SYNTHETIC-NOT-A-REAL-SECRET&_nc_zt=24&_nc_ht=SYNTHETIC-NOT-A-REAL-SECRET&_nc_gid=SYNTHETIC-NOT-A-REAL-SECRET&_nc_ss=79289&oh=SYNTHETIC-NOT-A-REAL-SECRET&oe=6A9E3385"
+    },
+    "subscribe_status": "CANNOT_SUBSCRIBE",
+    "delegate_page": {
+     "id": "107799854043159",
+     "uri_token": "cybernewscom",
+     "woodhenge_creator_info": null
+    }
+   },
+   "fb_shorts_reshare_context": {
+    "is_reshare": false,
+    "reshare_creator": {
+     "__typename": "User",
+     "__isActor": "User",
+     "id": "100063771003139",
+     "name": "CyberNews",
+     "enable_reels_tab_deeplink": true,
+     "is_verified": true,
+     "url": "https://www.facebook.com/cybernewscom"
+    }
+   },
+   "remix_info": {
+    "is_remixable": true,
+    "status": "ENABLED"
+   },
+   "video_owner_type": "FACEBOOK_USER",
+   "soundtrack_info": {
+    "id": "625763653133831",
+    "type": "CUSTOM_AUDIO"
+   },
+   "track_title": "CyberNews · Original audio",
+   "music_album_art_uri": "https://scontent-den2-1.xx.fbcdn.net/v/t39.30808-1/297403298_465245062277857_5637687846832563897_n.jpg?stp=SYNTHETIC-NOT-A-REAL-SECRET&cstp=mx708x708&ctp=s64x64&_nc_cat=1&ccb=1-7&_nc_sid=2d3e12&_nc_ohc=SYNTHETIC-NOT-A-REAL-SECRET&_nc_oc=SYNTHETIC-NOT-A-REAL-SECRET&_nc_zt=24&_nc_ht=SYNTHETIC-NOT-A-REAL-SECRET&_nc_gid=SYNTHETIC-NOT-A-REAL-SECRET&_nc_ss=79289&oh=SYNTHETIC-NOT-A-REAL-SECRET&oe=6A9E3385",
+   "is_original_audio_on_facebook": true
+  },
+  "encrypted_tracking": "AZhoXKJuUAKlfTqWCGfU4AZIyJnnsFZIcIW7JFOL8_cJ3aLG71d5wqSPcAD2Zuvo52xCKj8Es6G5RtGY-E1-HH9EKZxJ3ib-gQEte0XN7rc1L6WTuxPgVTBLkCb2CJmc4txXd4Ke6eMwI2nqAFsVDghYroeLbMNKDKWryGlFV4BXOe3gSx19n0MeF9L-nmFqZajlLsRh9ChIThi5Q2Mrb9GJfi_3KJ9mCKL29GK-jOlxDMxMII_lMZbpfl64b1X8XLV213w_ylx553YQKRx_WJG5edWQXbEcI5cImr1iG_Xbf6eYcyQJZcOZRSAtCwgCHR_DAjudDgJSbUzX5fGdzc30as0D2t0u6tMgC8NE21E4EfHqWPsuzIo26XlvYgdLrXXylijwzOjFJ2oKPLRHU6oiFIgNZH6tJBXn2YDJ8ErTEWFbvNaWOLJ1f8hCkBk5DM8mwxboLvK04l9brbi7INbccCbq1TTgqjpGDI-884REUECaX5BB0hRLFJfnJlzoVcRWAfPKphHlcBWQ-5owyjMiNoinymR5S6vheQWXgwOdfjcc1FDXVaTS8cwKlUJyCSt2ElwbRCEhLgmr0yLzPiVD7k1DUpA5_cNRj08FLmSD77ZUutueKKD22jt099RFYeNQ4ZlUuzoJpcQELHYSXN5fyDK7SMETERHYAoJa2bvqN0JYHjBvtPYkCKDGx6C49mqTtRcwtVGJiJN3DdSttMCm71IcAEW2xSrKEYODARdiZ9lO12S_tHrBy_QhNLY23psCuvej4AObGXc687IBuyAJEo6mYg3juGYU4-QwFhjluw1tOWtBZAIrvgfhoMHdolVQfhf5ZMjx7ro-5rpz7Mf-8Pa_MzWLV5v7uHS1mxjpC4P6nxJS-ZH6WofLHE6_QEJoCZ8jotLakoTvaYhCJvY5z1205nsdQ8PLOY1xntp9RuxQA1vSQ0ypVOKYcfnKxJVvnMOLc11glB0aYFi9oyZ_DUHAWLKGP3WRBsyFtbTJYGgh_2t9vhuiiFC1Y2S2yPdhjnoUakc08KUEZgsXO92bVZQFLkAH8VFuV6vOWekFFppDRUaVFMmAj7YWofrBcj3W8alzS96YXyfyA0vys5MOA9hX0l9xXyZu-KMLLuR6YNdkakmGsKqnx-pnaZ943ZZVi6Y9X0uFneQuhjURwv8E5OmR6KcUvwBGF3M",
+  "encrypted_click_tracking": "AZgx_LRY5rLe7Z4VYQ3xoyRd8xrqTF7cenTWr5kw4hWy0rY3rMM8dCVD5l0muwgbtiIBXkxPo9FAbaBPGRDuTQeMDs_pwh2WuThaj3ohfNqxcZfZ8pvAqO-oX8fJpjv12n9f0L6FQfqkfe1cnpGErqGE071487ov",
+  "click_tracking_linkshim_cb": "AUCzRAJg_gZSUerlH7aFlimVooePQEqAApwwggV0Mi9Q0dGkvM7njZR9skYLhQmgfMOrRybAyCiZaTYx1yQdfKOMblUzEgukdAX1AG3fDVx0cxo7OvU4kwqHrFzRQcvItqXOuNAtftbrJc2qyvim9deuVe1lUZXKRoFlCUlb_F3Qy9EwQBVAbCnCv746pTE",
+  "privacy_scope": {
+   "description": "Public",
+   "label": "Public",
+   "display_label": "Public",
+   "icon_image": {
+    "height": 36,
+    "scale": 3,
+    "uri": "https://static.xx.fbcdn.net/rsrc.php/yH/r/ckVwrvbnQCI.webp",
+    "width": 36
+   },
+   "privacy_scope_renderer": null
+  },
+  "post_id": "1141884761280547",
+  "creation_time": 1737225924,
+  "unpublished_content_type": "PUBLISHED",
+  "media_attribution_elements": [],
+  "attachments": [
+   {
+    "media": {
+     "__typename": "Video",
+     "is_made_with_meta_ai_app": false,
+     "__isNode": "Video",
+     "id": "1121155692481577",
+     "video_delivery_response": {
+      "transcript_urls": [],
+      "id": "1121155692481577"
+     }
+    },
+    "call_to_action_renderer": null
+   }
+  ],
+  "save_info": {
+   "viewer_save_state": "NOT_SAVED"
+  },
+  "video": {
+   "id": "1121155692481577",
+   "owner": {
+    "__typename": "User",
+    "id": "100063771003139"
+   }
+  },
+  "transparency_ad_info": {
+   "menu_label": "Ad info",
+   "should_display_ad_info": false
+  },
+  "feedback": {
+   "associated_group": null,
+   "id": "ZmVlZGJhY2s6MTE0MTg4NDc2MTI4MDU0Nw=="
+  },
+  "message": {
+   "text": "You can play Doom on a pdf 👀\n#Doom #gaming",
+   "ranges": [
+    {
+     "offset": 29,
+     "length": 5,
+     "entity": {
+      "__typename": "Hashtag",
+      "__isEntity": "Hashtag",
+      "mobileUrl": "https://m.facebook.com/hashtag/doom",
+      "url": "https://www.facebook.com/hashtag/doom?__eep__=6",
+      "id": "225689974242551",
+      "__isNode": "Hashtag"
+     }
+    },
+    {
+     "offset": 35,
+     "length": 7,
+     "entity": {
+      "__typename": "Hashtag",
+      "__isEntity": "Hashtag",
+      "mobileUrl": "https://m.facebook.com/hashtag/gaming",
+      "url": "https://www.facebook.com/hashtag/gaming?__eep__=6",
+      "id": "497417616987254",
+      "__isNode": "Hashtag"
+     }
+    }
+   ]
+  },
+  "contextualElementShortFormContext": {
+   "video_label": null
+  },
+  "likes": 22,
+  "comments": 3,
+  "facebookId": "1121155692481577",
+  "pageName": "cybernewscom",
+  "pageAdLibrary": {
+   "id": "107799854043159",
+   "uri_token": "cybernewscom",
+   "woodhenge_creator_info": null
+  }
+ }
+]

@@ -37,18 +37,18 @@ func MediaCookiesConfigured() bool {
 	return ytDlpCookiesFilePath != ""
 }
 
-// brightDataMediaFallback holds the configured Bright Data client's own
-// answer to "could you rescue this URL for this archive type". It lives here
-// rather than in the brightdata package because URL routing (which archive
-// items to create) is a utils concern and must not import the archiver stack.
-var brightDataMediaFallback atomic.Value // of mediaFallbackSupport
+// mediaFallback holds the configured paid fallback client's own answer to
+// "could you rescue this URL for this archive type". It lives here rather
+// than in the apify package because URL routing (which archive items to
+// create) is a utils concern and must not import the archiver stack.
+var mediaFallback atomic.Value // of mediaFallbackSupport
 
 type mediaFallbackSupport struct {
 	supports func(rawURL, itemType string) bool
 }
 
-// SetBrightDataMediaFallback is called once at startup after the Bright Data
-// client is (or is not) constructed. A nil predicate disables the fallback.
+// SetMediaFallback is called once at startup after the fallback client is
+// (or is not) constructed. A nil predicate disables the fallback.
 //
 // It takes a predicate rather than a boolean because routing has to ask a
 // sharper question than "is the fallback switched on": a login-only site is
@@ -57,15 +57,15 @@ type mediaFallbackSupport struct {
 // coverage table, free to drift from the one the client actually implements —
 // and the failure mode of drift is a guaranteed-failed archive item, or a
 // silently missing one.
-func SetBrightDataMediaFallback(supports func(rawURL, itemType string) bool) {
-	brightDataMediaFallback.Store(mediaFallbackSupport{supports: supports})
+func SetMediaFallback(supports func(rawURL, itemType string) bool) {
+	mediaFallback.Store(mediaFallbackSupport{supports: supports})
 }
 
-// BrightDataCanRescue reports whether the configured fallback covers this URL
+// FallbackCanRescue reports whether the configured fallback covers this URL
 // and archive type. An unconfigured fallback covers nothing, which is also the
 // zero value's answer.
-func BrightDataCanRescue(rawURL, itemType string) bool {
-	support, _ := brightDataMediaFallback.Load().(mediaFallbackSupport)
+func FallbackCanRescue(rawURL, itemType string) bool {
+	support, _ := mediaFallback.Load().(mediaFallbackSupport)
 	return support.supports != nil && support.supports(rawURL, itemType)
 }
 

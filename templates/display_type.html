@@ -488,7 +488,7 @@
             }
         }
 
-		// Renders the normalized post record for native yt-dlp and Bright Data
+		// Renders the normalized post record for native yt-dlp and paid-fallback
 		// captures. Legacy archives explicitly report that metadata is absent;
 		// nothing is guessed from the URL or historical logs.
 		async function loadVideoMetadata() {
@@ -542,7 +542,7 @@
 				if (typeof engagement.views === 'number') sub.push(`${engagement.views.toLocaleString()} views`);
 				if (typeof engagement.likes === 'number') sub.push(`${engagement.likes.toLocaleString()} likes`);
 				if (typeof engagement.comments === 'number') sub.push(`${engagement.comments.toLocaleString()} comments`);
-				if (meta.provenance) sub.push(meta.provenance === 'brightdata' ? 'Bright Data capture' : 'native capture');
+				if (meta.provenance) sub.push(meta.provenance === 'apify' ? 'Apify capture' : meta.provenance === 'brightdata' ? 'Bright Data capture' : 'native capture');
 				if (sub.length) {
 					const subEl = document.createElement('div');
 					subEl.className = 'video-sub';

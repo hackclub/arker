@@ -19,8 +19,8 @@ import (
 	"github.com/riverqueue/river/rivertype"
 	"gorm.io/gorm"
 
+	"arker/internal/apify"
 	"arker/internal/archivers"
-	"arker/internal/brightdata"
 	"arker/internal/models"
 	"arker/internal/storage"
 	"arker/internal/testfixtures"
@@ -211,8 +211,8 @@ func (f facebookProbeFallback) ArchiveFallback(context.Context, string, string, 
 			SizeBytes:   int64(len(f.video)),
 		},
 		ArchivedAt: time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
-		Provenance: models.ArchiveSourceBrightData,
-		Provider:   "brightdata_web_scraper",
+		Provenance: models.ArchiveSourceApify,
+		Provider:   "apify:apify/facebook-posts-scraper",
 	})
 	if err != nil {
 		return archivers.Result{}, err
@@ -221,17 +221,17 @@ func (f facebookProbeFallback) ArchiveFallback(context.Context, string, string, 
 		Data:         bytes.NewReader(f.video),
 		Extension:    ".mp4",
 		ContentType:  "video/mp4",
-		Source:       models.ArchiveSourceBrightData,
+		Source:       models.ArchiveSourceApify,
 		Metadata:     &archivers.Sidecar{Data: metadata},
-		RawMetadata:  &archivers.Sidecar{Data: []byte(`{"provider":"brightdata"}`)},
+		RawMetadata:  &archivers.Sidecar{Data: []byte(`{"provider":"apify"}`)},
 		Completeness: archivers.CompletenessComplete,
 	}, nil
 }
 
-// Facebook's Bright Data record can omit every intrinsic media fact even
+// Facebook's fallback record can omit every intrinsic media fact even
 // though the fallback stored a valid MP4. Those facts must be recovered after
 // storage without changing the fallback/completeness policy.
-func TestBrightDataFacebookBackfillsMissingMediaFactsFromStoredArtifact(t *testing.T) {
+func TestFallbackFacebookBackfillsMissingMediaFactsFromStoredArtifact(t *testing.T) {
 	video, err := os.ReadFile("../archivers/testdata/muxed_video_audio_sample.mp4")
 	if err != nil {
 		t.Fatal(err)
@@ -241,7 +241,7 @@ func TestBrightDataFacebookBackfillsMissingMediaFactsFromStoredArtifact(t *testi
 	db := newHandlerLogTestDB(t)
 	store := storage.NewMemoryStorage()
 	backend := facebookProbeFallback{video: video}
-	arch := brightdata.WithFallback(refusedVideoArchiver{}, utils.ArchiveTypeYtDlp, backend)
+	arch := apify.WithFallback(refusedVideoArchiver{}, utils.ArchiveTypeYtDlp, backend)
 	item := runArchiveWorkerForProbeTest(t, db, store, "fbp01", probeFacebookVideoURL, arch)
 	metadata := storedVideoMetadata(t, db, store, item.ID)
 	if metadata.DurationSeconds == nil || *metadata.DurationSeconds != 7 {
@@ -298,8 +298,8 @@ func (f tiktokProbeFallback) ArchiveFallback(context.Context, string, string, io
 			BitrateKbps: &bitrate,
 		},
 		ArchivedAt: time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
-		Provenance: models.ArchiveSourceBrightData,
-		Provider:   "brightdata_web_scraper",
+		Provenance: models.ArchiveSourceApify,
+		Provider:   "apify:apify/facebook-posts-scraper",
 	})
 	if err != nil {
 		return archivers.Result{}, err
@@ -308,18 +308,18 @@ func (f tiktokProbeFallback) ArchiveFallback(context.Context, string, string, io
 		Data:         bytes.NewReader(f.video),
 		Extension:    ".mp4",
 		ContentType:  "video/mp4",
-		Source:       models.ArchiveSourceBrightData,
+		Source:       models.ArchiveSourceApify,
 		Metadata:     &archivers.Sidecar{Data: metadata},
 		RawMetadata:  &archivers.Sidecar{Data: []byte(conflictingTikTokRawMetadata)},
 		Completeness: archivers.CompletenessComplete,
 	}, nil
 }
 
-// Bright Data described FJBKa as five seconds and 576x1920, while ffprobe of
+// The provider described FJBKa as five seconds and 576x1920, while ffprobe of
 // the exact archived MP4 reported 5.478005 seconds and 1080x1920. Intrinsic
 // normalized facts must follow the stored artifact without rewriting any
 // descriptive claim or the separately served raw provider record.
-func TestBrightDataTikTokStoredArtifactOverridesConflictingProviderVideoFacts(t *testing.T) {
+func TestFallbackTikTokStoredArtifactOverridesConflictingProviderVideoFacts(t *testing.T) {
 	video, err := os.ReadFile("../archivers/testdata/muxed_video_audio_sample.mp4")
 	if err != nil {
 		t.Fatal(err)
@@ -329,7 +329,7 @@ func TestBrightDataTikTokStoredArtifactOverridesConflictingProviderVideoFacts(t 
 	db := newHandlerLogTestDB(t)
 	store := storage.NewMemoryStorage()
 	backend := tiktokProbeFallback{video: video}
-	arch := brightdata.WithFallback(refusedVideoArchiver{}, utils.ArchiveTypeYtDlp, backend)
+	arch := apify.WithFallback(refusedVideoArchiver{}, utils.ArchiveTypeYtDlp, backend)
 	item := runArchiveWorkerForProbeTest(t, db, store, "FJBKa", probeTikTokVideoURL, arch)
 	metadata := storedVideoMetadata(t, db, store, item.ID)
 
@@ -348,7 +348,7 @@ func TestBrightDataTikTokStoredArtifactOverridesConflictingProviderVideoFacts(t 
 	}
 	if metadata.Title != "Provider title" || metadata.Description != "Provider caption" || metadata.Author != "TikTok" ||
 		metadata.PostID != "7673169793343622430" || metadata.CanonicalURL != probeTikTokVideoURL || metadata.PublicationTimestamp != "2026-08-12T15:37:54Z" ||
-		metadata.Engagement.Views == nil || *metadata.Engagement.Views != 60300 || metadata.Provider != "brightdata_web_scraper" {
+		metadata.Engagement.Views == nil || *metadata.Engagement.Views != 60300 || metadata.Provider != "apify:apify/facebook-posts-scraper" {
 		t.Errorf("descriptive/provider facts changed: %+v", metadata)
 	}
 	if _, err := os.Stat(probedPath); err != nil {
@@ -408,7 +408,7 @@ func TestVideoProbeFailureIsNonFatalAndRetainsProviderFacts(t *testing.T) {
 	db := newHandlerLogTestDB(t)
 	store := storage.NewMemoryStorage()
 	backend := tiktokProbeFallback{video: video}
-	arch := brightdata.WithFallback(refusedVideoArchiver{}, utils.ArchiveTypeYtDlp, backend)
+	arch := apify.WithFallback(refusedVideoArchiver{}, utils.ArchiveTypeYtDlp, backend)
 	item := runArchiveWorkerForProbeTest(t, db, store, "ttf01", probeTikTokVideoURL, arch)
 	metadata := storedVideoMetadata(t, db, store, item.ID)
 

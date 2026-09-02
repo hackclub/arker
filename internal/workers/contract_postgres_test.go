@@ -47,7 +47,7 @@ func postgresTestDB(t *testing.T) (*gorm.DB, func()) {
 		t.Fatalf("open postgres test schema: %v", err)
 	}
 	if err := db.AutoMigrate(&models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{},
-		&models.ArchiveItemLog{}, &models.BrightDataUsage{}, &models.Config{}); err != nil {
+		&models.ArchiveItemLog{}, &models.FallbackUsage{}, &models.Config{}); err != nil {
 		cleanup()
 		t.Fatalf("migrate postgres test schema: %v", err)
 	}

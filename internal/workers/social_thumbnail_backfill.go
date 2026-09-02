@@ -141,7 +141,7 @@ func (w *SocialThumbnailBackfillWorker) generate(ctx context.Context, args Socia
 	var nativeErr error
 	providerFirst := args.Type == utils.ArchiveTypeGalleryDl &&
 		w.provider != nil && w.provider.SupportsSocialThumbnail(args.URL, args.Type) &&
-		groupHasSource(items, models.ArchiveSourceBrightData)
+		groupHasFallbackSource(items)
 
 	if args.Type == utils.ArchiveTypeGalleryDl {
 		thumb, nativeErr = w.thumbnailFromStoredGalleries(items)
@@ -180,7 +180,7 @@ func (w *SocialThumbnailBackfillWorker) generate(ctx context.Context, args Socia
 			}
 		}
 	}
-	// A Bright Data artifact proves the native archive path already failed for
+	// A paid-fallback artifact proves the native archive path already failed for
 	// this URL. Ask the provider that successfully described the stored post
 	// for its authored cover first; only retry native when that provider says no
 	// cover exists. This keeps large repairs source-faithful without spending a
@@ -312,9 +312,9 @@ func (w *SocialThumbnailBackfillWorker) thumbnailFromStoredVideo(ctx context.Con
 	return nil, lastErr
 }
 
-func groupHasSource(items []models.ArchiveItem, source string) bool {
+func groupHasFallbackSource(items []models.ArchiveItem) bool {
 	for i := range items {
-		if items[i].Source == source {
+		if models.IsFallbackSource(items[i].Source) {
 			return true
 		}
 	}
@@ -413,7 +413,7 @@ func (w *SocialThumbnailBackfillWorker) checkProviderBudget(args SocialThumbnail
 		return errThumbnailBudgetExhausted
 	}
 	var spent float64
-	if err := w.db.Model(&models.BrightDataUsage{}).
+	if err := w.db.Model(&models.FallbackUsage{}).
 		Where("created_at >= ?", time.Unix(args.StartedAt, 0).UTC()).
 		Select("COALESCE(SUM(cost_usd), 0)").Scan(&spent).Error; err != nil {
 		return fmt.Errorf("read provider spend: %w", err)
@@ -663,10 +663,10 @@ func EnqueueSocialThumbnailBackfill(ctx context.Context, db *gorm.DB, client *ri
 		if iGallery != jGallery {
 			return iGallery // cheap stored-ZIP repairs first
 		}
-		iBD := candidates[i].Source == models.ArchiveSourceBrightData
-		jBD := candidates[j].Source == models.ArchiveSourceBrightData
-		if iBD != jBD {
-			return iBD
+		iFallback := models.IsFallbackSource(candidates[i].Source)
+		jFallback := models.IsFallbackSource(candidates[j].Source)
+		if iFallback != jFallback {
+			return iFallback
 		}
 		return candidates[i].ItemID > candidates[j].ItemID
 	})

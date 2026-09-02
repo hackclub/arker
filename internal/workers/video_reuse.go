@@ -39,9 +39,11 @@ import (
 // "youtube" type spelling and rows without a backfilled canonical_url are both
 // still matched, so pre-rename archives keep their videos reusable.
 //
-// Bright Data rescues are deliberately NOT reused: that fallback is capped at
-// the progressive stream (360p), so its bytes are a degraded stand-in, not
-// the bytes a fresh native run would fetch. A repeat capture is the archive's
+// Paid-fallback rescues (Apify, and historical Bright Data) are deliberately
+// NOT reused: a fallback can be capped below native fidelity (Bright Data
+// YouTube was 360p; Apify YouTube tops out at the downloader's best
+// progressive rendition), so its bytes are a stand-in, not necessarily the
+// bytes a fresh native run would fetch. A repeat capture is the archive's
 // one chance to upgrade such a video to full fidelity once whatever blocked
 // the native path (an IP flag, a cookie outage) has been fixed. If the native
 // path is still blocked, the fallback simply buys the same rescue again.
@@ -63,7 +65,7 @@ func findReusableVideoItem(db *gorm.DB, url string, excludeItemID uint) *models.
 		Where("archive_items.type IN ?", utils.ArchiveTypeMatchValues(utils.ArchiveTypeYtDlp)).
 		Where("archive_items.status = ?", "completed").
 		Where("archive_items.storage_key <> ''").
-		Where("(archive_items.source IS NULL OR archive_items.source <> ?)", models.ArchiveSourceBrightData).
+		Where("(archive_items.source IS NULL OR archive_items.source NOT IN ?)", []string{models.ArchiveSourceBrightData, models.ArchiveSourceApify}).
 		Where("archive_items.id <> ?", excludeItemID).
 		Order("archive_items.updated_at DESC").
 		First(&item).Error

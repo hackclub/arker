@@ -165,7 +165,7 @@ func TestSocialThumbnailBackfillRetainsLegacyPreviewWhenPosterUnavailable(t *tes
 
 func TestSocialThumbnailBackfillSkipsPaidProviderAndUsesStoredVideo(t *testing.T) {
 	db := newWorkerTestDB(t)
-	if err := db.AutoMigrate(&models.BrightDataUsage{}); err != nil {
+	if err := db.AutoMigrate(&models.FallbackUsage{}); err != nil {
 		t.Fatal(err)
 	}
 	store := storage.NewMemoryStorage()

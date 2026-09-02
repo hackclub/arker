@@ -1,0 +1,188 @@
+[
+ {
+  "type": "tweet",
+  "id": "2094884934510956691",
+  "url": "https://x.com/NASA/status/2094884934510956691",
+  "twitterUrl": "https://twitter.com/NASA/status/2094884934510956691",
+  "text": "The month of September brings a new season and skywatching opportunities. You can look forward to:\n- The Moon pointing out stellar sights\n- Venus hitting peak brilliance\n- Seasons shifting on Sept. 22\n- The Harvest Moon\n\nHappy skywatching! https://t.co/F65OTMYYxj https://t.co/0VnxsLwexb",
+  "source": "",
+  "retweetCount": 450,
+  "replyCount": 102,
+  "likeCount": 2559,
+  "quoteCount": 31,
+  "viewCount": 1080315,
+  "createdAt": "Tue Sep 01 20:27:44 +0000 2026",
+  "lang": "en",
+  "bookmarkCount": 187,
+  "isReply": false,
+  "inReplyToId": null,
+  "conversationId": "2094884934510956691",
+  "inReplyToUserId": "",
+  "inReplyToUsername": "",
+  "isPinned": false,
+  "author": {
+   "type": "user",
+   "userName": "NASA",
+   "url": "https://x.com/NASA",
+   "twitterUrl": "https://twitter.com/NASA",
+   "id": "11348282",
+   "name": "NASA",
+   "isVerified": false,
+   "isBlueVerified": true,
+   "profilePicture": "https://pbs.twimg.com/profile_images/1321163587679784960/0ZxKlEKB_normal.jpg",
+   "coverPicture": "https://pbs.twimg.com/profile_banners/11348282/1775567134",
+   "description": "Making the seemingly impossible, possible. ✨",
+   "location": "Pale Blue Dot",
+   "followers": 92381159,
+   "following": 117,
+   "status": "",
+   "canDm": false,
+   "canMediaTag": true,
+   "createdAt": "Wed Dec 19 20:20:32 +0000 2007",
+   "entities": {
+    "description": {},
+    "url": {
+     "urls": [
+      {
+       "display_url": "nasa.gov",
+       "expanded_url": "http://www.nasa.gov/",
+       "indices": [
+        0,
+        23
+       ],
+       "url": "https://t.co/9NkQJKAVks"
+      }
+     ]
+    }
+   },
+   "fastFollowersCount": 0,
+   "favouritesCount": 0,
+   "hasCustomTimelines": true,
+   "isTranslator": false,
+   "mediaCount": 28135,
+   "statusesCount": 74268,
+   "withheldInCountries": [],
+   "affiliatesHighlightedLabel": {},
+   "possiblySensitive": false,
+   "pinnedTweetIds": [],
+   "profile_bio": {
+    "description": "Making the seemingly impossible, possible. ✨",
+    "entities": {
+     "description": {},
+     "url": {
+      "urls": [
+       {
+        "display_url": "nasa.gov",
+        "expanded_url": "http://www.nasa.gov/",
+        "indices": [
+         0,
+         23
+        ],
+        "url": "https://t.co/9NkQJKAVks"
+       }
+      ]
+     }
+    }
+   },
+   "isAutomated": false,
+   "automatedBy": null
+  },
+  "extendedEntities": {
+   "media": [
+    {
+     "additional_media_info": {
+      "monetizable": false
+     },
+     "display_url": "pic.x.com/0VnxsLwexb",
+     "expanded_url": "https://x.com/NASA/status/2094884934510956691/video/1",
+     "ext_master_playlist_only": [],
+     "ext_media_availability": {
+      "status": "Available"
+     },
+     "ext_playlists": [],
+     "id_str": "2094884715291365376",
+     "indices": [
+      264,
+      287
+     ],
+     "media_key": "13_2094884715291365376",
+     "media_results": {
+      "id": "QXBpTWVkaWFSZXN1bHRzOgwABAoAAR0ShoykVlAAAAA=",
+      "result": {
+       "__typename": "ApiMedia",
+       "id": "QXBpTWVkaWE6DAAECgABHRKGjKRWUAAAAA==",
+       "media_key": "13_2094884715291365376"
+      }
+     },
+     "media_url_https": "https://pbs.twimg.com/media/HRKGvxGWoAAIwi3.jpg",
+     "original_info": {
+      "focus_rects": [],
+      "height": 405,
+      "width": 720
+     },
+     "sizes": {
+      "large": {
+       "h": 405,
+       "w": 720
+      }
+     },
+     "type": "video",
+     "url": "https://t.co/0VnxsLwexb",
+     "video_info": {
+      "aspect_ratio": [
+       16,
+       9
+      ],
+      "duration_millis": 191758,
+      "variants": [
+       {
+        "content_type": "application/x-mpegURL",
+        "url": "https://video.twimg.com/amplify_video/2094884715291365376/pl/ppotHMuAmecLTljZ.m3u8?tag=14"
+       },
+       {
+        "bitrate": 288000,
+        "content_type": "video/mp4",
+        "url": "https://video.twimg.com/amplify_video/2094884715291365376/vid/avc1/480x270/J8CKzFH30mRPUy-L.mp4?tag=14"
+       },
+       {
+        "bitrate": 832000,
+        "content_type": "video/mp4",
+        "url": "https://video.twimg.com/amplify_video/2094884715291365376/vid/avc1/640x360/BlQ5jvNt0h7hHL3P.mp4?tag=14"
+       },
+       {
+        "bitrate": 2176000,
+        "content_type": "video/mp4",
+        "url": "https://video.twimg.com/amplify_video/2094884715291365376/vid/avc1/1280x720/dHqH1lJIUJwKoIB2.mp4?tag=14"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "card": {},
+  "place": {},
+  "entities": {
+   "urls": [
+    {
+     "display_url": "go.nasa.gov/4wZB3Hy",
+     "expanded_url": "https://go.nasa.gov/4wZB3Hy",
+     "indices": [
+      240,
+      263
+     ],
+     "url": "https://t.co/F65OTMYYxj"
+    }
+   ]
+  },
+  "isRetweet": false,
+  "isQuote": false,
+  "isConversationControlled": false,
+  "quoted_tweet": null,
+  "retweeted_tweet": null
+ },
+ {
+  "type": "mock_tweet",
+  "id": -1,
+  "text": "From KaitoEasyAPI, a reminder:Our API pricing is based on the volume of data returned. However, to ensure we can cover our costs on the Apify platform, we have a minimum charge of $X per API call,even if the response contains no results.Thus, we returned N pieces of mock data. We will monitor and adjust the size of N based on the infrastructure costs incurred by Apify.This helps offset the infrastructure costs we incur for each API request, regardless of the data returned. We want to be upfront about this policy so you understand the pricing structure when using our service.Despite adding mock data when no results are found, we're still barely breaking even. Our prices are already very reasonable, but we're committed to maintaining this service to support the growth of your project.Please let us know if you have any other questions!"
+ }
+]

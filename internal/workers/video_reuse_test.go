@@ -293,9 +293,9 @@ func TestFindReusableVideoItemIgnoresUnusableItems(t *testing.T) {
 	}
 }
 
-// A Bright Data rescue is a degraded 360p stand-in, not the bytes a native run
+// A paid-fallback rescue can be a degraded stand-in, not the bytes a native run
 // would fetch — a repeat capture must redownload, not alias the rescue.
-func TestFindReusableVideoItemSkipsBrightDataRescues(t *testing.T) {
+func TestFindReusableVideoItemSkipsFallbackRescues(t *testing.T) {
 	db := newWorkerTestDB(t)
 	store := storage.NewMemoryStorage()
 	url := "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -304,7 +304,7 @@ func TestFindReusableVideoItemSkipsBrightDataRescues(t *testing.T) {
 		item.Source = models.ArchiveSourceBrightData
 	})
 	if found := findReusableVideoItem(db, url, 0); found != nil {
-		t.Fatalf("reused a Bright Data rescue: %+v", found)
+		t.Fatalf("reused a fallback rescue: %+v", found)
 	}
 
 	db.Model(&models.ArchiveItem{}).Where("id = ?", rescued.ID).

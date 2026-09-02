@@ -25,8 +25,8 @@ import (
 	"github.com/riverqueue/river/rivermigrate"
 	"github.com/riverqueue/river/rivertype"
 
+	"arker/internal/apify"
 	"arker/internal/archivers"
-	"arker/internal/brightdata"
 	"arker/internal/handlers"
 	"arker/internal/models"
 	"arker/internal/monitoring"
@@ -90,19 +90,11 @@ type Config struct {
 	GalleryDlUserAgent    string `envconfig:"GALLERYDL_USER_AGENT"`    // Optional UA override; empty keeps gallery-dl's per-site defaults
 	GalleryDlSleepRequest string `envconfig:"GALLERYDL_SLEEP_REQUEST"` // Optional inter-request delay ("1", "0.5-1.5"); empty keeps per-site defaults
 
-	// Bright Data fallback for Instagram/YouTube media. Empty API key disables
-	// the fallback entirely; with just the key set, customer ID and browser
-	// zone password are resolved from the Bright Data API at startup.
-	BrightDataAPIKey               string  `envconfig:"BRIGHTDATA_API_KEY"`
-	BrightDataCustomerID           string  `envconfig:"BRIGHTDATA_CUSTOMER_ID"`
-	BrightDataBrowserZone          string  `envconfig:"BRIGHTDATA_BROWSER_ZONE" default:"mcp_browser_no_ratelimit"`
-	BrightDataBrowserZonePassword  string  `envconfig:"BRIGHTDATA_BROWSER_ZONE_PASSWORD"`
-	BrightDataScraperCostPerRecord float64 `envconfig:"BRIGHTDATA_SCRAPER_COST_PER_RECORD" default:"0.0015"` // USD per Web Scraper API record
-	BrightDataBrowserCostPerGB     float64 `envconfig:"BRIGHTDATA_BROWSER_COST_PER_GB" default:"8.40"`       // USD per GB of Browser API traffic
-	// Innertube client the YouTube fallback impersonates; bump the version via
-	// env when YouTube retires it (no code change needed).
-	BrightDataYouTubeClientName    string `envconfig:"BRIGHTDATA_YT_CLIENT_NAME" default:"ANDROID"`
-	BrightDataYouTubeClientVersion string `envconfig:"BRIGHTDATA_YT_CLIENT_VERSION" default:"20.10.38"`
+	// Apify fallback for social media (Instagram, TikTok, YouTube, Facebook,
+	// Reddit, X, Pinterest). An empty token disables the fallback entirely.
+	ApifyAPIToken      string        `envconfig:"APIFY_API_TOKEN"`
+	ApifyRunTimeout    time.Duration `envconfig:"APIFY_RUN_TIMEOUT" default:"10m"`      // bound on one actor run; overrunning runs are aborted
+	ApifyMaxRunCostUSD float64       `envconfig:"APIFY_MAX_RUN_COST_USD" default:"0.5"` // per-run spend that triggers a loud warning
 }
 
 // CustomErrorHandler implements the River ErrorHandler interface and updates archive items.
@@ -454,7 +446,7 @@ func main() {
 	}
 
 	// Auto-migrate database models.
-	if err := db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.ArchiveItemLog{}, &models.Config{}, &models.BrightDataUsage{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.APIKey{}, &models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{}, &models.ArchiveItemLog{}, &models.Config{}, &models.FallbackUsage{}); err != nil {
 		slog.Error("AutoMigrate failed with detailed error", "error", err, "error_type", fmt.Sprintf("%T", err), "error_string", err.Error())
 		slog.Info("Continuing startup despite AutoMigrate error")
 	}
@@ -463,6 +455,9 @@ func main() {
 	// gorm.Model, so this is expressed as raw SQL rather than a struct tag.
 	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_archive_items_status_created_at ON archive_items (status, created_at)").Error; err != nil {
 		slog.Error("Failed to create archive_items status/created_at index", "error", err)
+	}
+	if err := utils.MigrateBrightDataUsage(db); err != nil {
+		slog.Error("Failed to carry Bright Data usage history into fallback_usages", "error", err)
 	}
 	// Explicit DDL, not AutoMigrate: AutoMigrate cannot add a column to a table
 	// that already exists with these driver versions, and it fails silently.
@@ -629,38 +624,31 @@ func main() {
 		utils.ArchiveTypeItch:       &archivers.ItchArchiver{ItchDlPath: cfg.ItchDlPath, APIKey: cfg.ItchAPIKey},
 	}
 
-	// Bright Data fallback: wraps the media archivers so a failed native run on
-	// a covered URL (Instagram, YouTube, TikTok, Reddit, X) gets one paid
-	// second chance. Native flows stay preferred; the fallback only runs after
-	// they fail.
+	// Apify fallback: wraps the media archivers so a failed native run on a
+	// covered URL (Instagram, TikTok, YouTube, Facebook, Reddit, X, Pinterest)
+	// gets one paid second chance. Native flows stay preferred; the fallback
+	// only runs after they fail.
 	var socialThumbnailProvider workers.SocialThumbnailProvider
 	var videoMetadataProvider workers.VideoContractMetadataProvider
-	if cfg.BrightDataAPIKey != "" {
-		bdClient := brightdata.New(context.Background(), brightdata.Config{
-			APIKey:               cfg.BrightDataAPIKey,
-			CustomerID:           cfg.BrightDataCustomerID,
-			BrowserZone:          cfg.BrightDataBrowserZone,
-			BrowserZonePassword:  cfg.BrightDataBrowserZonePassword,
-			ScraperCostPerRecord: cfg.BrightDataScraperCostPerRecord,
-			BrowserCostPerGB:     cfg.BrightDataBrowserCostPerGB,
-			YouTubeClientName:    cfg.BrightDataYouTubeClientName,
-			YouTubeClientVersion: cfg.BrightDataYouTubeClientVersion,
+	if cfg.ApifyAPIToken != "" {
+		apifyClient := apify.New(apify.Config{
+			Token:         cfg.ApifyAPIToken,
+			RunTimeout:    cfg.ApifyRunTimeout,
+			MaxRunCostUSD: cfg.ApifyMaxRunCostUSD,
 		})
-		archiversMap[utils.ArchiveTypeYtDlp] = brightdata.WithFallback(archiversMap[utils.ArchiveTypeYtDlp], utils.ArchiveTypeYtDlp, bdClient)
-		archiversMap[utils.ArchiveTypeGalleryDl] = brightdata.WithFallback(archiversMap[utils.ArchiveTypeGalleryDl], utils.ArchiveTypeGalleryDl, bdClient)
-		socialThumbnailProvider = bdClient
-		videoMetadataProvider = bdClient
+		archiversMap[utils.ArchiveTypeYtDlp] = apify.WithFallback(archiversMap[utils.ArchiveTypeYtDlp], utils.ArchiveTypeYtDlp, apifyClient)
+		archiversMap[utils.ArchiveTypeGalleryDl] = apify.WithFallback(archiversMap[utils.ArchiveTypeGalleryDl], utils.ArchiveTypeGalleryDl, apifyClient)
+		socialThumbnailProvider = apifyClient
+		videoMetadataProvider = apifyClient
 		// Routing asks the client itself whether a login-only URL has a paid
 		// path to success before queueing an item for it, so the coverage
 		// table lives in exactly one place.
-		if bdClient.Enabled() {
-			utils.SetBrightDataMediaFallback(bdClient.SupportsFallback)
-		}
-		slog.Info("Bright Data media fallback configured",
-			"datasets", bdClient.Enabled(),
-			"browser_sessions", bdClient.BrowserReady())
+		utils.SetMediaFallback(apifyClient.SupportsFallback)
+		slog.Info("Apify media fallback configured",
+			"run_timeout", cfg.ApifyRunTimeout,
+			"max_run_cost_usd", cfg.ApifyMaxRunCostUSD)
 	} else {
-		slog.Info("Bright Data media fallback not configured (BRIGHTDATA_API_KEY unset)")
+		slog.Info("Apify media fallback not configured (APIFY_API_TOKEN unset)")
 	}
 
 	os.MkdirAll(cfg.CachePath, 0755)
@@ -819,7 +807,8 @@ func main() {
 	admin.POST("/api-keys/:id/toggle", func(c *gin.Context) { handlers.ApiKeysToggle(c, db) })
 	admin.DELETE("/api-keys/:id", func(c *gin.Context) { handlers.ApiKeysDelete(c, db) })
 	admin.POST("/retry-failed", func(c *gin.Context) { handlers.RetryAllFailedJobs(c, db, riverClient) })
-	admin.GET("/brightdata-usage", func(c *gin.Context) { handlers.BrightDataUsage(c, db) })
+	admin.GET("/fallback-usage", func(c *gin.Context) { handlers.FallbackUsage(c, db) })
+	admin.GET("/brightdata-usage", func(c *gin.Context) { c.Redirect(http.StatusMovedPermanently, "/admin/fallback-usage") })
 	admin.POST("/backfill-media", func(c *gin.Context) { handlers.BackfillMissingMediaItems(c, db, riverClient) })
 	admin.POST("/backfill-social-thumbnails", func(c *gin.Context) { handlers.BackfillSocialThumbnails(c, db, riverClient) })
 	admin.GET("/backfill-social-thumbnails", func(c *gin.Context) { handlers.SocialThumbnailBackfillStatus(c, db) })

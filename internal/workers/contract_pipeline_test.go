@@ -27,7 +27,7 @@ import (
 // archivers, with the fake extractors from internal/testfixtures standing in
 // for yt-dlp and gallery-dl. Nothing here touches the network.
 
-// newPipelineTestDB is newWorkerTestDB plus BrightDataUsage, which the cost
+// newPipelineTestDB is newWorkerTestDB plus FallbackUsage, which the cost
 // half of the contract needs.
 func newPipelineTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -36,7 +36,7 @@ func newPipelineTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	if err := db.AutoMigrate(&models.ArchivedURL{}, &models.Capture{}, &models.ArchiveItem{},
-		&models.ArchiveItemLog{}, &models.BrightDataUsage{}, &models.Config{}); err != nil {
+		&models.ArchiveItemLog{}, &models.FallbackUsage{}, &models.Config{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return db
@@ -176,8 +176,8 @@ func TestPipelineLeavesItemUnfinishedWhenTheExtractorRefuses(t *testing.T) {
 	}
 }
 
-// usageRecordingBackend is a mock Bright Data backend. It never talks to
-// Bright Data; it writes the same usage row shape the real client writes, so
+// usageRecordingBackend is a mock Apify backend. It never talks to
+// Apify; it writes the same usage row shape the real client writes, so
 // the accounting contract can be tested without spending money.
 type usageRecordingBackend struct {
 	supports bool
@@ -201,17 +201,18 @@ func (b *usageRecordingBackend) ArchiveFallback(ctx context.Context, url, itemTy
 
 	product := b.product
 	if product == "" {
-		product = "web_scraper"
+		product = "fixture/instagram-post-details"
 	}
 	// A billable attempt is recorded whether or not it succeeds: a failed
 	// dataset trigger still costs money, and silent spend is exactly what
 	// this table exists to prevent.
-	usage := &models.BrightDataUsage{
+	usage := &models.FallbackUsage{
 		ArchiveItemID: itemID,
 		URL:           url,
+		Provider:      models.FallbackProviderApify,
 		Product:       product,
-		DatasetID:     "gd_fixture_dataset",
-		SnapshotID:    "s_fixture_snapshot",
+		ResourceID:    "kvs_fixture",
+		OperationID:   "run_fixture",
 		Records:       b.records,
 		CostUSD:       b.costUSD,
 		Success:       !b.fail,
@@ -221,21 +222,21 @@ func (b *usageRecordingBackend) ArchiveFallback(ctx context.Context, url, itemTy
 		if db != nil {
 			db.Save(usage)
 		}
-		fmt.Fprintf(logWriter, "fixture Bright Data backend failed\n")
-		return archivers.Result{}, errors.New("bright data fixture failure")
+		fmt.Fprintf(logWriter, "fixture Apify backend failed\n")
+		return archivers.Result{}, errors.New("apify fixture failure")
 	}
 	usage.Detail = "fixture: video 512 bytes"
 	if db != nil {
 		db.Save(usage)
 	}
 	return archivers.Result{
-		Data:        strings.NewReader("brightdata-rescued-media"),
+		Data:        strings.NewReader("apify-rescued-media"),
 		Extension:   ".mp4",
 		ContentType: "video/mp4",
-		Source:      models.ArchiveSourceBrightData,
+		Source:      models.ArchiveSourceApify,
 		Metadata: &archivers.Sidecar{Data: []byte(
-			`{"schema_version":"1","post_id":"DbktPO1Eopi","title":"Rescued reel","provenance":"fallback","provider":"brightdata"}`)},
-		RawMetadata: &archivers.Sidecar{Data: []byte(`{"provider":"brightdata"}`)},
+			`{"schema_version":"1","post_id":"DbktPO1Eopi","title":"Rescued reel","provenance":"fallback","provider":"apify"}`)},
+		RawMetadata: &archivers.Sidecar{Data: []byte(`{"provider":"apify"}`)},
 	}, nil
 }
 
@@ -251,10 +252,10 @@ func fallbackArchivers(backend *usageRecordingBackend) map[string]archivers.Arch
 	}
 }
 
-// fallbackWrapper mirrors brightdata.FallbackArchiver's decision ladder.
-// It is duplicated here rather than imported because internal/brightdata
+// fallbackWrapper mirrors apify.FallbackArchiver's decision ladder.
+// It is duplicated here rather than imported because internal/apify
 // imports internal/archivers, and the workers package needs both plus a mock;
-// the ladder itself is asserted directly in internal/brightdata.
+// the ladder itself is asserted directly in internal/apify.
 type fallbackWrapper struct {
 	primary archivers.Archiver
 	typ     string
@@ -272,7 +273,7 @@ func (f *fallbackWrapper) Archive(ctx context.Context, url string, logWriter io.
 	}
 	fallbackResult, fallbackErr := f.backend.ArchiveFallback(ctx, url, f.typ, logWriter, db, itemID)
 	if fallbackErr != nil {
-		return result, fmt.Errorf("native flow failed (%v); Bright Data fallback failed: %w", nativeErr, fallbackErr)
+		return result, fmt.Errorf("native flow failed (%v); Apify fallback failed: %w", nativeErr, fallbackErr)
 	}
 	return fallbackResult, nil
 }
@@ -296,7 +297,7 @@ func TestPaidFallbackIsOnlyReachedAfterAFreeFailure(t *testing.T) {
 		t.Error("the paid backend was consulted even though the free path succeeded")
 	}
 	var usageCount int64
-	db.Model(&models.BrightDataUsage{}).Count(&usageCount)
+	db.Model(&models.FallbackUsage{}).Count(&usageCount)
 	if usageCount != 0 {
 		t.Errorf("recorded %d usage rows for a free success, want 0", usageCount)
 	}
@@ -329,11 +330,11 @@ func TestPaidFallbackRescueIsRecordedAsSuch(t *testing.T) {
 	if got.Status != "completed" {
 		t.Fatalf("status = %q, want completed after a successful rescue", got.Status)
 	}
-	if got.Source != models.ArchiveSourceBrightData {
-		t.Errorf("source = %q, want brightdata", got.Source)
+	if got.Source != models.ArchiveSourceApify {
+		t.Errorf("source = %q, want apify", got.Source)
 	}
 
-	var usage models.BrightDataUsage
+	var usage models.FallbackUsage
 	if err := db.Where("archive_item_id = ?", item.ID).First(&usage).Error; err != nil {
 		t.Fatalf("no usage row was recorded for a paid rescue: %v", err)
 	}
@@ -361,7 +362,7 @@ func TestPaidFallbackFailureLeavesItemFailedAndStillBills(t *testing.T) {
 	if err == nil {
 		t.Fatal("a failed paid rescue must return an error")
 	}
-	if !strings.Contains(err.Error(), "Bright Data fallback failed") {
+	if !strings.Contains(err.Error(), "Apify fallback failed") {
 		t.Errorf("error = %q, want it to name both the native and the paid failure", err)
 	}
 
@@ -374,7 +375,7 @@ func TestPaidFallbackFailureLeavesItemFailedAndStillBills(t *testing.T) {
 		t.Error("a failed paid rescue must not leave a stored artifact")
 	}
 
-	var usage models.BrightDataUsage
+	var usage models.FallbackUsage
 	if err := db.Where("archive_item_id = ?", item.ID).First(&usage).Error; err != nil {
 		t.Fatalf("a failed paid attempt recorded no usage row; spend would be invisible: %v", err)
 	}

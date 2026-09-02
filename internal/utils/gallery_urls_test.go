@@ -171,10 +171,10 @@ func TestIsGalleryDLURLRejectsBareHosts(t *testing.T) {
 }
 
 // A login-only URL without cookies is only worth an archive item when the
-// Bright Data fallback gives the guaranteed-to-fail native run a real path to
+// Apify fallback gives the guaranteed-to-fail native run a real path to
 // success. Coverage is the fallback client's own answer, per URL and archive
 // type: a login-only site it does not cover stays excluded.
-func TestShouldCreateGalleryDLItemWithBrightDataFallback(t *testing.T) {
+func TestShouldCreateGalleryDLItemWithFallback(t *testing.T) {
 	if MediaCookiesConfigured() {
 		t.Skip("test requires no cookie jar configured")
 	}
@@ -183,8 +183,8 @@ func TestShouldCreateGalleryDLItemWithBrightDataFallback(t *testing.T) {
 	const xPost = "https://x.com/user/status/123"
 	const pinterestPin = "https://www.pinterest.com/pin/1234567890/"
 
-	SetBrightDataMediaFallback(nil)
-	t.Cleanup(func() { SetBrightDataMediaFallback(nil) })
+	SetMediaFallback(nil)
+	t.Cleanup(func() { SetMediaFallback(nil) })
 	for _, rawURL := range []string{igPost, xPost, pinterestPin} {
 		if ShouldCreateGalleryDLItem(rawURL) {
 			t.Errorf("cookie-less item created for %s with no fallback configured", rawURL)
@@ -193,14 +193,14 @@ func TestShouldCreateGalleryDLItemWithBrightDataFallback(t *testing.T) {
 
 	// Coverage is per URL, not per switch: a client covering Instagram and X
 	// must not drag every other login-only site along with it.
-	SetBrightDataMediaFallback(func(rawURL, itemType string) bool {
+	SetMediaFallback(func(rawURL, itemType string) bool {
 		return itemType == ArchiveTypeGalleryDl && (IsInstagramURL(rawURL) || IsXPostURL(rawURL))
 	})
 	if !ShouldCreateGalleryDLItem(igPost) {
-		t.Error("cookie-less Instagram item not created despite Bright Data fallback")
+		t.Error("cookie-less Instagram item not created despite Apify fallback")
 	}
 	if !ShouldCreateGalleryDLItem(xPost) {
-		t.Error("cookie-less X item not created despite Bright Data fallback")
+		t.Error("cookie-less X item not created despite Apify fallback")
 	}
 	if ShouldCreateGalleryDLItem(pinterestPin) {
 		t.Error("cookie-less Pinterest item created by a fallback that does not cover Pinterest")
@@ -209,11 +209,11 @@ func TestShouldCreateGalleryDLItemWithBrightDataFallback(t *testing.T) {
 	// And a client that does cover Pinterest — which the real one now does —
 	// gets the pin its item, which is the whole point of the carve-out: before
 	// this, a cookie-less pin produced no media item at all.
-	SetBrightDataMediaFallback(func(rawURL, itemType string) bool {
+	SetMediaFallback(func(rawURL, itemType string) bool {
 		return itemType == ArchiveTypeGalleryDl && IsPinterestPinURL(rawURL)
 	})
 	if !ShouldCreateGalleryDLItem(pinterestPin) {
-		t.Error("cookie-less Pinterest item not created despite Bright Data fallback")
+		t.Error("cookie-less Pinterest item not created despite Apify fallback")
 	}
 }
 
@@ -238,7 +238,7 @@ func TestIsPinterestPinURL(t *testing.T) {
 	}
 }
 
-// The Bright Data fallback dispatches on these, so a URL that matches the
+// The Apify fallback dispatches on these, so a URL that matches the
 // wrong one buys the wrong dataset — or a subreddit feed instead of a post.
 func TestIsRedditPostURL(t *testing.T) {
 	cases := map[string]bool{

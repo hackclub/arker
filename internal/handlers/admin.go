@@ -271,7 +271,7 @@ func SocialThumbnailBackfillStatus(c *gin.Context, db *gorm.DB) {
 	if raw := c.Query("since"); raw != "" {
 		if since, err := time.Parse(time.RFC3339, raw); err == nil {
 			var spend float64
-			if db.Model(&models.BrightDataUsage{}).Where("created_at >= ?", since).
+			if db.Model(&models.FallbackUsage{}).Where("created_at >= ?", since).
 				Select("COALESCE(SUM(cost_usd), 0)").Scan(&spend).Error == nil {
 				response["provider_cost_usd_since"] = spend
 			}
@@ -343,7 +343,7 @@ var mediaBackfillURLPattern = map[string]struct {
 		// Same gate as live capture: without cookies, backfilling a login-only
 		// site would queue thousands of guaranteed failures.
 		//
-		// With the Bright Data fallback configured, a login-only site it covers
+		// With the Apify fallback configured, a login-only site it covers
 		// (Instagram, X, Pinterest, Facebook posts) passes this gate instead —
 		// so those rows are no longer guaranteed failures, they are guaranteed
 		// *spend*: one dataset record each, after the native attempt fails. Use

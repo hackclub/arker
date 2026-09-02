@@ -75,7 +75,7 @@ func TestArchiveQueuedResponseIsAdditive(t *testing.T) {
 }
 
 func TestApiArchiveResultVideoProvidersAndLegacy(t *testing.T) {
-	for _, tc := range []struct{ name, source, mode string }{{"native", "native", "primary"}, {"bright", "brightdata", "fallback"}} {
+	for _, tc := range []struct{ name, source, mode string }{{"native", "native", "primary"}, {"apify", "apify", "fallback"}, {"historical brightdata", "brightdata", "fallback"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := newHandlerLogTestDB(t)
 			store := storage.NewMemoryStorage()
@@ -85,12 +85,16 @@ func TestApiArchiveResultVideoProvidersAndLegacy(t *testing.T) {
 			storeTestObject(t, store, metaKey, []byte(meta))
 			storeTestObject(t, store, rawKey, []byte(`{"cookie":"[REDACTED]"}`))
 			db.Model(&models.ArchiveItem{}).Where("type = ?", "yt-dlp").Updates(map[string]any{"storage_key": "vid/media.mp4", "file_size": 8, "metadata_key": metaKey, "raw_metadata_key": rawKey, "source": tc.source})
-			if tc.source == models.ArchiveSourceBrightData {
+			if models.IsFallbackSource(tc.source) {
 				var item models.ArchiveItem
 				db.Where("type = ?", "yt-dlp").First(&item)
-				db.Create(&models.BrightDataUsage{ArchiveItemID: item.ID, ShortID: "vid01", Product: "browser_api", BytesTransferred: 1_000_000, CostUSD: 0.0084, Success: true})
+				product := "epctex/youtube-video-downloader"
+				if tc.source == models.ArchiveSourceBrightData {
+					product = "browser_api"
+				}
+				db.Create(&models.FallbackUsage{ArchiveItemID: item.ID, ShortID: "vid01", Provider: tc.source, Product: product, BytesTransferred: 1_000_000, CostUSD: 0.0084, Success: true})
 				// Failed attempts can still be billable and must be included.
-				db.Create(&models.BrightDataUsage{ArchiveItemID: item.ID, ShortID: "vid01", Product: "browser_api", BytesTransferred: 500_000, CostUSD: 0.0042, Success: false})
+				db.Create(&models.FallbackUsage{ArchiveItemID: item.ID, ShortID: "vid01", Provider: tc.source, Product: product, BytesTransferred: 500_000, CostUSD: 0.0042, Success: false})
 			}
 			_, body := getResult(t, resultRouter(db, store), "vid01")
 			social := body["social_post"].(map[string]any)
@@ -110,8 +114,16 @@ func TestApiArchiveResultVideoProvidersAndLegacy(t *testing.T) {
 				if cost["total_usd"] != float64(0) || cost["estimated"] != false {
 					t.Fatalf("native cost = %#v", cost)
 				}
-			} else if cost["total_usd"] != 0.0126 || cost["estimated"] != true || len(cost["breakdown"].([]any)) != 2 {
-				t.Fatalf("Bright Data cost = %#v", cost)
+			} else {
+				// Apify reports billed run cost; Bright Data rows were estimates.
+				wantEstimated := tc.source == models.ArchiveSourceBrightData
+				if cost["total_usd"] != 0.0126 || cost["estimated"] != wantEstimated || len(cost["breakdown"].([]any)) != 2 {
+					t.Fatalf("fallback cost = %#v", cost)
+				}
+				paid := cost["breakdown"].([]any)[1].(map[string]any)
+				if paid["provider"] != tc.source {
+					t.Fatalf("paid breakdown = %#v", paid)
+				}
 			}
 		})
 	}
@@ -132,7 +144,7 @@ func TestApiArchiveResultVideoProvidersAndLegacy(t *testing.T) {
 type galleryFixture struct {
 	// omitMetadata drops Arker's metadata.json entirely (a very old bundle).
 	omitMetadata bool
-	bright       bool
+	fallback     bool // an Apify rescue: apify.json instead of per-file sidecars
 	// files are the media entries in the ZIP. Empty means one slide.
 	files []string
 	// completeness is the raw JSON for metadata.json's completeness block.
@@ -169,13 +181,13 @@ func galleryZip(t *testing.T, f galleryFixture) []byte {
 	records := make([]string, 0, len(f.mediaNames()))
 	for _, name := range f.mediaNames() {
 		entries[name] = "image"
-		if !f.bright {
+		if !f.fallback {
 			entries[name+".json"] = `{"width":100,"height":200,"cookie":"secret"}`
 		}
 		records = append(records, fmt.Sprintf(`{"name":%q,"size":5,"content_type":"image/jpeg","width":100,"height":200}`, name))
 	}
-	if f.bright {
-		entries["brightdata.json"] = `{"post_id":"x","authorization":"secret"}`
+	if f.fallback {
+		entries["apify.json"] = `{"post_id":"x","authorization":"secret"}`
 	}
 	if !f.omitMetadata {
 		completeness := ""
@@ -200,8 +212,8 @@ func seedGalleryResult(t *testing.T, db *gorm.DB, store storage.Storage, id stri
 	data := galleryZip(t, f)
 	storeTestObject(t, store, key, data)
 	source := "native"
-	if f.bright {
-		source = "brightdata"
+	if f.fallback {
+		source = models.ArchiveSourceApify
 	}
 	db.Model(&models.ArchiveItem{}).Where("capture_id = (SELECT id FROM captures WHERE short_id = ?)", id).
 		Updates(map[string]any{"storage_key": key, "file_size": len(data), "source": source, "completeness": f.column})
@@ -283,6 +295,7 @@ func TestApiArchiveResultGalleryCarriesVideoDurationAndEngagement(t *testing.T) 
 	writeGalleryZipFixture(t, db, store, "igapi", []struct{ name, body string }{
 		{"metadata.json", `{"source_url":"https://www.instagram.com/p/igapi/","extractor":"instagram","post_id":"igapi","post_url":"https://www.instagram.com/p/igapi/","author":"someone","views":123,"likes":42,"comments":5,"file_count":1,"files":[{"name":"001.mp4","size":32,"content_type":"video/mp4","is_video":true,"width":576,"height":1024,"duration_seconds":48.087074}],"completeness":{"state":"complete","expected":1,"stored":1}}`},
 		{"001.mp4", "stored-video"},
+		// A pre-swap bundle: historical Bright Data rescues keep their record name.
 		{"brightdata.json", `{"shortcode":"igapi"}`},
 	})
 	if err := db.Model(&models.ArchiveItem{}).
@@ -408,12 +421,15 @@ func TestFulfillmentRequiresRetrievableRawMetadata(t *testing.T) {
 	db := newHandlerLogTestDB(t)
 	store := storage.NewMemoryStorage()
 	fixture := completeGalleryFixture()
-	fixture.bright = true
+	fixture.fallback = true
 	seedGalleryResult(t, db, store, "raw01", fixture)
-	// Bright Data bundles carry brightdata.json, so that one is fulfilled.
+	// Apify bundles carry apify.json, so that one is fulfilled.
 	_, withRaw := getResult(t, resultRouter(db, store), "raw01")
 	if socialOf(t, withRaw)["fulfilled"] != true {
-		t.Fatalf("bright data bundle = %#v", socialOf(t, withRaw))
+		t.Fatalf("apify bundle = %#v", socialOf(t, withRaw))
+	}
+	if raw := socialOf(t, withRaw)["raw_metadata"].([]any)[0].(map[string]any); raw["provider"] != "apify" {
+		t.Fatalf("raw metadata provider = %#v, want apify", raw)
 	}
 
 	// Now the same complete bundle with no provider record in it at all.
@@ -549,7 +565,7 @@ func TestProvenanceEnrichment(t *testing.T) {
 	seedGalleryResult(t, db, store, "prv01", galleryFixture{
 		completeness: `{"state":"partial","expected":3,"stored":1}`,
 		column:       "partial",
-		bright:       true,
+		fallback:     true,
 	})
 
 	var item models.ArchiveItem
@@ -558,15 +574,15 @@ func TestProvenanceEnrichment(t *testing.T) {
 		"Starting gallery archive\n[instagram][error] HTTP 403 for https://scontent.cdninstagram.com/v/t51.jpg?_nc_sid=SECRETSIG&oe=deadbeef\nkeeping partial archive\n"); err != nil {
 		t.Fatalf("append log: %v", err)
 	}
-	db.Create(&models.BrightDataUsage{ArchiveItemID: item.ID, ShortID: "prv01", Product: "web_scraper", DatasetID: "gd_x", SnapshotID: "s_1", Records: 1, CostUSD: 0.0015, Success: false})
-	db.Create(&models.BrightDataUsage{ArchiveItemID: item.ID, ShortID: "prv01", Product: "web_scraper", DatasetID: "gd_x", SnapshotID: "s_2", Records: 3, CostUSD: 0.0045, Success: true})
-	db.Create(&models.BrightDataUsage{ArchiveItemID: item.ID, ShortID: "prv01", Product: "browser_api", BytesTransferred: 1_000_000, CostUSD: 0.0084, Success: true})
+	db.Create(&models.FallbackUsage{ArchiveItemID: item.ID, ShortID: "prv01", Provider: "apify", Product: "data-slayer/instagram-post-details", ResourceID: "kvs_x", OperationID: "run_1", Records: 1, CostUSD: 0.0015, Success: false})
+	db.Create(&models.FallbackUsage{ArchiveItemID: item.ID, ShortID: "prv01", Provider: "apify", Product: "data-slayer/instagram-post-details", ResourceID: "kvs_x", OperationID: "run_2", Records: 3, CostUSD: 0.0045, Success: true})
+	db.Create(&models.FallbackUsage{ArchiveItemID: item.ID, ShortID: "prv01", Provider: "apify", Product: "clockworks/tiktok-video-scraper", BytesTransferred: 1_000_000, CostUSD: 0.0084, Success: true})
 
 	_, body := getResult(t, resultRouter(db, store), "prv01")
 	social := socialOf(t, body)
 	prov := social["provenance"].(map[string]any)
 
-	if prov["source"] != "brightdata" || prov["mode"] != "fallback" {
+	if prov["source"] != "apify" || prov["mode"] != "fallback" {
 		t.Fatalf("provenance source/mode = %#v", prov)
 	}
 	if prov["attempts"] != float64(3) {
@@ -589,13 +605,13 @@ func TestProvenanceEnrichment(t *testing.T) {
 	if len(ops) != 2 {
 		t.Fatalf("fallback_ops = %#v, want one entry per product", ops)
 	}
-	// Sorted by product, so browser_api comes first.
+	// Sorted by product, so the TikTok actor comes first.
 	browser := ops[0].(map[string]any)
 	scraper := ops[1].(map[string]any)
-	if browser["product"] != "browser_api" || browser["bytes_transferred"] != float64(1_000_000) {
-		t.Fatalf("browser op = %#v", browser)
+	if browser["product"] != "clockworks/tiktok-video-scraper" || browser["bytes_transferred"] != float64(1_000_000) {
+		t.Fatalf("store op = %#v", browser)
 	}
-	if scraper["product"] != "web_scraper" || scraper["operations"] != float64(2) || scraper["successes"] != float64(1) {
+	if scraper["product"] != "data-slayer/instagram-post-details" || scraper["operations"] != float64(2) || scraper["successes"] != float64(1) {
 		t.Fatalf("scraper op = %#v", scraper)
 	}
 	if scraper["records"] != float64(4) {
@@ -605,14 +621,18 @@ func TestProvenanceEnrichment(t *testing.T) {
 	if cost := scraper["estimated_cost_usd"].(float64); cost < 0.0059 || cost > 0.0061 {
 		t.Fatalf("estimated_cost_usd = %v, want 0.006", cost)
 	}
-	snapshots := scraper["snapshot_ids"].([]any)
-	if len(snapshots) != 2 || snapshots[0] != "s_1" {
+	// operation_ids is the field; snapshot_ids is its historical alias.
+	runs := scraper["operation_ids"].([]any)
+	if len(runs) != 2 || runs[0] != "run_1" || runs[1] != "run_2" || scraper["provider"] != "apify" {
+		t.Fatalf("operation_ids/provider = %#v / %#v", runs, scraper["provider"])
+	}
+	if snapshots := scraper["snapshot_ids"].([]any); len(snapshots) != 2 || snapshots[0] != "run_1" {
 		t.Fatalf("snapshot_ids = %#v", snapshots)
 	}
 }
 
 // A clean, fulfilled archive must not carry an alarming failure reason, and an
-// archive with no Bright Data rows must not grow an empty ops array.
+// archive with no paid fallback rows must not grow an empty ops array.
 func TestProvenanceStaysQuietOnAFulfilledNativeArchive(t *testing.T) {
 	db := newHandlerLogTestDB(t)
 	store := storage.NewMemoryStorage()

@@ -1,0 +1,17 @@
+[
+ {
+  "inputSource": "https://www.youtube.com/watch?v=iik25wqIuFo",
+  "videoId": "iik25wqIuFo",
+  "quality": "1080",
+  "jobId": "5f00e23f-c78c-49bd-b892-6c6011b12f82",
+  "status": "succeeded",
+  "storageType": "apify",
+  "output": {
+   "url": "https://api.apify.com/v2/key-value-stores/lI4fjyzrMAxfiOfjc/records/iik25wqIuFo.mp4"
+  },
+  "durationSeconds": 7,
+  "unitPricePerSecond": 0.00075,
+  "totalCost": 0.00525,
+  "error": null
+ }
+]
