@@ -714,7 +714,7 @@ func main() {
 			river.QueueDefault:        {MaxWorkers: cfg.MaxWorkers},
 			"high_priority":           {MaxWorkers: max(2, cfg.MaxWorkers/2)}, // At least 2 workers, or half of total workers
 			"thumbnail_backfill":      {MaxWorkers: 1},                        // gradual, resumable historical social-poster repair
-			"video_metadata_backfill": {MaxWorkers: 1},                        // metadata-only; rate-limit upstream platforms
+			"video_metadata_backfill": {MaxWorkers: 2},                        // metadata-only; low concurrency without serializing a multi-hour repair
 		},
 		Workers:              riverWorkers,
 		JobTimeout:           jobTimeout,
