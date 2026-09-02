@@ -1,6 +1,6 @@
 // Package thumbnail prepares preview images from archived content. Page
 // screenshots become compact derived previews; social posters and post images
-// keep their original bytes and intrinsic geometry.
+// keep their full framing while fitting within row-preview dimensions.
 //
 // Thumbnails are a derived artifact, not an archive type: they are generated as
 // a side effect of the job that produced their source, stored as their own
@@ -40,6 +40,10 @@ const (
 	// image in an API consumer's card.
 	Width  = 480
 	Height = 270
+	// SocialMaxDimension is the row-preview bound for platform posters and
+	// gallery stills. They retain their complete framing and aspect ratio, but
+	// no preview needs thousands of pixels on either axis.
+	SocialMaxDimension = 480
 
 	// Quality is the JPEG quality for the encoded thumbnail.
 	//
@@ -63,8 +67,8 @@ const (
 	// consuming the stream. Every format's header fits comfortably inside this.
 	headerPeek = 256 << 10
 
-	// MaxOriginalBytes bounds a platform poster or social post image retained
-	// byte-for-byte. These are normally hundreds of kilobytes; the generous
+	// MaxOriginalBytes bounds a platform poster or social post image read before
+	// validation/compaction. These are normally hundreds of kilobytes; the generous
 	// ceiling prevents a bogus provider response from turning a cosmetic
 	// artifact into an unbounded allocation.
 	MaxOriginalBytes = 32 << 20
@@ -102,11 +106,10 @@ type Thumb struct {
 	Height int
 }
 
-// OriginalFromReader validates a social post's own preview image and retains
-// it byte-for-byte, including its intrinsic aspect ratio, dimensions and
-// encoding. Social thumbnails are already deliberately framed by the poster
-// or platform; cropping them to 16:9 and re-encoding them would replace that
-// authored image with an Arker derivative.
+// OriginalFromReader validates a social post's own preview image and turns it
+// into a compact row preview. The complete framing and aspect ratio survive;
+// only oversized dimensions and encoding change. Already-small inputs are
+// retained byte-for-byte.
 //
 // Screenshot previews still go through FromReader/FromImage below: a full-page
 // screenshot is not a usable card image until it has been cropped and scaled.
@@ -137,8 +140,57 @@ func OriginalFromReader(r io.Reader) (*Thumb, error) {
 		return nil, fmt.Errorf("%w: %dx%d (%d pixels, limit %d)",
 			ErrSourceTooLarge, width, height, px, MaxSourcePixels)
 	}
+	if width <= SocialMaxDimension && height <= SocialMaxDimension {
+		return &Thumb{Data: data, Width: width, Height: height}, nil
+	}
+	src, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("thumbnail: decoding oversized social image: %w", err)
+	}
+	return FromSocialImage(src)
+}
 
-	return &Thumb{Data: data, Width: width, Height: height}, nil
+// FromSocialImage scales an authored poster/still to fit within the row bound
+// without cropping or upscaling it.
+func FromSocialImage(src image.Image) (thumb *Thumb, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			thumb = nil
+			err = fmt.Errorf("thumbnail: panic while encoding social preview: %v", rec)
+		}
+	}()
+	if src == nil {
+		return nil, errors.New("thumbnail: nil social image")
+	}
+	bounds := src.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	if w <= 0 || h <= 0 {
+		return nil, fmt.Errorf("thumbnail: social image has empty bounds %v", bounds)
+	}
+	if w <= SocialMaxDimension && h <= SocialMaxDimension {
+		// Callers with encoded bytes take the byte-preserving fast path above;
+		// decoded-image callers still need an encoding.
+		return encodeSocialJPEG(src, bounds, w, h)
+	}
+	if w >= h {
+		h = max(1, int((int64(h)*SocialMaxDimension+int64(w)/2)/int64(w)))
+		w = SocialMaxDimension
+	} else {
+		w = max(1, int((int64(w)*SocialMaxDimension+int64(h)/2)/int64(h)))
+		h = SocialMaxDimension
+	}
+	return encodeSocialJPEG(src, bounds, w, h)
+}
+
+func encodeSocialJPEG(src image.Image, bounds image.Rectangle, width, height int) (*Thumb, error) {
+	dst := image.NewRGBA(image.Rect(0, 0, width, height))
+	draw.Draw(dst, dst.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, bounds, xdraw.Over, nil)
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: Quality}); err != nil {
+		return nil, fmt.Errorf("thumbnail: encoding social jpeg: %w", err)
+	}
+	return &Thumb{Data: buf.Bytes(), Width: width, Height: height}, nil
 }
 
 // FileExtension returns the extension matching an encoded thumbnail's real

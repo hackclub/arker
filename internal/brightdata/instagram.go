@@ -569,7 +569,7 @@ func galleryThumbnailFromDir(dir string, meta *archivers.GalleryMetadata, logWri
 			fmt.Fprintf(logWriter, "Thumbnail from %s skipped: %v\n", file.Name, err)
 			continue
 		}
-		return &archivers.Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height, Kind: models.ThumbnailKindSocialOriginal}
+		return &archivers.Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height, Kind: models.ThumbnailKindSocialPreview}
 	}
 	return nil
 }
@@ -610,7 +610,7 @@ func (c *Client) thumbnailFromURLStrict(ctx context.Context, imageURL string, lo
 		return nil, fmt.Errorf("decode provider poster: %w", err)
 	}
 	fmt.Fprintf(logWriter, "Thumbnail captured: %dx%d, %d bytes\n", t.Width, t.Height, len(t.Data))
-	return &archivers.Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height, Kind: models.ThumbnailKindSocialOriginal}, nil
+	return &archivers.Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height, Kind: models.ThumbnailKindSocialPreview}, nil
 }
 
 // logInstagramMetadata writes the post's human-relevant metadata into the

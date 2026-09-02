@@ -337,10 +337,10 @@ func TestVideoThumbnailFromRealImage(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected a thumbnail")
 	}
-	if got.Width != 1080 || got.Height != 1920 {
-		t.Errorf("size = %dx%d, want the source's 1080x1920", got.Width, got.Height)
+	if got.Width != 270 || got.Height != 480 {
+		t.Errorf("size = %dx%d, want aspect-correct row preview 270x480", got.Width, got.Height)
 	}
-	if !bytes.Equal(got.Data, buf.Bytes()) {
-		t.Error("video poster was cropped, scaled, or re-encoded")
+	if bytes.Equal(got.Data, buf.Bytes()) {
+		t.Error("oversized video poster was not compacted")
 	}
 }

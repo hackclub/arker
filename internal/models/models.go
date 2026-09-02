@@ -139,6 +139,10 @@ const (
 const (
 	ThumbnailKindPagePreview    = "page_preview"
 	ThumbnailKindSocialOriginal = "social_original"
+	// SocialPreview is a compact, uncropped derivative of the platform's
+	// authored poster/still. Its aspect ratio is the source's; its longest side
+	// is bounded for row rendering.
+	ThumbnailKindSocialPreview = "social_preview"
 	// SocialFallback means a backfill made a conclusive attempt but the post no
 	// longer exposes a real poster. Any existing legacy thumbnail stays in
 	// place; otherwise the capture falls back to its screenshot sibling.

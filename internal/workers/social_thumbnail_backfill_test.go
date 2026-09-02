@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"os"
 	"testing"
 	"time"
 
@@ -92,7 +93,7 @@ func TestSocialThumbnailBackfillUsesStoredFirstStillForDuplicateGroup(t *testing
 		t.Fatalf("duplicates did not share one corrected object: %+v", got)
 	}
 	for _, item := range got {
-		if item.ThumbnailKind != models.ThumbnailKindSocialOriginal || item.ThumbnailWidth != 173 || item.ThumbnailHeight != 311 {
+		if item.ThumbnailKind != models.ThumbnailKindSocialPreview || item.ThumbnailWidth != 173 || item.ThumbnailHeight != 311 {
 			t.Errorf("item %d thumbnail = kind %q %dx%d", item.ID, item.ThumbnailKind, item.ThumbnailWidth, item.ThumbnailHeight)
 		}
 	}
@@ -127,7 +128,7 @@ func TestSocialThumbnailBackfillProviderRescuesAllVideoGallery(t *testing.T) {
 		t.Fatalf("generate: %v", err)
 	}
 	got := reload(t, db, item.ID)
-	if got.ThumbnailKind != models.ThumbnailKindSocialOriginal || got.ThumbnailWidth != 720 || got.ThumbnailHeight != 1280 {
+	if got.ThumbnailKind != models.ThumbnailKindSocialPreview || got.ThumbnailWidth != 270 || got.ThumbnailHeight != 480 {
 		t.Fatalf("provider poster not stored: %+v", got)
 	}
 	if native.calls != 0 || provider.calls != 1 {
@@ -153,7 +154,7 @@ func TestSocialThumbnailBackfillRetainsLegacyPreviewWhenPosterUnavailable(t *tes
 	if err := w.generate(context.Background(), SocialThumbnailBackfillJobArgs{
 		Identity: "https://x.com/user/status/123", URL: "https://x.com/user/status/123",
 		ShortID: "gone1", Type: utils.ArchiveTypeGalleryDl,
-	}, false); err != nil {
+	}, true); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 	got := reload(t, db, item.ID)
@@ -162,17 +163,21 @@ func TestSocialThumbnailBackfillRetainsLegacyPreviewWhenPosterUnavailable(t *tes
 	}
 }
 
-func TestSocialThumbnailBackfillStopsBeforeProviderBudget(t *testing.T) {
+func TestSocialThumbnailBackfillSkipsPaidProviderAndUsesStoredVideo(t *testing.T) {
 	db := newWorkerTestDB(t)
 	if err := db.AutoMigrate(&models.BrightDataUsage{}); err != nil {
 		t.Fatal(err)
 	}
 	store := storage.NewMemoryStorage()
-	item := seedSocialBackfillItem(t, db, store, "cap01", "https://www.instagram.com/reel/CAP/", "https://www.instagram.com/reel/CAP/", utils.ArchiveTypeYtDlp, []byte("video"))
+	video, err := os.ReadFile("../archivers/testdata/muxed_video_audio_sample.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := seedSocialBackfillItem(t, db, store, "cap01", "https://www.instagram.com/reel/CAP/", "https://www.instagram.com/reel/CAP/", utils.ArchiveTypeYtDlp, video)
 	native := &fakeSocialRefresher{err: errors.New("native refused")}
 	provider := &fakeSocialProvider{cost: 0.01, supported: true}
 	w := NewSocialThumbnailBackfillWorker(store, db, native, provider)
-	if err := w.generate(context.Background(), SocialThumbnailBackfillJobArgs{
+	if err = w.generate(context.Background(), SocialThumbnailBackfillJobArgs{
 		Identity: "https://www.instagram.com/reel/CAP/", URL: "https://www.instagram.com/reel/CAP/",
 		ShortID: "cap01", Type: utils.ArchiveTypeYtDlp,
 		StartedAt: time.Now().Add(-time.Minute).Unix(), BudgetUSD: 0.005,
@@ -182,8 +187,10 @@ func TestSocialThumbnailBackfillStopsBeforeProviderBudget(t *testing.T) {
 	if provider.calls != 0 {
 		t.Fatal("provider called despite insufficient budget")
 	}
-	if got := reload(t, db, item.ID); got.ThumbnailKind != "" {
-		t.Fatalf("budget-skipped item marked %q; it must remain resumable", got.ThumbnailKind)
+	if got := reload(t, db, item.ID); got.ThumbnailKind != models.ThumbnailKindSocialPreview ||
+		got.ThumbnailStatus != models.ThumbnailStatusReady || got.ThumbnailWidth <= 0 || got.ThumbnailHeight <= 0 ||
+		got.ThumbnailWidth > thumbnail.SocialMaxDimension || got.ThumbnailHeight > thumbnail.SocialMaxDimension {
+		t.Fatalf("stored-video preview not produced after provider budget skip: %+v", got)
 	}
 }
 

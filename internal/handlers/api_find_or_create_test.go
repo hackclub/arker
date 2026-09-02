@@ -72,7 +72,7 @@ func TestApiFindOrCreateAuthenticationAndFoundResponse(t *testing.T) {
 	if body["action"] != "found" || body["short_id"] != "found" || body["status"] != "completed" {
 		t.Fatalf("body = %#v", body)
 	}
-	if body["result_url"] != "http://example.com/found" || w.Header().Get("Location") != body["result_url"] {
+	if body["result_url"] != "http://example.com/api/v1/archive/found" || w.Header().Get("Location") != body["result_url"] {
 		t.Fatalf("result/location = %q / %q", body["result_url"], w.Header().Get("Location"))
 	}
 }

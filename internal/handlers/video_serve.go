@@ -35,45 +35,10 @@ type videoManifestResponse struct {
 // states without scraping logs or the HTML viewer.
 func ServeVideoManifest(c *gin.Context, store storage.Storage, db *gorm.DB) {
 	shortID := c.Param("shortid")
-	if redirectIfAlias(c, db, shortID) {
-		return
-	}
 
 	item, err := lookupVideoItem(db, shortID)
 	if err == gorm.ErrRecordNotFound {
-		projection, cleanup, projectionErr := projectGalleryVideo(store, db, shortID)
-		if projectionErr != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "video archive temporarily unavailable"})
-			return
-		}
-		defer cleanup()
-		if projection == nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "video archive not found"})
-			return
-		}
-		metadata, marshalErr := marshalProjectedVideoMetadata(projection)
-		if marshalErr != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "video metadata temporarily unavailable"})
-			return
-		}
-		mediaURL := fmt.Sprintf("/archive/%s/%s", shortID, utils.ArchiveTypeYtDlp)
-		response := videoManifestResponse{
-			SchemaVersion:     archivers.VideoMetadataSchemaVersion,
-			ShortID:           shortID,
-			CaptureStatus:     projection.Item.Status,
-			MediaURL:          &mediaURL,
-			MetadataAvailable: true,
-			Metadata:          metadata,
-			Provenance:        projection.Item.Source,
-		}
-		if response.Provenance == "" {
-			response.Provenance = models.ArchiveSourceNative
-		}
-		if projection.HasRawData {
-			rawURL := fmt.Sprintf("/video/%s/raw", shortID)
-			response.RawMetadataURL = &rawURL
-		}
-		c.JSON(http.StatusOK, response)
+		c.JSON(http.StatusNotFound, gin.H{"error": "video archive not found"})
 		return
 	}
 	if err != nil {
@@ -108,6 +73,7 @@ func ServeVideoManifest(c *gin.Context, store storage.Storage, db *gorm.DB) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "video metadata temporarily unavailable"})
 		return
 	}
+	metadata = normalizeVideoManifestMetadata(metadata)
 	response.MetadataAvailable = true
 	response.Metadata = metadata
 	response.MetadataUnavailableReason = ""
@@ -118,28 +84,58 @@ func ServeVideoManifest(c *gin.Context, store storage.Storage, db *gorm.DB) {
 	c.JSON(http.StatusOK, response)
 }
 
+// normalizeVideoManifestMetadata makes the consumer-facing required keys
+// unconditional while retaining every additive field in the stored sidecar.
+// A provider that genuinely did not expose a value yields null, never a
+// disappearing key that forces per-platform schema branches downstream.
+func normalizeVideoManifestMetadata(raw json.RawMessage) json.RawMessage {
+	var metadata map[string]interface{}
+	if json.Unmarshal(raw, &metadata) != nil {
+		return raw
+	}
+	for _, key := range []string{"duration_seconds", "title", "channel", "publication_timestamp"} {
+		if _, ok := metadata[key]; !ok {
+			metadata[key] = nil
+		}
+	}
+	if metadata["title"] == nil || metadata["title"] == "" {
+		if description, ok := metadata["description"].(string); ok && description != "" {
+			metadata["title"] = description
+		}
+	}
+	if metadata["channel"] == nil || metadata["channel"] == "" {
+		for _, key := range []string{"author", "uploader"} {
+			if value, ok := metadata[key].(string); ok && value != "" {
+				metadata["channel"] = value
+				break
+			}
+		}
+	}
+	media, _ := metadata["media"].(map[string]interface{})
+	if media == nil {
+		media = map[string]interface{}{}
+		metadata["media"] = media
+	}
+	for _, key := range []string{"width", "height"} {
+		if _, ok := media[key]; !ok {
+			media[key] = nil
+		}
+	}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return raw
+	}
+	return encoded
+}
+
 // ServeVideoRawMetadata exposes the sanitized provider-native record. The
 // archiver sanitizes before persistence, so this endpoint never needs access to
 // cookies, credentials, authorization headers, or private proxy details.
 func ServeVideoRawMetadata(c *gin.Context, store storage.Storage, db *gorm.DB) {
 	shortID := c.Param("shortid")
-	if redirectIfAlias(c, db, shortID) {
-		return
-	}
 	item, err := lookupVideoItem(db, shortID)
 	if err == gorm.ErrRecordNotFound {
-		projection, cleanup, projectionErr := projectGalleryVideo(store, db, shortID)
-		if projectionErr != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "raw video metadata temporarily unavailable"})
-			return
-		}
-		if projection == nil || !projection.HasRawData {
-			cleanup()
-			c.JSON(http.StatusNotFound, gin.H{"error": "raw video metadata not available"})
-			return
-		}
-		cleanup()
-		ServeGalleryRawMetadata(c, store, db)
+		c.JSON(http.StatusNotFound, gin.H{"error": "raw video metadata not available"})
 		return
 	}
 	if err != nil {
@@ -168,9 +164,12 @@ func ServeVideoRawMetadata(c *gin.Context, store storage.Storage, db *gorm.DB) {
 }
 
 func lookupVideoItem(db *gorm.DB, shortID string) (models.ArchiveItem, error) {
+	capture, err := resolveCaptureForMachineEndpoint(db, shortID)
+	if err != nil {
+		return models.ArchiveItem{}, err
+	}
 	var item models.ArchiveItem
-	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
-		Where("captures.short_id = ? AND archive_items.type IN ?", shortID, utils.ArchiveTypeMatchValues(utils.ArchiveTypeYtDlp)).
+	if err := db.Where("capture_id = ? AND type IN ?", capture.ID, utils.ArchiveTypeMatchValues(utils.ArchiveTypeYtDlp)).
 		First(&item).Error; err != nil {
 		return models.ArchiveItem{}, err
 	}

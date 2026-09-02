@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -9,6 +10,29 @@ import (
 
 	"arker/internal/models"
 )
+
+// resolveCaptureForMachineEndpoint follows an alias without issuing an HTTP
+// redirect. Machine-facing contracts (manifests, raw metadata, thumbnails)
+// promise that the URL the caller was given answers directly and forever.
+// Viewer/download routes retain redirectIfAlias below so humans still land on
+// the canonical capture page.
+func resolveCaptureForMachineEndpoint(db *gorm.DB, shortID string) (models.Capture, error) {
+	var capture models.Capture
+	if err := db.Where("short_id = ?", shortID).First(&capture).Error; err != nil {
+		return models.Capture{}, err
+	}
+	if capture.AliasOfID == nil {
+		return capture, nil
+	}
+	var canonical models.Capture
+	if err := db.First(&canonical, *capture.AliasOfID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return models.Capture{}, gorm.ErrRecordNotFound
+		}
+		return models.Capture{}, err
+	}
+	return canonical, nil
+}
 
 // redirectIfAlias resolves capture aliases for handlers addressed by short ID.
 //

@@ -244,6 +244,26 @@ func TestServeThumbnailSendsContentLength(t *testing.T) {
 	}
 }
 
+func TestServeThumbnailResolvesAliasWithoutRedirect(t *testing.T) {
+	db := newThumbTestDB(t)
+	store := storage.NewMemoryStorage()
+	green := color.RGBA{20, 200, 20, 255}
+	seedCapture(t, db, store, "canon", "https://example.com/alias", []seedSpec{{typ: "screenshot", status: "completed", thumbColor: &green}})
+	var canonical models.Capture
+	if err := db.Where("short_id = ?", "canon").First(&canonical).Error; err != nil {
+		t.Fatal(err)
+	}
+	alias := models.Capture{ArchivedURLID: canonical.ArchivedURLID, Timestamp: time.Now(), ShortID: "alias", AliasOfID: &canonical.ID}
+	if err := db.Create(&alias).Error; err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	newThumbRouter(db, store).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/thumb/alias", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("Location") != "" {
+		t.Fatalf("alias thumbnail status/location = %d/%q, want direct 200", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
 func TestServeThumbnailHonoursIfNoneMatch(t *testing.T) {
 	db := newThumbTestDB(t)
 	store := storage.NewMemoryStorage()
@@ -270,7 +290,7 @@ func TestServeThumbnailHonoursIfNoneMatch(t *testing.T) {
 	}
 }
 
-func TestServeThumbnailVersionedURLIsImmutable(t *testing.T) {
+func TestServeThumbnailStableURLAlwaysRevalidates(t *testing.T) {
 	db := newThumbTestDB(t)
 	store := storage.NewMemoryStorage()
 	blue := color.RGBA{20, 20, 200, 255}
@@ -285,8 +305,8 @@ func TestServeThumbnailVersionedURLIsImmutable(t *testing.T) {
 	w := httptest.NewRecorder()
 	path := "/thumb/abc12?v=" + thumbnailVersionToken(item.ThumbnailKey)
 	newThumbRouter(db, store).ServeHTTP(w, httptest.NewRequest("GET", path, nil))
-	if got := w.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
-		t.Errorf("Cache-Control = %q, want immutable caching for the current object token", got)
+	if got := w.Header().Get("Cache-Control"); got != "public, max-age=0, must-revalidate" {
+		t.Errorf("Cache-Control = %q, want revalidation even for a legacy token", got)
 	}
 }
 
@@ -300,10 +320,7 @@ func TestServeThumbnailFallsBackToPlaceholder(t *testing.T) {
 	})
 	router := newThumbRouter(db, store)
 
-	for _, tc := range []struct{ name, path string }{
-		{"not generated yet", "/thumb/abc12"},
-		{"unknown short id", "/thumb/zzzz9"},
-	} {
+	for _, tc := range []struct{ name, path string }{{"not generated yet", "/thumb/abc12"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest("GET", tc.path, nil))
@@ -322,6 +339,11 @@ func TestServeThumbnailFallsBackToPlaceholder(t *testing.T) {
 				t.Error("body is not an SVG")
 			}
 		})
+	}
+	unknown := httptest.NewRecorder()
+	router.ServeHTTP(unknown, httptest.NewRequest("GET", "/thumb/zzzz9", nil))
+	if unknown.Code != http.StatusNotFound {
+		t.Fatalf("unknown capture status = %d, want 404", unknown.Code)
 	}
 }
 
@@ -467,8 +489,8 @@ func TestThumbnailURLIsAbsolute(t *testing.T) {
 	if got, want := ThumbnailURL(c, "abc12"), "https://archive.example.com/thumb/abc12"; got != want {
 		t.Errorf("ThumbnailURL = %q, want %q", got, want)
 	}
-	if got, want := ThumbnailURL(c, "abc12", "abc12/new-thumb.jpg"), "https://archive.example.com/thumb/abc12?v="+thumbnailVersionToken("abc12/new-thumb.jpg"); got != want {
-		t.Errorf("versioned ThumbnailURL = %q, want %q", got, want)
+	if got, want := ThumbnailURL(c, "abc12", "abc12/new-thumb.jpg"), "https://archive.example.com/thumb/abc12"; got != want {
+		t.Errorf("ready ThumbnailURL = %q, want stable URL %q", got, want)
 	}
 
 	// Production's internal proxy hop can say http even though the public

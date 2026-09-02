@@ -701,6 +701,9 @@ func main() {
 	river.AddWorker(riverWorkers, workers.NewSocialThumbnailBackfillWorker(
 		storageInstance, db, &archivers.YtDlpArchiver{}, socialThumbnailProvider,
 	))
+	river.AddWorker(riverWorkers, workers.NewVideoMetadataBackfillWorker(
+		storageInstance, db, &archivers.YtDlpArchiver{},
+	))
 	// Create River client with configuration
 	errorHandler := &CustomErrorHandler{db: db}
 	timeoutConfig := utils.DefaultTimeoutConfig()
@@ -708,9 +711,10 @@ func main() {
 	rescueStuckJobsAfter := jobTimeout + 5*time.Minute
 	riverConfig := &river.Config{
 		Queues: map[string]river.QueueConfig{
-			river.QueueDefault:   {MaxWorkers: cfg.MaxWorkers},
-			"high_priority":      {MaxWorkers: max(2, cfg.MaxWorkers/2)}, // At least 2 workers, or half of total workers
-			"thumbnail_backfill": {MaxWorkers: 1},                        // gradual, resumable historical social-poster repair
+			river.QueueDefault:        {MaxWorkers: cfg.MaxWorkers},
+			"high_priority":           {MaxWorkers: max(2, cfg.MaxWorkers/2)}, // At least 2 workers, or half of total workers
+			"thumbnail_backfill":      {MaxWorkers: 1},                        // gradual, resumable historical social-poster repair
+			"video_metadata_backfill": {MaxWorkers: 1},                        // metadata-only; rate-limit upstream platforms
 		},
 		Workers:              riverWorkers,
 		JobTimeout:           jobTimeout,
@@ -817,6 +821,8 @@ func main() {
 	admin.POST("/backfill-media", func(c *gin.Context) { handlers.BackfillMissingMediaItems(c, db, riverClient) })
 	admin.POST("/backfill-social-thumbnails", func(c *gin.Context) { handlers.BackfillSocialThumbnails(c, db, riverClient) })
 	admin.GET("/backfill-social-thumbnails", func(c *gin.Context) { handlers.SocialThumbnailBackfillStatus(c, db) })
+	admin.POST("/backfill-video-metadata", func(c *gin.Context) { handlers.BackfillVideoMetadata(c, db, riverClient) })
+	admin.GET("/backfill-video-metadata", func(c *gin.Context) { handlers.VideoMetadataBackfillStatus(c, db) })
 	// Retained: the previous name for the endpoint above, kept working for
 	// existing operator scripts and runbooks.
 	admin.POST("/backfill-videos", func(c *gin.Context) { handlers.BackfillMissingMediaItems(c, db, riverClient) })

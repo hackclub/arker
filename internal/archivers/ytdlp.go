@@ -552,7 +552,7 @@ func videoThumbnail(tempBase, videoPath string, logWriter io.Writer) *Thumbnail 
 
 	fmt.Fprintf(logWriter, "Thumbnail captured from %s: %dx%d, %d bytes\n",
 		filepath.Base(path), t.Width, t.Height, len(t.Data))
-	return &Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height, Kind: models.ThumbnailKindSocialOriginal}
+	return &Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height, Kind: models.ThumbnailKindSocialPreview}
 }
 
 // findDownloadedThumbnail locates the poster image among the temp files.

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -91,6 +92,65 @@ func newGalleryRouter(db *gorm.DB, storageInstance storage.Storage) *gin.Engine 
 	r.GET("/gallery/:shortid/file/*filepath", func(c *gin.Context) { ServeGalleryFile(c, storageInstance, db) })
 	r.GET("/gallery/:shortid/raw", func(c *gin.Context) { ServeGalleryRawMetadata(c, storageInstance, db) })
 	return r
+}
+
+func TestGalleryRawIsStableKindContractAndNormalizesRecords(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	seedGalleryCapture(t, db, store, "raw01", "completed")
+	router := newGalleryRouter(db, store)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/gallery/raw01/raw", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		ShortID       string `json:"short_id"`
+		CaptureStatus string `json:"capture_status"`
+		Records       []struct {
+			MediaURL  string                 `json:"media_url"`
+			MediaURLs []string               `json:"media_urls"`
+			Metadata  map[string]interface{} `json:"metadata"`
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ShortID != "raw01" || body.CaptureStatus != "completed" || len(body.Records) != 2 {
+		t.Fatalf("raw envelope = %+v", body)
+	}
+	for i, record := range body.Records {
+		for _, key := range []string{"caption", "user_posted", "date_posted", "photos_number", "likes", "num_comments", "media_url", "media_urls"} {
+			if _, ok := record.Metadata[key]; !ok {
+				t.Errorf("records[%d].metadata missing %q: %v", i, key, record.Metadata)
+			}
+		}
+		if record.MediaURL == "" || len(record.MediaURLs) != 1 || !strings.HasPrefix(record.MediaURL, "http://example.com/gallery/raw01/file/") {
+			t.Errorf("records[%d] media URLs = %q / %v", i, record.MediaURL, record.MediaURLs)
+		}
+	}
+	if body.Records[0].Metadata["caption"] != "a caption" || body.Records[0].Metadata["user_posted"] != "someone" {
+		t.Errorf("normalized metadata = %v", body.Records[0].Metadata)
+	}
+
+	seedGalleryCapture(t, db, store, "pend1", "pending")
+	pending := httptest.NewRecorder()
+	router.ServeHTTP(pending, httptest.NewRequest(http.MethodGet, "/gallery/pend1/raw", nil))
+	if pending.Code != http.StatusOK {
+		t.Fatalf("pending gallery status = %d, want 200", pending.Code)
+	}
+	var pendingBody map[string]interface{}
+	_ = json.Unmarshal(pending.Body.Bytes(), &pendingBody)
+	if pendingBody["capture_status"] != "pending" {
+		t.Errorf("pending body = %v", pendingBody)
+	}
+
+	unknown := httptest.NewRecorder()
+	router.ServeHTTP(unknown, httptest.NewRequest(http.MethodGet, "/gallery/nope1/raw", nil))
+	if unknown.Code != http.StatusNotFound {
+		t.Errorf("unknown gallery status = %d, want 404", unknown.Code)
+	}
 }
 
 func TestGalleryCanonicalizesMisleadingJPEGExtension(t *testing.T) {

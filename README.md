@@ -82,10 +82,11 @@ refresh fails — a deleted post, a platform refusal — the new capture inherit
 the earlier sidecars instead of failing, since the archive already holds the
 product.
 
-`GET /thumb/:shortid` preserves a social post's own poster or first still
-byte-for-byte, with its original aspect ratio, dimensions, and image format.
-Ordinary web pages still use a compact 480x270 preview derived from the page
-screenshot.
+`GET /thumb/:shortid` is a stable, public, non-redirecting image URL. Social
+previews preserve the post's full aspect ratio while fitting within 480px;
+ordinary web pages use a compact 480x270 preview derived from the page
+screenshot. The same URL serves a placeholder before the preview is ready and
+the real image afterward; nonexistent captures return 404.
 
 Administrators can repair historical social previews with
 `POST /admin/backfill-social-thumbnails?cost_limit_usd=5`. The resumable,
@@ -93,6 +94,13 @@ one-worker queue extracts stills from stored gallery ZIPs, refreshes video
 posters without downloading videos, groups duplicate canonical URLs, and never
 spends past the shared provider cap. `GET` on the same endpoint reports item
 and queue progress; pass `?since=<RFC3339>` to include spend for that run.
+
+Historical video sidecars can be repaired independently with
+`POST /admin/backfill-video-metadata` (or previewed with `?dry_run=true`). Its
+single-worker queue re-runs yt-dlp with media downloads disabled, probes the
+already-stored video for intrinsic dimensions/duration, and shares fresh
+normalized/raw sidecars across duplicate canonical URLs. `GET` on the same
+endpoint reports coverage and queue progress.
 
 For manual installs, prefer:
 

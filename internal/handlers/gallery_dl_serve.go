@@ -246,29 +246,61 @@ func ServeGalleryList(c *gin.Context, storageInstance storage.Storage, db *gorm.
 // It never returns media or Arker's normalized metadata.json.
 func ServeGalleryRawMetadata(c *gin.Context, storageInstance storage.Storage, db *gorm.DB) {
 	shortID := c.Param("shortid")
-	if redirectIfAlias(c, db, shortID) {
+	item, ok := findGalleryItem(c, db, shortID)
+	if !ok {
 		return
 	}
-	var item models.ArchiveItem
-	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").Where("captures.short_id = ? AND archive_items.type = ?", shortID, utils.ArchiveTypeGalleryDl).First(&item).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "gallery archive not found"})
+	response := gin.H{
+		"short_id":       shortID,
+		"capture_status": item.Status,
+		"provider":       galleryProvider(item.Source),
+		"records":        []galleryRawRecord{},
+	}
+	// The raw endpoint is also the kind discriminator. A known gallery must
+	// therefore answer 200 while pending or after failure, just as the video
+	// manifest does. Absence of an item, not absence of bytes, is the 404.
+	if item.Status != "completed" || item.StorageKey == "" {
+		response["metadata_unavailable_reason"] = "capture_not_completed"
+		c.JSON(http.StatusOK, response)
 		return
 	}
 	zr, cleanup, ok := openGalleryZipData(storageInstance, &item)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "raw gallery metadata not available"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "raw gallery metadata temporarily unavailable"})
 		return
 	}
 	defer cleanup()
-	type record struct {
-		Filename string          `json:"filename"`
-		Metadata json.RawMessage `json:"metadata"`
-	}
-	records := make([]record, 0)
+
+	var normalized archivers.GalleryMetadata
+	mediaEntries := make([]*zip.File, 0, len(zr.File))
+	rawEntries := make([]*zip.File, 0, len(zr.File))
 	for _, f := range zr.File {
-		if f.Name == galleryMetadataFilename || !strings.HasSuffix(strings.ToLower(f.Name), ".json") {
-			continue
+		switch {
+		case f.Name == galleryMetadataFilename:
+			raw, err := readGalleryZipEntry(f, maxGalleryManifestMetadataSize)
+			if err == nil {
+				_ = json.Unmarshal(raw, &normalized)
+			}
+		case strings.HasSuffix(strings.ToLower(f.Name), ".json"):
+			rawEntries = append(rawEntries, f)
+		default:
+			mediaEntries = append(mediaEntries, f)
 		}
+	}
+	sortGalleryMediaEntries(mediaEntries)
+	mediaURLs := make([]string, len(mediaEntries))
+	mediaByName := make(map[string]string, len(mediaEntries))
+	photoCount := 0
+	for i, media := range mediaEntries {
+		mediaURLs[i] = fullPath(c, fmt.Sprintf("gallery/%s/file/%s", shortID, url.PathEscape(media.Name)))
+		mediaByName[media.Name] = mediaURLs[i]
+		if strings.HasPrefix(galleryZipFileContentType(media), "image/") {
+			photoCount++
+		}
+	}
+
+	records := make([]galleryRawRecord, 0, max(len(rawEntries), len(mediaEntries)))
+	for index, f := range rawEntries {
 		r, err := f.Open()
 		if err != nil {
 			continue
@@ -282,21 +314,108 @@ func ServeGalleryRawMetadata(c *gin.Context, storageInstance storage.Storage, db
 		if err != nil {
 			continue
 		}
-		records = append(records, record{Filename: f.Name, Metadata: safe})
+		metadata := map[string]interface{}{}
+		if err := json.Unmarshal(safe, &metadata); err != nil {
+			continue
+		}
+		normalizeGalleryRawFields(metadata, normalized, photoCount)
+		urls := galleryRecordMediaURLs(f.Name, index, len(rawEntries), mediaEntries, mediaURLs, mediaByName)
+		addGalleryMediaURLs(metadata, urls)
+		records = append(records, galleryRawRecord{Filename: f.Name, Metadata: metadata, MediaURL: firstStringOrEmpty(urls), MediaURLs: urls})
 	}
+	// A legacy bundle can contain the durable media and normalized metadata but
+	// no provider sidecar. Emit one honest normalized record per asset instead
+	// of turning a valid gallery ID into a 404 or an unusable empty response.
 	if len(records) == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "raw gallery metadata not available"})
-		return
+		for i, media := range mediaEntries {
+			metadata := map[string]interface{}{}
+			normalizeGalleryRawFields(metadata, normalized, photoCount)
+			urls := []string{mediaURLs[i]}
+			addGalleryMediaURLs(metadata, urls)
+			records = append(records, galleryRawRecord{Filename: media.Name, Metadata: metadata, MediaURL: mediaURLs[i], MediaURLs: urls})
+		}
 	}
 	c.Header("X-Content-Type-Options", "nosniff")
-	c.JSON(http.StatusOK, gin.H{"provider": func() string {
+	response["provider"] = func() string {
 		for _, r := range records {
 			if r.Filename == "brightdata.json" {
 				return "brightdata"
 			}
 		}
-		return "gallery-dl"
-	}(), "records": records})
+		return galleryProvider(item.Source)
+	}()
+	response["records"] = records
+	c.JSON(http.StatusOK, response)
+}
+
+type galleryRawRecord struct {
+	Filename  string                 `json:"filename"`
+	Metadata  map[string]interface{} `json:"metadata"`
+	MediaURL  string                 `json:"media_url,omitempty"`
+	MediaURLs []string               `json:"media_urls"`
+}
+
+func galleryProvider(source string) string {
+	if source == models.ArchiveSourceBrightData {
+		return "brightdata"
+	}
+	return "gallery-dl"
+}
+
+func normalizeGalleryRawFields(raw map[string]interface{}, normalized archivers.GalleryMetadata, photoCount int) {
+	raw["caption"] = firstGalleryRawValue(raw, []string{"caption", "description", "text", "content", "post_content"}, firstNonBlank(normalized.Description, normalized.Title))
+	raw["user_posted"] = firstGalleryRawValue(raw, []string{"user_posted", "username", "author", "uploader", "owner"}, firstNonBlank(normalized.Author, normalized.AuthorName))
+	raw["date_posted"] = firstGalleryRawValue(raw, []string{"date_posted", "post_date", "date", "created_at", "taken_at", "timestamp"}, normalized.Date)
+	raw["photos_number"] = firstGalleryRawValue(raw, []string{"photos_number", "photo_count", "image_count"}, photoCount)
+	raw["likes"] = firstGalleryRawValue(raw, []string{"likes", "like_count", "favorites", "favorite_count"}, normalized.Likes)
+	raw["num_comments"] = firstGalleryRawValue(raw, []string{"num_comments", "comments", "comment_count"}, normalized.Comments)
+}
+
+func firstGalleryRawValue(raw map[string]interface{}, keys []string, fallback interface{}) interface{} {
+	for _, key := range keys {
+		if value, exists := raw[key]; exists && value != nil && value != "" {
+			return value
+		}
+	}
+	return fallback
+}
+
+func firstNonBlank(values ...string) interface{} {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return nil
+}
+
+func galleryRecordMediaURLs(sidecar string, index, rawCount int, media []*zip.File, urls []string, byName map[string]string) []string {
+	if name := strings.TrimSuffix(sidecar, ".json"); byName[name] != "" {
+		return []string{byName[name]}
+	}
+	if rawCount == len(media) && index < len(urls) {
+		return []string{urls[index]}
+	}
+	if rawCount == 1 {
+		return append([]string(nil), urls...)
+	}
+	return []string{}
+}
+
+func addGalleryMediaURLs(metadata map[string]interface{}, urls []string) {
+	metadata["media_urls"] = urls
+	if len(urls) == 1 {
+		metadata["media_url"] = urls[0]
+	} else {
+		metadata["media_url"] = nil
+	}
+}
+
+func firstStringOrEmpty(values []string) string {
+	if len(values) == 1 {
+		return values[0]
+	}
+	return ""
 }
 
 // ServeGalleryFile serves a single media file out of the gallery-dl ZIP.

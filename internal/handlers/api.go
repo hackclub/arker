@@ -134,7 +134,7 @@ func ApiFindOrCreateArchive(c *gin.Context, db *gorm.DB, riverClient *river.Clie
 		return
 	}
 
-	resultURL := utils.BuildFullURL(c, result.ShortID)
+	resultURL := utils.BuildFullURL(c, "api/v1/archive/"+result.ShortID)
 	c.Header("Location", resultURL)
 	statusCode := http.StatusAccepted
 	if result.Action == workers.FindOrCreateFound {

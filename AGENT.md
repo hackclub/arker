@@ -301,10 +301,11 @@ no permalink type segment, and no entry in `canonicalArchiveTypes`. They live in
 five columns on `archive_items` (`thumbnail_key/width/height/status/kind`) and are
 served from `/thumb/{shortid}[/{type}]`.
 
-- **Social thumbnails are originals**: preserve the provider's poster or the
-  post's first still byte-for-byte, including its intrinsic dimensions, aspect
-  ratio, and JPEG/PNG/GIF/WebP/AVIF/HEIC encoding. Do not crop, scale, or re-encode an
-  image the poster or platform already authored for the post.
+- **Social thumbnails preserve framing, not full resolution**: use the
+  provider's poster or the post's first still, keep the complete aspect ratio,
+  and downsize the longest edge to at most 480px for row previews. Small source
+  images may retain their original bytes and encoding; oversized images are
+  encoded as JPEG. Never crop a social preview.
 - **Page screenshot previews are derivatives**: crop the page header and scale
   it to a 480x270 JPEG (`internal/thumbnail`). JPEG is used here because the
   only WebP encoder in the tree (`nativewebp`) is lossless-only — it produced a
@@ -313,9 +314,9 @@ served from `/thumb/{shortid}[/{type}]`.
   | Type | Source | Treatment |
   | --- | --- | --- |
   | `screenshot` | the full-page image it already decoded — no extra browser work | `CropTop` |
-  | `yt-dlp` | the platform's own poster via `--write-thumbnail` (YouTube serves **WebP**) | preserve original |
-  | `gallery-dl` | the post's first still image, from the temp dir before it is zipped | preserve original |
-  | Bright Data video-only gallery | the provider record's published poster when available | preserve original |
+  | `yt-dlp` | the platform's own poster via `--write-thumbnail` (YouTube often serves **WebP**) | fit within 480px |
+  | `gallery-dl` | the post's first still image, from the temp dir before it is zipped | fit within 480px |
+  | Bright Data video-only gallery | the provider record's published poster when available | fit within 480px |
   | `mhtml`, `git`, `itch` | none — the capture falls back to a sibling item's thumbnail | — |
 - **Only page screenshot previews are cropped.** They use `CropTop` because the
   page's identity is its header. Social images keep their complete framing.
@@ -326,8 +327,14 @@ served from `/thumb/{shortid}[/{type}]`.
   gallery ZIPs, asks yt-dlp for posters with media downloads disabled, and only
   then uses the capped Bright Data poster resolver. Duplicate canonical
   URL/type captures share one object. `thumbnail_kind` makes the operation
-  resumable: `social_original` is complete and `social_fallback` is a
-  conclusive no-poster result that retains any old preview.
+  resumable: `social_preview` is contract-ready, a <=480px
+  `social_original` is also accepted, and `social_fallback` retains an old
+  preview only until stored-video frame extraction can replace it.
+- Completed legacy videos without structured sidecars use the explicit
+  `/admin/backfill-video-metadata` operation and the one-worker
+  `video_metadata_backfill` queue. The job uses yt-dlp `--skip-download`, probes
+  the immutable stored media, writes new append-only sidecars, and shares them
+  across duplicate canonical URLs; it never downloads the video again.
 - **Never generate inline in a request** — a full-page screenshot reaches 60
   megapixels (~240MB decoded) and one dashboard render asks for hundreds.
 - **gallery-dl's thumbnail must be built before the ZIP goroutine starts.** That
@@ -341,9 +348,10 @@ served from `/thumb/{shortid}[/{type}]`.
   (`{shortid}/{type}-{nonce}-thumb.{jpg,png,gif,webp,avif,heic,heif}`) because the bucket
   forbids overwrites and deletes. Regenerating means writing a new object and
   repointing the row.
-- `/thumb` always returns an image, falling back to a generated SVG placeholder
-  with a short `max-age` so a refresh picks up the real one. Callers can render
-  a card unconditionally.
+- `/thumb/{shortid}` is the permanent reported URL. It returns a generated SVG
+  placeholder while work is pending and the real image afterward, never signs
+  or redirects, and revalidates so the change is visible without changing the
+  URL. Unknown/nonexistent captures return 404.
 
 ### Platform routing
 

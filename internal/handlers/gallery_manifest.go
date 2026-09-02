@@ -75,9 +75,6 @@ type galleryManifestMedia struct {
 // public viewer already renders.
 func ServeGalleryManifest(c *gin.Context, store storage.Storage, db *gorm.DB) {
 	shortID := c.Param("shortid")
-	if redirectIfAlias(c, db, shortID) {
-		return
-	}
 
 	item, ok := findGalleryItem(c, db, shortID)
 	if !ok {
@@ -178,9 +175,13 @@ func ServeGalleryManifest(c *gin.Context, store storage.Storage, db *gorm.DB) {
 // findGalleryItem resolves a capture's gallery item, answering 404 in the same
 // shape as the video manifest when the capture has no gallery media at all.
 func findGalleryItem(c *gin.Context, db *gorm.DB, shortID string) (models.ArchiveItem, bool) {
+	capture, err := resolveCaptureForMachineEndpoint(db, shortID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "gallery archive not found"})
+		return models.ArchiveItem{}, false
+	}
 	var item models.ArchiveItem
-	if err := db.Joins("JOIN captures ON captures.id = archive_items.capture_id").
-		Where("captures.short_id = ? AND archive_items.type IN ?", shortID, utils.ArchiveTypeMatchValues(utils.ArchiveTypeGalleryDl)).
+	if err := db.Where("capture_id = ? AND type IN ?", capture.ID, utils.ArchiveTypeMatchValues(utils.ArchiveTypeGalleryDl)).
 		First(&item).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "gallery archive not found"})
 		return models.ArchiveItem{}, false

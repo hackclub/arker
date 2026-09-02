@@ -251,7 +251,7 @@ func TestFromReaderDecodesEveryStoredScreenshotFormat(t *testing.T) {
 	}
 }
 
-func TestOriginalFromReaderPreservesSocialImageBytesAndDimensions(t *testing.T) {
+func TestOriginalFromReaderCompactsSocialImageWithoutCropping(t *testing.T) {
 	src := banded(321, 517, color.RGBA{200, 30, 30, 255}, color.RGBA{30, 30, 200, 255})
 
 	var pngBuf, jpgBuf, webpBuf bytes.Buffer
@@ -266,31 +266,29 @@ func TestOriginalFromReaderPreservesSocialImageBytesAndDimensions(t *testing.T) 
 	}
 
 	for _, tc := range []struct {
-		name        string
-		data        []byte
-		extension   string
-		contentType string
+		name string
+		data []byte
 	}{
-		{"png", pngBuf.Bytes(), ".png", "image/png"},
-		{"jpeg", jpgBuf.Bytes(), ".jpg", "image/jpeg"},
-		{"webp", webpBuf.Bytes(), ".webp", "image/webp"},
+		{"png", pngBuf.Bytes()},
+		{"jpeg", jpgBuf.Bytes()},
+		{"webp", webpBuf.Bytes()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := OriginalFromReader(bytes.NewReader(tc.data))
 			if err != nil {
 				t.Fatalf("OriginalFromReader: %v", err)
 			}
-			if !bytes.Equal(got.Data, tc.data) {
-				t.Error("social image was cropped, scaled, or re-encoded")
+			if bytes.Equal(got.Data, tc.data) {
+				t.Error("oversized social image was not compacted")
 			}
-			if got.Width != 321 || got.Height != 517 {
-				t.Errorf("dimensions = %dx%d, want the source's 321x517", got.Width, got.Height)
+			if got.Width != 298 || got.Height != 480 {
+				t.Errorf("dimensions = %dx%d, want aspect-correct 298x480", got.Width, got.Height)
 			}
-			if extension := FileExtension(got.Data); extension != tc.extension {
-				t.Errorf("extension = %q, want %q", extension, tc.extension)
+			if extension := FileExtension(got.Data); extension != ".jpg" {
+				t.Errorf("extension = %q, want compact JPEG", extension)
 			}
-			if contentType := ContentTypeForData(got.Data); contentType != tc.contentType {
-				t.Errorf("content type = %q, want %q", contentType, tc.contentType)
+			if contentType := ContentTypeForData(got.Data); contentType != "image/jpeg" {
+				t.Errorf("content type = %q, want image/jpeg", contentType)
 			}
 		})
 	}
@@ -311,12 +309,12 @@ func TestOriginalFromReaderPreservesAVIFAndHEICGeometry(t *testing.T) {
 		{"heif", ".heif", "image/heif"},
 	} {
 		t.Run(tc.brand, func(t *testing.T) {
-			data := syntheticBMFFStill(tc.brand, 1080, 1350)
+			data := syntheticBMFFStill(tc.brand, 320, 400)
 			got, err := OriginalFromReader(bytes.NewReader(data))
 			if err != nil {
 				t.Fatalf("OriginalFromReader: %v", err)
 			}
-			if !bytes.Equal(got.Data, data) || got.Width != 1080 || got.Height != 1350 {
+			if !bytes.Equal(got.Data, data) || got.Width != 320 || got.Height != 400 {
 				t.Fatalf("preserved image = %dx%d equal=%v", got.Width, got.Height, bytes.Equal(got.Data, data))
 			}
 			if ext := FileExtension(data); ext != tc.extension {

@@ -26,8 +26,8 @@ func TestResolveSocialThumbnailDownloadsInstagramPosterOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveSocialThumbnail: %v", err)
 	}
-	if !bytes.Equal(thumb.Data, poster) || thumb.Kind != models.ThumbnailKindSocialOriginal {
-		t.Fatal("provider poster was not preserved exactly")
+	if !bytes.Equal(thumb.Data, poster) || thumb.Kind != models.ThumbnailKindSocialPreview {
+		t.Fatal("small provider poster was not retained as a contract-ready preview")
 	}
 	if network.requested("https://cdn.example/video.mp4?sig=must-not-download") {
 		t.Fatal("thumbnail backfill downloaded archived video media")

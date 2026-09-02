@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"arker/internal/models"
+	"arker/internal/thumbnail"
 	"arker/internal/utils"
 	"arker/internal/workers"
 	"fmt"
@@ -237,10 +238,14 @@ func BackfillSocialThumbnails(c *gin.Context, db *gorm.DB, riverClient *river.Cl
 func SocialThumbnailBackfillStatus(c *gin.Context, db *gorm.DB) {
 	base := db.Model(&models.ArchiveItem{}).
 		Where("type IN ? AND status = ?", []string{utils.ArchiveTypeGalleryDl, utils.ArchiveTypeYtDlp}, "completed")
-	var total, originals, fallbacks int64
-	base.Count(&total)
-	base.Where("thumbnail_kind = ?", models.ThumbnailKindSocialOriginal).Count(&originals)
-	base.Where("thumbnail_kind = ?", models.ThumbnailKindSocialFallback).Count(&fallbacks)
+	var total, contractReady, fallbacks int64
+	base.Session(&gorm.Session{}).Count(&total)
+	base.Session(&gorm.Session{}).
+		Where("thumbnail_status = ? AND thumbnail_key <> '' AND thumbnail_width > 0 AND thumbnail_height > 0 AND thumbnail_width <= ? AND thumbnail_height <= ? AND thumbnail_kind IN ?",
+			models.ThumbnailStatusReady, thumbnail.SocialMaxDimension, thumbnail.SocialMaxDimension,
+			[]string{models.ThumbnailKindSocialOriginal, models.ThumbnailKindSocialPreview}).
+		Count(&contractReady)
+	base.Session(&gorm.Session{}).Where("thumbnail_kind = ?", models.ThumbnailKindSocialFallback).Count(&fallbacks)
 
 	queue := map[string]int64{}
 	var queueRows []struct {
@@ -257,9 +262,10 @@ func SocialThumbnailBackfillStatus(c *gin.Context, db *gorm.DB) {
 
 	response := gin.H{
 		"total_social_items": total,
-		"original":           originals,
+		"contract_ready":     contractReady,
+		"original":           contractReady, // retained for existing operator scripts
 		"fallback":           fallbacks,
-		"remaining":          total - originals - fallbacks,
+		"remaining":          total - contractReady,
 		"queue":              queue,
 	}
 	if raw := c.Query("since"); raw != "" {
@@ -275,6 +281,49 @@ func SocialThumbnailBackfillStatus(c *gin.Context, db *gorm.DB) {
 		}
 	}
 	c.JSON(http.StatusOK, response)
+}
+
+// BackfillVideoMetadata queues metadata-only refreshes for completed legacy
+// videos. Existing media bytes are reused; no video is downloaded again.
+func BackfillVideoMetadata(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
+	dryRun := c.Query("dry_run") == "true"
+	limit := 0
+	if raw := c.Query("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be a non-negative integer"})
+			return
+		}
+		limit = parsed
+	}
+	summary, err := workers.EnqueueVideoMetadataBackfill(c.Request.Context(), db, riverClient, workers.VideoMetadataBackfillOptions{DryRun: dryRun, Limit: limit})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "summary": summary})
+		return
+	}
+	status := http.StatusAccepted
+	if dryRun {
+		status = http.StatusOK
+	}
+	c.JSON(status, summary)
+}
+
+func VideoMetadataBackfillStatus(c *gin.Context, db *gorm.DB) {
+	var completed, missing int64
+	base := db.Model(&models.ArchiveItem{}).Where("type IN ? AND status = ?", utils.ArchiveTypeMatchValues(utils.ArchiveTypeYtDlp), "completed")
+	base.Count(&completed)
+	base.Where("metadata_key = '' OR metadata_key IS NULL OR raw_metadata_key = '' OR raw_metadata_key IS NULL").Count(&missing)
+	queue := map[string]int64{}
+	var rows []struct {
+		State string
+		Count int64
+	}
+	if err := db.Table("river_job").Select("state, COUNT(*) AS count").Where("kind = ?", (workers.VideoMetadataBackfillJobArgs{}).Kind()).Group("state").Scan(&rows).Error; err == nil {
+		for _, row := range rows {
+			queue[row.State] = row.Count
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"completed_video_items": completed, "metadata_available": completed - missing, "remaining": missing, "queue": queue})
 }
 
 // mediaBackfillURLPattern pre-filters candidate URLs in SQL for each media

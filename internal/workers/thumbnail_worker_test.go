@@ -254,8 +254,8 @@ func TestProcessArchiveJobKeepsSocialThumbnailExtension(t *testing.T) {
 	if got.ThumbnailWidth != 137 || got.ThumbnailHeight != 251 {
 		t.Errorf("stored dimensions = %dx%d, want 137x251", got.ThumbnailWidth, got.ThumbnailHeight)
 	}
-	if got.ThumbnailKind != models.ThumbnailKindSocialOriginal {
-		t.Errorf("kind = %q, want social original", got.ThumbnailKind)
+	if got.ThumbnailKind != models.ThumbnailKindSocialPreview {
+		t.Errorf("kind = %q, want social preview", got.ThumbnailKind)
 	}
 	r, err := store.Reader(got.ThumbnailKey)
 	if err != nil {

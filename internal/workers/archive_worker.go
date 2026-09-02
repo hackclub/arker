@@ -375,7 +375,7 @@ func StoreThumbnail(thumb *archivers.Thumbnail, key string, store storage.Storag
 	if kind == "" && item != nil {
 		switch utils.NormalizeArchiveType(item.Type) {
 		case utils.ArchiveTypeGalleryDl, utils.ArchiveTypeYtDlp:
-			kind = models.ThumbnailKindSocialOriginal
+			kind = models.ThumbnailKindSocialPreview
 		case utils.ArchiveTypeScreenshot:
 			kind = models.ThumbnailKindPagePreview
 		}

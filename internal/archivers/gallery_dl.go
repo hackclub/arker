@@ -463,7 +463,7 @@ func galleryThumbnail(dir string, metadata *GalleryMetadata, logWriter io.Writer
 
 		fmt.Fprintf(logWriter, "Thumbnail captured from %s: %dx%d, %d bytes\n",
 			file.Name, t.Width, t.Height, len(t.Data))
-		return &Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height, Kind: models.ThumbnailKindSocialOriginal}
+		return &Thumbnail{Data: t.Data, Width: t.Width, Height: t.Height, Kind: models.ThumbnailKindSocialPreview}
 	}
 
 	fmt.Fprintf(logWriter, "No still image available for a thumbnail\n")

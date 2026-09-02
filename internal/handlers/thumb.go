@@ -32,17 +32,14 @@ import (
 func ServeThumbnail(c *gin.Context, store storage.Storage, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
 	shortID := c.Param("shortid")
 	requestedType := strings.TrimPrefix(c.Param("type"), "/")
-	// Alias captures own no items; redirect to the canonical capture's
-	// thumbnail so <img> tags pointing at an alias short ID still render.
-	if redirectIfAlias(c, db, shortID) {
+
+	capture, err := resolveCaptureForMachineEndpoint(db, shortID)
+	if err != nil {
+		c.Status(http.StatusNotFound)
 		return
 	}
-
-	var capture models.Capture
-	if err := db.Where("short_id = ?", shortID).Preload("ArchiveItems").First(&capture).Error; err != nil {
-		// Still an image: a broken <img> in a list of hundreds is worse than a
-		// neutral placeholder, and the caller asked for a picture.
-		serveThumbnailPlaceholder(c, shortID, "")
+	if err := db.Preload("ArchiveItems").First(&capture, capture.ID).Error; err != nil {
+		c.Status(http.StatusNotFound)
 		return
 	}
 
@@ -73,7 +70,7 @@ func ServeThumbnail(c *gin.Context, store storage.Storage, db *gorm.DB, riverCli
 	}
 
 	if candidate != nil && riverClient != nil {
-		if err := workers.EnqueueThumbnail(c.Request.Context(), riverClient, shortID, candidate.Type); err != nil {
+		if err := workers.EnqueueThumbnail(c.Request.Context(), riverClient, capture.ShortID, candidate.Type); err != nil {
 			// Uniqueness violations are the expected case under load, not a fault.
 			c.Header("X-Thumbnail-Queued", "error")
 		} else {
@@ -144,7 +141,7 @@ func serveStoredThumbnail(c *gin.Context, store storage.Storage, item models.Arc
 	etag := `"` + item.ThumbnailKey + `"`
 	if match := c.GetHeader("If-None-Match"); match != "" && strings.Contains(match, etag) {
 		c.Header("ETag", etag)
-		c.Header("Cache-Control", storedThumbnailCacheControl(c, item.ThumbnailKey))
+		c.Header("Cache-Control", storedThumbnailCacheControl())
 		c.Status(http.StatusNotModified)
 		return true
 	}
@@ -158,15 +155,15 @@ func serveStoredThumbnail(c *gin.Context, store storage.Storage, item models.Arc
 	// Buffer rather than stream. Reading first means a storage error still falls
 	// back to the placeholder instead of truncating a response we already
 	// committed to, and it lets us send a Content-Length, which caches and HEAD
-	// callers expect. Social thumbnails retain the provider's original bytes,
-	// so they can be larger than the derived screenshot previews.
+	// callers expect. Social previews preserve the source framing and are capped
+	// to row-preview dimensions before they reach this serving path.
 	data, err := io.ReadAll(reader)
 	if err != nil || len(data) == 0 {
 		return false
 	}
 
 	c.Header("ETag", etag)
-	c.Header("Cache-Control", storedThumbnailCacheControl(c, item.ThumbnailKey))
+	c.Header("Cache-Control", storedThumbnailCacheControl())
 	c.Header("Content-Length", strconv.Itoa(len(data)))
 	c.Data(http.StatusOK, thumbnail.ContentTypeForData(data), data)
 	return true
@@ -224,12 +221,8 @@ func hostLabel(raw string) string {
 // Absolute because the consumers are other services rendering archive cards in
 // their own pages, where a root-relative path would resolve against the wrong
 // host.
-func ThumbnailURL(c *gin.Context, shortID string, thumbnailKey ...string) string {
-	result := utils.BuildFullURL(c, "thumb/"+shortID)
-	if len(thumbnailKey) > 0 && thumbnailKey[0] != "" {
-		result += "?v=" + thumbnailVersionToken(thumbnailKey[0])
-	}
-	return result
+func ThumbnailURL(c *gin.Context, shortID string, _ ...string) string {
+	return utils.BuildFullURL(c, "thumb/"+shortID)
 }
 
 func thumbnailVersionToken(thumbnailKey string) string {
@@ -237,13 +230,11 @@ func thumbnailVersionToken(thumbnailKey string) string {
 	return fmt.Sprintf("%x", sum[:8])
 }
 
-// /thumb/:shortid is a mutable pointer: a backfill can repoint it to a new,
-// append-only object at any time. Bare aliases therefore must revalidate. URLs
-// emitted by Arker include a token for the current object and can be cached as
-// immutable; a stale or invented token falls back to revalidation.
-func storedThumbnailCacheControl(c *gin.Context, thumbnailKey string) string {
-	if c.Query("v") == thumbnailVersionToken(thumbnailKey) {
-		return "public, max-age=31536000, immutable"
-	}
+// /thumb/:shortid is a stable, mutable pointer: a backfill can repoint it to a
+// new append-only object without changing the reported URL. Revalidation lets
+// callers observe the placeholder-to-preview transition at that same URL.
+func storedThumbnailCacheControl() string {
+	// The stable short-ID URL intentionally changes once: placeholder to real
+	// preview. Revalidation is what makes that compatible with one URL forever.
 	return "public, max-age=0, must-revalidate"
 }
