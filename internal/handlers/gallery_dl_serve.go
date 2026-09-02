@@ -170,14 +170,28 @@ func openGalleryZipItem(storageInstance storage.Storage, item *models.ArchiveIte
 	if size > maxGalleryBufferedSize {
 		return nil, nil, fmt.Errorf("gallery bundle exceeds %d bytes and the backend cannot seek", maxGalleryBufferedSize)
 	}
+	return openGalleryZipItemBuffered(storageInstance, item, size)
+}
+
+// openGalleryZipItemBuffered downloads a bounded bundle once and serves all
+// subsequent ZIP reads from memory. This is much faster than one ranged object
+// request per entry for unusually large carousels/feed captures whose raw
+// endpoint must inspect hundreds of tiny JSON sidecars.
+func openGalleryZipItemBuffered(storageInstance storage.Storage, item *models.ArchiveItem, size int64) (*zip.Reader, func(), error) {
+	if size < 0 || size > maxGalleryBufferedSize {
+		return nil, nil, fmt.Errorf("gallery bundle exceeds %d-byte buffer limit", maxGalleryBufferedSize)
+	}
 	r, err := storageInstance.Reader(item.StorageKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open gallery bundle: %w", err)
 	}
 	defer r.Close()
-	data, err := io.ReadAll(r)
+	data, err := io.ReadAll(io.LimitReader(r, maxGalleryBufferedSize+1))
 	if err != nil {
 		return nil, nil, fmt.Errorf("read gallery bundle: %w", err)
+	}
+	if int64(len(data)) > maxGalleryBufferedSize {
+		return nil, nil, fmt.Errorf("gallery bundle exceeds %d-byte buffer limit", maxGalleryBufferedSize)
 	}
 	zr, err := zip.NewReader(&bytesReaderAtCloser{data: data}, int64(len(data)))
 	if err != nil {
@@ -271,20 +285,29 @@ func ServeGalleryRawMetadata(c *gin.Context, storageInstance storage.Storage, db
 	}
 	defer cleanup()
 
-	var normalized archivers.GalleryMetadata
-	mediaEntries := make([]*zip.File, 0, len(zr.File))
-	rawEntries := make([]*zip.File, 0, len(zr.File))
-	for _, f := range zr.File {
-		switch {
-		case f.Name == galleryMetadataFilename:
-			raw, err := readGalleryZipEntry(f, maxGalleryManifestMetadataSize)
-			if err == nil {
-				_ = json.Unmarshal(raw, &normalized)
+	mediaEntries, rawEntries, metadataEntry := galleryRawEntries(zr)
+	// A seekable S3 ZIP is ideal for ordinary posts because raw metadata does
+	// not require downloading the media. At high entry counts, though, hundreds
+	// of tiny ranged GETs cost minutes. A bounded one-time read is dramatically
+	// cheaper and makes the discriminator endpoint reliably answer.
+	if len(rawEntries) > 64 {
+		if size, err := storageInstance.Size(item.StorageKey); err == nil && size <= maxGalleryBufferedSize {
+			cleanup()
+			zr, cleanup, err = openGalleryZipItemBuffered(storageInstance, &item, size)
+			if err != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "raw gallery metadata temporarily unavailable"})
+				return
 			}
-		case strings.HasSuffix(strings.ToLower(f.Name), ".json"):
-			rawEntries = append(rawEntries, f)
-		default:
-			mediaEntries = append(mediaEntries, f)
+			defer cleanup()
+			mediaEntries, rawEntries, metadataEntry = galleryRawEntries(zr)
+		}
+	}
+
+	var normalized archivers.GalleryMetadata
+	if metadataEntry != nil {
+		raw, err := readGalleryZipEntry(metadataEntry, maxGalleryManifestMetadataSize)
+		if err == nil {
+			_ = json.Unmarshal(raw, &normalized)
 		}
 	}
 	sortGalleryMediaEntries(mediaEntries)
@@ -294,7 +317,9 @@ func ServeGalleryRawMetadata(c *gin.Context, storageInstance storage.Storage, db
 	for i, media := range mediaEntries {
 		mediaURLs[i] = fullPath(c, fmt.Sprintf("gallery/%s/file/%s", shortID, url.PathEscape(media.Name)))
 		mediaByName[media.Name] = mediaURLs[i]
-		if strings.HasPrefix(galleryZipFileContentType(media), "image/") {
+		// Capture-time canonicalization makes stored gallery extensions honest;
+		// avoid opening every media entry merely to count photos here.
+		if strings.HasPrefix(archivers.GalleryMediaContentType(media.Name, nil), "image/") {
 			photoCount++
 		}
 	}
@@ -346,6 +371,22 @@ func ServeGalleryRawMetadata(c *gin.Context, storageInstance storage.Storage, db
 	}()
 	response["records"] = records
 	c.JSON(http.StatusOK, response)
+}
+
+func galleryRawEntries(zr *zip.Reader) (media, raw []*zip.File, metadata *zip.File) {
+	media = make([]*zip.File, 0, len(zr.File))
+	raw = make([]*zip.File, 0, len(zr.File))
+	for _, f := range zr.File {
+		switch {
+		case f.Name == galleryMetadataFilename:
+			metadata = f
+		case strings.HasSuffix(strings.ToLower(f.Name), ".json"):
+			raw = append(raw, f)
+		case !f.FileInfo().IsDir():
+			media = append(media, f)
+		}
+	}
+	return media, raw, metadata
 }
 
 type galleryRawRecord struct {
