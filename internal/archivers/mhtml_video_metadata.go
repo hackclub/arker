@@ -176,6 +176,13 @@ func extractCapturedHTMLVideoFacts(root *html.Node) capturedHTMLVideoFacts {
 			if facts.Channel == "" && content != "" && ((inAuthor && itemProp == "name") || name == "author" || property == "article:author") {
 				facts.Channel = content
 			}
+			// Some captured YouTube pages omit the schema.org author name but
+			// retain the provider-authored channel handle in the sibling author
+			// URL. The handle is an explicit attribution, not an inference from
+			// the video ID or title.
+			if facts.Channel == "" && inAuthor && itemProp == "url" {
+				facts.Channel = capturedAuthorHandle(attrs["href"])
+			}
 			if facts.Published == "" && content != "" && (itemProp == "datepublished" || itemProp == "uploaddate" || property == "article:published_time") {
 				facts.Published = content
 			}
@@ -195,6 +202,19 @@ func extractCapturedHTMLVideoFacts(root *html.Node) capturedHTMLVideoFacts {
 	}
 	walk(root, false)
 	return facts
+}
+
+func capturedAuthorHandle(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return ""
+	}
+	for _, part := range strings.Split(strings.Trim(parsed.Path, "/"), "/") {
+		if strings.HasPrefix(part, "@") && len(part) > 1 {
+			return strings.TrimPrefix(part, "@")
+		}
+	}
+	return ""
 }
 
 func htmlAttributes(node *html.Node) map[string]string {

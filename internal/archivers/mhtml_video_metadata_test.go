@@ -49,6 +49,25 @@ func TestBuildCapturedHTMLVideoArtifactsRecoversSchemaFacts(t *testing.T) {
 	}
 }
 
+func TestBuildCapturedHTMLVideoArtifactsRecoversAuthorFromCapturedHandleURL(t *testing.T) {
+	htmlData := []byte(`<html><head>
+<meta property="og:title" content="Motion Sensor">
+<meta itemprop="duration" content="PT12S">
+<span itemprop="author"><link itemprop="url" href="https://www.youtube.com/@l.a.c.l.u.s.t.r"><link itemprop="name" content=""></span>
+</head></html>`)
+	metadataSidecar, _, err := BuildCapturedHTMLVideoArtifacts(htmlData, "https://www.youtube.com/watch?v=fixture", VideoMedia{}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata VideoMetadata
+	if err := json.Unmarshal(metadataSidecar.Data, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Channel != "l.a.c.l.u.s.t.r" {
+		t.Fatalf("channel = %q", metadata.Channel)
+	}
+}
+
 func TestBuildCapturedHTMLVideoArtifactsRejectsGenericPage(t *testing.T) {
 	if _, _, err := BuildCapturedHTMLVideoArtifacts([]byte(`<html><title>Log in</title></html>`), "https://instagram.com/reel/gone/", VideoMedia{}, time.Now()); err == nil {
 		t.Fatal("generic page should not become video metadata")

@@ -103,6 +103,28 @@ func TestServeVideoManifestReturnsNormalizedMetadataAndMediaURL(t *testing.T) {
 	}
 }
 
+func TestNormalizeVideoManifestMetadataRecoversProviderAuthoredChannelIDs(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "yt-dlp author id", raw: `{"author_id":"@l.a.c.l.u.s.t.r","media":{}}`, want: "l.a.c.l.u.s.t.r"},
+		{name: "TikTok profile URL", raw: `{"source_url":"https://www.tiktok.com/@worldguessr_/","media":{}}`, want: "worldguessr_"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var metadata map[string]interface{}
+			if err := json.Unmarshal(normalizeVideoManifestMetadata(json.RawMessage(tc.raw)), &metadata); err != nil {
+				t.Fatal(err)
+			}
+			if metadata["channel"] != tc.want {
+				t.Fatalf("channel = %#v, want %q", metadata["channel"], tc.want)
+			}
+		})
+	}
+}
+
 func TestServeVideoManifestDoesNotSynthesizeLegacyMetadata(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newHandlerLogTestDB(t)
