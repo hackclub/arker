@@ -151,4 +151,3 @@ func galleryMusicLabel(music *archivers.GalleryMusic) string {
 		return "(untitled)"
 	}
 }
-
