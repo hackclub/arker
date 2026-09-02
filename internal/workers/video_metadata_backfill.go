@@ -35,10 +35,11 @@ const (
 const videoContractMetadataRefreshTimeout = 2 * time.Minute
 
 type VideoMetadataBackfillJobArgs struct {
-	Identity string `json:"identity"`
-	URL      string `json:"url"`
-	ShortID  string `json:"short_id"`
-	Version  int    `json:"version"`
+	Identity      string `json:"identity"`
+	URL           string `json:"url"`
+	ShortID       string `json:"short_id"`
+	Version       int    `json:"version"`
+	ProviderFirst bool   `json:"provider_first,omitempty"`
 }
 
 func (VideoMetadataBackfillJobArgs) Kind() string { return "video_metadata_backfill" }
@@ -101,7 +102,7 @@ func (w *VideoMetadataBackfillWorker) generateAttempt(ctx context.Context, args 
 	if source != nil {
 		return w.share(source, targets)
 	}
-	if w.refresher == nil {
+	if !args.ProviderFirst && w.refresher == nil {
 		return errors.New("video metadata refresher is not configured")
 	}
 	representative := &targets[0]
@@ -111,39 +112,76 @@ func (w *VideoMetadataBackfillWorker) generateAttempt(ctx context.Context, args 
 		SizeBytes: representative.FileSize,
 	}
 	var result archivers.Result
-	if lean, ok := w.refresher.(archivers.VideoContractMetadataRefresher); ok {
-		refreshCtx, cancel := context.WithTimeout(ctx, videoContractMetadataRefreshTimeout)
-		result, err = lean.RefreshVideoContractMetadata(refreshCtx, args.URL, &logs, media)
-		cancel()
+	if args.ProviderFirst {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if w.provider == nil || !w.provider.SupportsStoredVideoMetadata(args.URL) {
+			return fmt.Errorf("metadata-only provider does not support %s", args.URL)
+		}
+		fmt.Fprintf(&logs, "Refreshing explicitly selected metadata with the independent metadata-only provider\n")
+		result, err = w.provider.RefreshStoredVideoMetadata(ctx, args.URL, &logs, w.db, representative.ID, media)
+		if err != nil {
+			return fmt.Errorf("refresh video metadata for %s with provider: %w", args.ShortID, err)
+		}
 	} else {
-		result, err = w.refresher.RefreshVideoMetadata(ctx, args.URL, &logs, media)
-	}
-	if result.Bundle != nil {
-		defer result.Bundle.Cleanup()
-	}
-	if err != nil {
-		nativeErr := err
 		var capturedErr error
-		if finalAttempt && ctx.Err() == nil {
-			fmt.Fprintf(&logs, "\nNative metadata refresh failed (%v); checking the capture's MHTML metadata\n", nativeErr)
+		if capturedErr = ctx.Err(); capturedErr == nil {
+			fmt.Fprintf(&logs, "Checking the capture's MHTML metadata before a live extractor request\n")
 			result, capturedErr = w.refreshFromCapturedMHTML(ctx, args.URL, items, media, &logs)
-			if capturedErr == nil {
-				err = nil
-			} else if w.provider != nil && w.provider.SupportsStoredVideoMetadata(args.URL) {
+		}
+		if capturedErr != nil {
+			// The first attempt has already exercised the live extractor. On the
+			// final attempt, go straight to the independent metadata-only provider
+			// when one supports this URL instead of repeating the same expensive
+			// request. Captured MHTML remains first because it is immutable, free,
+			// and historically faithful.
+			if finalAttempt && ctx.Err() == nil && w.provider != nil && w.provider.SupportsStoredVideoMetadata(args.URL) {
 				fmt.Fprintf(&logs, "Captured MHTML metadata was unavailable (%v); attempting metadata-only provider fallback\n", capturedErr)
 				result, err = w.provider.RefreshStoredVideoMetadata(ctx, args.URL, &logs, w.db, representative.ID, media)
 				if err != nil {
-					return fmt.Errorf("refresh video metadata for %s: native failed (%v); captured MHTML failed (%v); provider failed: %w", args.ShortID, nativeErr, capturedErr, err)
-				}
-				if result.Bundle != nil {
-					defer result.Bundle.Cleanup()
+					providerErr := err
+					fmt.Fprintf(&logs, "Metadata-only provider failed (%v); checking the original capture probe log\n", providerErr)
+					result, err = w.refreshFromArchivedProbeLogs(ctx, args.URL, items, media, &logs)
+					if err != nil {
+						logErr := err
+						if utils.IsVimeoURL(args.URL) {
+							fmt.Fprintf(&logs, "Capture probe log was unavailable (%v); checking canonical Vimeo page metadata\n", logErr)
+							result, err = w.refreshFromCapturedMHTMLAllowingDescription(ctx, args.URL, items, media, &logs)
+							if err != nil {
+								return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); provider failed (%v); capture log failed (%v); canonical page fallback failed: %w", args.ShortID, capturedErr, providerErr, logErr, err)
+							}
+						} else {
+							return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); provider failed (%v); capture log failed: %w", args.ShortID, capturedErr, providerErr, logErr)
+						}
+					}
 				}
 			} else {
-				return fmt.Errorf("refresh video metadata for %s: native failed (%v); captured MHTML failed: %w", args.ShortID, nativeErr, capturedErr)
+				fmt.Fprintf(&logs, "Captured MHTML metadata was unavailable (%v); trying the native metadata extractor\n", capturedErr)
+				if lean, ok := w.refresher.(archivers.VideoContractMetadataRefresher); ok {
+					refreshCtx, cancel := context.WithTimeout(ctx, videoContractMetadataRefreshTimeout)
+					result, err = lean.RefreshVideoContractMetadata(refreshCtx, args.URL, &logs, media)
+					cancel()
+				} else {
+					result, err = w.refresher.RefreshVideoMetadata(ctx, args.URL, &logs, media)
+				}
+				if err != nil {
+					if finalAttempt {
+						nativeErr := err
+						fmt.Fprintf(&logs, "Native metadata extractor failed (%v); checking the original capture probe log\n", nativeErr)
+						result, err = w.refreshFromArchivedProbeLogs(ctx, args.URL, items, media, &logs)
+						if err != nil {
+							return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); native failed (%v); capture log failed: %w", args.ShortID, capturedErr, nativeErr, err)
+						}
+					} else {
+						return fmt.Errorf("refresh video metadata for %s: %w", args.ShortID, err)
+					}
+				}
 			}
-		} else {
-			return fmt.Errorf("refresh video metadata for %s: %w", args.ShortID, err)
 		}
+	}
+	if result.Bundle != nil {
+		defer result.Bundle.Cleanup()
 	}
 	keyBase := fmt.Sprintf("%s/%s-%s-metadata-backfill", args.ShortID, utils.ArchiveTypeYtDlp, uploadNonce())
 	if err := saveRefreshedArchiveResult(ctx, result, keyBase, representative, w.storage, w.db, representative, &logs); err != nil {
@@ -155,11 +193,69 @@ func (w *VideoMetadataBackfillWorker) generateAttempt(ctx context.Context, args 
 	return w.share(representative, targets)
 }
 
+// refreshFromArchivedProbeLogs uses only the three values written by the
+// successful pre-download yt-dlp probe. Querying marker-bearing chunks keeps
+// this fallback cheap even when an old item's diagnostic log is very large.
+func (w *VideoMetadataBackfillWorker) refreshFromArchivedProbeLogs(ctx context.Context, sourceURL string, videos []models.ArchiveItem, media archivers.VideoMedia, logWriter io.Writer) (archivers.Result, error) {
+	itemIDs := make([]uint, 0, len(videos))
+	for i := range videos {
+		itemIDs = append(itemIDs, videos[i].ID)
+	}
+	if len(itemIDs) == 0 {
+		return archivers.Result{}, errors.New("video group has no archive items")
+	}
+	var rows []models.ArchiveItemLog
+	if err := w.db.Where("archive_item_id IN ? AND chunk LIKE ?", itemIDs, "%Video info:%").Order("id DESC").Find(&rows).Error; err != nil {
+		return archivers.Result{}, fmt.Errorf("load archived probe logs: %w", err)
+	}
+	var lastErr error
+	for _, row := range rows {
+		if ctx.Err() != nil {
+			return archivers.Result{}, ctx.Err()
+		}
+		metadata, raw, err := archivers.BuildArchivedProbeVideoArtifacts(row.Chunk, sourceURL, media, row.CreatedAt)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		fmt.Fprintf(logWriter, "Recovered historical post metadata from capture probe log chunk %d\n", row.ID)
+		return archivers.Result{Extension: media.Extension, ContentType: media.ContentType, Source: models.ArchiveSourceNative, Metadata: metadata, RawMetadata: raw, Completeness: archivers.CompletenessComplete}, nil
+	}
+	for i := range videos {
+		if !strings.Contains(videos[i].Logs, "Video info:") {
+			continue
+		}
+		capturedAt := videos[i].UpdatedAt
+		if capturedAt.IsZero() {
+			capturedAt = videos[i].CreatedAt
+		}
+		metadata, raw, err := archivers.BuildArchivedProbeVideoArtifacts(videos[i].Logs, sourceURL, media, capturedAt)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		fmt.Fprintf(logWriter, "Recovered historical post metadata from legacy capture probe log\n")
+		return archivers.Result{Extension: media.Extension, ContentType: media.ContentType, Source: models.ArchiveSourceNative, Metadata: metadata, RawMetadata: raw, Completeness: archivers.CompletenessComplete}, nil
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no archived probe log contains usable metadata")
+	}
+	return archivers.Result{}, lastErr
+}
+
 // refreshFromCapturedMHTML recovers the post facts captured alongside the
 // video before asking a paid live provider. This is both cheaper and more
 // historically faithful: a post deleted today can still have its title,
 // author, publication time, and schema.org duration in the old page snapshot.
 func (w *VideoMetadataBackfillWorker) refreshFromCapturedMHTML(ctx context.Context, sourceURL string, videos []models.ArchiveItem, media archivers.VideoMedia, logWriter io.Writer) (archivers.Result, error) {
+	return w.refreshFromCapturedMHTMLMode(ctx, sourceURL, videos, media, logWriter, false)
+}
+
+func (w *VideoMetadataBackfillWorker) refreshFromCapturedMHTMLAllowingDescription(ctx context.Context, sourceURL string, videos []models.ArchiveItem, media archivers.VideoMedia, logWriter io.Writer) (archivers.Result, error) {
+	return w.refreshFromCapturedMHTMLMode(ctx, sourceURL, videos, media, logWriter, true)
+}
+
+func (w *VideoMetadataBackfillWorker) refreshFromCapturedMHTMLMode(ctx context.Context, sourceURL string, videos []models.ArchiveItem, media archivers.VideoMedia, logWriter io.Writer, allowDescription bool) (archivers.Result, error) {
 	captureIDs := make([]uint, 0, len(videos))
 	seen := make(map[uint]bool, len(videos))
 	for i := range videos {
@@ -200,7 +296,13 @@ func (w *VideoMetadataBackfillWorker) refreshFromCapturedMHTML(ctx context.Conte
 		if capturedAt.IsZero() {
 			capturedAt = pages[i].CreatedAt
 		}
-		metadata, raw, buildErr := archivers.BuildCapturedHTMLVideoArtifacts(htmlData, sourceURL, media, capturedAt)
+		var metadata, raw *archivers.Sidecar
+		var buildErr error
+		if allowDescription {
+			metadata, raw, buildErr = archivers.BuildCapturedHTMLVideoArtifactsAllowingDescription(htmlData, sourceURL, media, capturedAt)
+		} else {
+			metadata, raw, buildErr = archivers.BuildCapturedHTMLVideoArtifacts(htmlData, sourceURL, media, capturedAt)
+		}
 		if buildErr != nil {
 			lastErr = buildErr
 			continue
@@ -308,7 +410,7 @@ func EnqueueVideoMetadataBackfill(ctx context.Context, db *gorm.DB, client *rive
 		return summary, errors.New("River client is not configured")
 	}
 	for i, candidate := range candidates {
-		args := VideoMetadataBackfillJobArgs{Identity: strings.TrimSpace(candidate.Identity), URL: candidate.Original, ShortID: candidate.ShortID, Version: 2}
+		args := VideoMetadataBackfillJobArgs{Identity: strings.TrimSpace(candidate.Identity), URL: candidate.Original, ShortID: candidate.ShortID, Version: 3}
 		if _, err := client.Insert(ctx, args, &river.InsertOpts{Queue: videoMetadataBackfillQueue, MaxAttempts: 2,
 			ScheduledAt: now.Add(time.Duration(i) * time.Second), Tags: []string{"video-metadata-backfill", "run-" + summary.RunID},
 			UniqueOpts: river.UniqueOpts{ByArgs: true, ByPeriod: 24 * time.Hour}}); err != nil {

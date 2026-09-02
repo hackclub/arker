@@ -31,6 +31,7 @@ const (
 	socialThumbnailBackfillQueue = "thumbnail_backfill"
 	maxBackfillGalleryBuffer     = 200 << 20
 	maxGalleryMetadataBytes      = 4 << 20
+	maxCapturedMHTMLImageBytes   = 16 << 20
 	backfillJobTimeout           = 8 * time.Minute
 )
 
@@ -148,6 +149,15 @@ func (w *SocialThumbnailBackfillWorker) generate(ctx context.Context, args Socia
 		if nativeErr != nil && !errors.Is(nativeErr, archivers.ErrSocialThumbnailUnavailable) {
 			return nativeErr
 		}
+	}
+
+	// A sibling MHTML snapshot can retain the exact og:image bytes long after
+	// the live post and its signed CDN URL disappear. Resolve the embedded part
+	// before any network/provider retry; it is historical, free, and avoids
+	// mistaking avatars or recommendation cards for the post image by matching
+	// the root document's asset identity to Content-Location.
+	if thumb == nil {
+		thumb, _ = w.thumbnailFromCapturedMHTML(ctx, args.URL, items)
 	}
 
 	// A fallback marker means the provider/native poster paths were already
@@ -305,6 +315,73 @@ func (w *SocialThumbnailBackfillWorker) thumbnailFromStoredVideo(ctx context.Con
 			os.Remove(path)
 		}
 		cleanup()
+	}
+	if lastErr == nil {
+		lastErr = archivers.ErrSocialThumbnailUnavailable
+	}
+	return nil, lastErr
+}
+
+func (w *SocialThumbnailBackfillWorker) thumbnailFromCapturedMHTML(ctx context.Context, sourceURL string, items []models.ArchiveItem) (*archivers.Thumbnail, error) {
+	captureIDs := make([]uint, 0, len(items))
+	seen := make(map[uint]bool, len(items))
+	for i := range items {
+		if !seen[items[i].CaptureID] {
+			seen[items[i].CaptureID] = true
+			captureIDs = append(captureIDs, items[i].CaptureID)
+		}
+	}
+	if len(captureIDs) == 0 {
+		return nil, archivers.ErrSocialThumbnailUnavailable
+	}
+	var pages []models.ArchiveItem
+	if err := w.db.Where("capture_id IN ? AND type = ? AND status = ? AND storage_key <> ''", captureIDs, utils.ArchiveTypeMHTML, "completed").
+		Order("updated_at DESC").Find(&pages).Error; err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for i := range pages {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		rootReader, err := w.storage.Reader(pages[i].StorageKey)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		htmlData, htmlErr := utils.ExtractMHTMLHTML(io.LimitReader(rootReader, maxCapturedMHTMLScanBytes), maxCapturedHTMLBytes)
+		rootReader.Close()
+		if htmlErr != nil {
+			lastErr = htmlErr
+			continue
+		}
+		imageURL, canonicalURL := archivers.CapturedHTMLSocialImage(htmlData)
+		if imageURL == "" || canonicalURL == "" || utils.CanonicalizeArchiveURL(canonicalURL) != utils.CanonicalizeArchiveURL(sourceURL) {
+			lastErr = archivers.ErrSocialThumbnailUnavailable
+			continue
+		}
+
+		resourceReader, err := w.storage.Reader(pages[i].StorageKey)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		imageData, contentType, resourceErr := utils.ExtractMHTMLResource(io.LimitReader(resourceReader, maxCapturedMHTMLScanBytes), imageURL, maxCapturedMHTMLImageBytes)
+		resourceReader.Close()
+		if resourceErr != nil {
+			lastErr = resourceErr
+			continue
+		}
+		if contentType != "" && !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+			lastErr = fmt.Errorf("captured social resource is %s, not an image", contentType)
+			continue
+		}
+		compact, err := thumbnail.OriginalFromReader(bytes.NewReader(imageData))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return &archivers.Thumbnail{Data: compact.Data, Width: compact.Width, Height: compact.Height, Kind: models.ThumbnailKindSocialPreview}, nil
 	}
 	if lastErr == nil {
 		lastErr = archivers.ErrSocialThumbnailUnavailable
@@ -685,7 +762,7 @@ func EnqueueSocialThumbnailBackfill(ctx context.Context, db *gorm.DB, client *ri
 			ShortID:   candidate.ShortID,
 			Type:      candidate.Type,
 			StartedAt: started.Unix(),
-			BudgetUSD: opts.BudgetUSD, Version: 2,
+			BudgetUSD: opts.BudgetUSD, Version: 3,
 		}
 		_, err := client.Insert(ctx, args, &river.InsertOpts{
 			Queue: socialThumbnailBackfillQueue, MaxAttempts: 2,

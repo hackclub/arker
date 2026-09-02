@@ -91,9 +91,11 @@ the real image afterward; nonexistent captures return 404.
 Administrators can repair historical social previews with
 `POST /admin/backfill-social-thumbnails?cost_limit_usd=5`. The resumable,
 one-worker queue extracts stills from stored gallery ZIPs, refreshes video
-posters without downloading videos, groups duplicate canonical URLs, and never
-spends past the shared provider cap. `GET` on the same endpoint reports item
-and queue progress; pass `?since=<RFC3339>` to include spend for that run.
+posters without downloading videos, and can recover an expired provider poster
+from the matching `og:image` part embedded in a sibling MHTML snapshot. It
+groups duplicate canonical URLs and never spends past the shared provider cap.
+`GET` on the same endpoint reports item and queue progress; pass
+`?since=<RFC3339>` to include spend for that run.
 
 Historical video sidecars can be repaired independently with
 `POST /admin/backfill-video-metadata` (or previewed with `?dry_run=true`). Its

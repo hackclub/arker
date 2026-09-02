@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -98,6 +100,16 @@ func normalizeVideoManifestMetadata(raw json.RawMessage) json.RawMessage {
 			metadata[key] = nil
 		}
 	}
+	if metadata["publication_timestamp"] == nil || metadata["publication_timestamp"] == "" {
+		for _, key := range []string{"canonical_url", "source_url"} {
+			if value, ok := metadata[key].(string); ok {
+				if published := archivers.TikTokPublicationTimestamp(value); published != "" {
+					metadata["publication_timestamp"] = published
+					break
+				}
+			}
+		}
+	}
 	if metadata["title"] == nil || metadata["title"] == "" {
 		if description, ok := metadata["description"].(string); ok && description != "" {
 			metadata["title"] = description
@@ -108,6 +120,21 @@ func normalizeVideoManifestMetadata(raw json.RawMessage) json.RawMessage {
 			if value, ok := metadata[key].(string); ok && value != "" {
 				metadata["channel"] = value
 				break
+			}
+		}
+	}
+	if metadata["channel"] == nil || metadata["channel"] == "" {
+		for _, key := range []string{"author_id", "uploader_id"} {
+			if value, ok := metadata[key].(string); ok && strings.HasPrefix(value, "@") && len(value) > 1 {
+				metadata["channel"] = strings.TrimPrefix(value, "@")
+				break
+			}
+		}
+	}
+	if metadata["channel"] == nil || metadata["channel"] == "" {
+		if sourceURL, ok := metadata["source_url"].(string); ok {
+			if handle := socialProfileHandle(sourceURL); handle != "" {
+				metadata["channel"] = handle
 			}
 		}
 	}
@@ -126,6 +153,37 @@ func normalizeVideoManifestMetadata(raw json.RawMessage) json.RawMessage {
 		return raw
 	}
 	return encoded
+}
+
+// socialProfileHandle returns attribution only when the provider-authored
+// source URL itself identifies a social profile. Post IDs and reserved route
+// names are deliberately not treated as channel names.
+func socialProfileHandle(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return ""
+	}
+	host := strings.TrimPrefix(strings.ToLower(parsed.Hostname()), "www.")
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		return ""
+	}
+	switch host {
+	case "tiktok.com":
+		if strings.HasPrefix(parts[0], "@") && len(parts[0]) > 1 {
+			return strings.TrimPrefix(parts[0], "@")
+		}
+	case "instagram.com":
+		if len(parts) == 1 {
+			switch strings.ToLower(parts[0]) {
+			case "p", "reel", "reels", "stories", "explore", "accounts":
+				return ""
+			default:
+				return strings.TrimPrefix(parts[0], "@")
+			}
+		}
+	}
+	return ""
 }
 
 // ServeVideoRawMetadata exposes the sanitized provider-native record. The

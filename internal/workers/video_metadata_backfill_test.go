@@ -38,6 +38,15 @@ type providerMetadataRefresher struct {
 	media archivers.VideoMedia
 }
 
+type failedProviderMetadataRefresher struct{ calls int }
+
+func (r *failedProviderMetadataRefresher) SupportsStoredVideoMetadata(string) bool { return true }
+
+func (r *failedProviderMetadataRefresher) RefreshStoredVideoMetadata(context.Context, string, io.Writer, *gorm.DB, uint, archivers.VideoMedia) (archivers.Result, error) {
+	r.calls++
+	return archivers.Result{}, errors.New("provider no longer sees post")
+}
+
 func (r *providerMetadataRefresher) SupportsStoredVideoMetadata(string) bool { return true }
 
 func (r *providerMetadataRefresher) RefreshStoredVideoMetadata(_ context.Context, _ string, _ io.Writer, _ *gorm.DB, _ uint, media archivers.VideoMedia) (archivers.Result, error) {
@@ -162,8 +171,8 @@ func TestVideoMetadataBackfillUsesMetadataOnlyProviderOnFinalAttempt(t *testing.
 	if err := worker.generateAttempt(context.Background(), args, true); err != nil {
 		t.Fatalf("final provider rescue: %v", err)
 	}
-	if primary.calls != 2 || provider.calls != 1 {
-		t.Fatalf("native/provider calls = %d/%d, want 2/1", primary.calls, provider.calls)
+	if primary.calls != 1 || provider.calls != 1 {
+		t.Fatalf("native/provider calls = %d/%d, want 1/1", primary.calls, provider.calls)
 	}
 	if provider.media.Extension != item.Extension || provider.media.SizeBytes != item.FileSize {
 		t.Errorf("provider media = %+v, want stored extension %q and size %d", provider.media, item.Extension, item.FileSize)
@@ -177,7 +186,32 @@ func TestVideoMetadataBackfillUsesMetadataOnlyProviderOnFinalAttempt(t *testing.
 	}
 }
 
-func TestVideoMetadataBackfillPrefersCapturedMHTMLToPaidProvider(t *testing.T) {
+func TestVideoMetadataBackfillCanExplicitlyPreferMetadataOnlyProvider(t *testing.T) {
+	db := newWorkerTestDB(t)
+	store := storage.NewMemoryStorage()
+	url := "https://vimeo.com/1190579612"
+	item := seedPriorVideoCapture(t, db, store, url, "vimeo", func(item *models.ArchiveItem) {
+		item.MetadataKey, item.RawMetadataKey = "", ""
+	})
+	provider := &providerMetadataRefresher{}
+	worker := NewVideoMetadataBackfillWorker(store, db, nil, provider)
+	args := VideoMetadataBackfillJobArgs{Identity: url, URL: url, ShortID: "vimeo", Version: 4, ProviderFirst: true}
+	if err := worker.generateAttempt(context.Background(), args, false); err != nil {
+		t.Fatal(err)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls)
+	}
+	var got models.ArchiveItem
+	if err := db.First(&got, item.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.MetadataKey == "" || got.RawMetadataKey == "" {
+		t.Fatalf("provider-first refresh did not persist both sidecars: %+v", got)
+	}
+}
+
+func TestVideoMetadataBackfillPrefersCapturedMHTMLToLiveOrPaidProvider(t *testing.T) {
 	db := newWorkerTestDB(t)
 	store := storage.NewMemoryStorage()
 	url := "https://youtube.com/shorts/jAUZFBlZmiE"
@@ -196,11 +230,14 @@ func TestVideoMetadataBackfillPrefersCapturedMHTMLToPaidProvider(t *testing.T) {
 	provider := &providerMetadataRefresher{}
 	worker := NewVideoMetadataBackfillWorker(store, db, primary, provider)
 	args := VideoMetadataBackfillJobArgs{Identity: utils.CanonicalizeArchiveURL(url), URL: url, ShortID: "mhtml", Version: 2}
-	if err := worker.generateAttempt(context.Background(), args, true); err != nil {
+	if err := worker.generateAttempt(context.Background(), args, false); err != nil {
 		t.Fatal(err)
 	}
 	if provider.calls != 0 {
 		t.Fatalf("paid provider calls = %d, want 0 when captured MHTML is usable", provider.calls)
+	}
+	if primary.calls != 0 {
+		t.Fatalf("second live extractor calls = %d, want 0 when captured MHTML is usable", primary.calls)
 	}
 	var got models.ArchiveItem
 	if err := db.First(&got, item.ID).Error; err != nil {
@@ -217,5 +254,86 @@ func TestVideoMetadataBackfillPrefersCapturedMHTMLToPaidProvider(t *testing.T) {
 	}
 	if metadata.Title != "Captured title" || metadata.Channel != "Captured channel" || metadata.Provider != "captured_mhtml" {
 		t.Errorf("captured metadata = %+v", metadata)
+	}
+}
+
+func TestVideoMetadataBackfillUsesArchivedProbeLogAfterProviderFailure(t *testing.T) {
+	db := newWorkerTestDB(t)
+	store := storage.NewMemoryStorage()
+	url := "https://www.instagram.com/reel/deleted-post/"
+	item := seedPriorVideoCapture(t, db, store, url, "logmd", func(item *models.ArchiveItem) {
+		item.MetadataKey, item.RawMetadataKey = "", ""
+	})
+	if err := utils.AppendArchiveItemLog(db, item.ID, 1, "Testing video accessibility with yt-dlp...\nVideo info:\nCaptured reel title\n12.75\nCaptured author\n\nStarting yt-dlp download process...\n"); err != nil {
+		t.Fatal(err)
+	}
+	primary := &failedLeanMetadataRefresher{}
+	provider := &failedProviderMetadataRefresher{}
+	worker := NewVideoMetadataBackfillWorker(store, db, primary, provider)
+	args := VideoMetadataBackfillJobArgs{Identity: utils.CanonicalizeArchiveURL(url), URL: url, ShortID: "logmd", Version: 2}
+	if err := worker.generateAttempt(context.Background(), args, true); err != nil {
+		t.Fatal(err)
+	}
+	if primary.calls != 0 || provider.calls != 1 {
+		t.Fatalf("native/provider calls = %d/%d, want 0/1", primary.calls, provider.calls)
+	}
+	var got models.ArchiveItem
+	if err := db.First(&got, item.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	reader, err := store.Reader(got.MetadataKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	var metadata archivers.VideoMetadata
+	if err := json.NewDecoder(reader).Decode(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Title != "Captured reel title" || metadata.Channel != "Captured author" || metadata.DurationSeconds == nil || *metadata.DurationSeconds != 12.75 || metadata.Provider != "captured_probe_log" {
+		t.Fatalf("captured probe metadata = %+v", metadata)
+	}
+}
+
+func TestVideoMetadataBackfillUsesCanonicalVimeoPageAfterProviderFailure(t *testing.T) {
+	db := newWorkerTestDB(t)
+	store := storage.NewMemoryStorage()
+	url := "https://vimeo.com/770625302"
+	item := seedPriorVideoCapture(t, db, store, url, "vimmd", func(item *models.ArchiveItem) {
+		item.MetadataKey, item.RawMetadataKey = "", ""
+	})
+	mhtmlKey := "vimmd/page.mhtml"
+	mhtml := "Content-Type: multipart/related; boundary=root\r\n\r\n--root\r\nContent-Type: text/html\r\n\r\n" +
+		`<html><head><meta property="og:title" content="Cedric Hutchings - Sprig"><meta property="og:description" content="The console where every player is creator."><link rel="canonical" href="https://vimeo.com/770625302"></head></html>` +
+		"\r\n--root--\r\n"
+	putObject(t, store, mhtmlKey, []byte(mhtml))
+	if err := db.Create(&models.ArchiveItem{CaptureID: item.CaptureID, Type: "mhtml", Status: "completed", StorageKey: mhtmlKey, Extension: ".mhtml"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	primary := &failedLeanMetadataRefresher{}
+	provider := &failedProviderMetadataRefresher{}
+	worker := NewVideoMetadataBackfillWorker(store, db, primary, provider)
+	args := VideoMetadataBackfillJobArgs{Identity: utils.CanonicalizeArchiveURL(url), URL: url, ShortID: "vimmd", Version: 3}
+	if err := worker.generateAttempt(context.Background(), args, true); err != nil {
+		t.Fatal(err)
+	}
+	if primary.calls != 0 || provider.calls != 1 {
+		t.Fatalf("native/provider calls = %d/%d, want 0/1", primary.calls, provider.calls)
+	}
+	var got models.ArchiveItem
+	if err := db.First(&got, item.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	reader, err := store.Reader(got.MetadataKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	var metadata archivers.VideoMetadata
+	if err := json.NewDecoder(reader).Decode(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Title != "Cedric Hutchings - Sprig" || metadata.Description == "" || metadata.Provider != "captured_mhtml" {
+		t.Fatalf("canonical Vimeo metadata = %+v", metadata)
 	}
 }

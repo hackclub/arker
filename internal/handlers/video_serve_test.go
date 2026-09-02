@@ -103,6 +103,39 @@ func TestServeVideoManifestReturnsNormalizedMetadataAndMediaURL(t *testing.T) {
 	}
 }
 
+func TestNormalizeVideoManifestMetadataRecoversProviderAuthoredChannelIDs(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "yt-dlp author id", raw: `{"author_id":"@l.a.c.l.u.s.t.r","media":{}}`, want: "l.a.c.l.u.s.t.r"},
+		{name: "TikTok profile URL", raw: `{"source_url":"https://www.tiktok.com/@worldguessr_/","media":{}}`, want: "worldguessr_"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var metadata map[string]interface{}
+			if err := json.Unmarshal(normalizeVideoManifestMetadata(json.RawMessage(tc.raw)), &metadata); err != nil {
+				t.Fatal(err)
+			}
+			if metadata["channel"] != tc.want {
+				t.Fatalf("channel = %#v, want %q", metadata["channel"], tc.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeVideoManifestMetadataRecoversTikTokSnowflakePublication(t *testing.T) {
+	raw := json.RawMessage(`{"canonical_url":"https://www.tiktok.com/@nanos.ro/video/7657828960058789142","publication_timestamp":null,"media":{}}`)
+	var metadata map[string]interface{}
+	if err := json.Unmarshal(normalizeVideoManifestMetadata(raw), &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata["publication_timestamp"] != "2026-07-02T07:27:25Z" {
+		t.Fatalf("publication timestamp = %#v", metadata["publication_timestamp"])
+	}
+}
+
 func TestServeVideoManifestDoesNotSynthesizeLegacyMetadata(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newHandlerLogTestDB(t)

@@ -18,7 +18,15 @@ import (
 // has an actor input that returns the record alone; YouTube uses the
 // metadata scraper and never the downloader.
 func (c *Client) SupportsStoredVideoMetadata(targetURL string) bool {
-	if c == nil || !c.Enabled() {
+	if c == nil {
+		return false
+	}
+	// Vimeo's official oEmbed endpoint is public and metadata-only, so it is
+	// available even when the paid Apify fallback is disabled.
+	if isVimeoMetadataURL(targetURL) {
+		return true
+	}
+	if !c.Enabled() {
 		return false
 	}
 	switch {
@@ -54,6 +62,8 @@ func (c *Client) RefreshStoredVideoMetadata(ctx context.Context, targetURL strin
 		err     error
 	)
 	switch {
+	case isVimeoMetadataURL(targetURL):
+		return c.refreshStoredVimeoMetadata(ctx, targetURL, logWriter, media)
 	case utils.IsInstagramURL(targetURL):
 		product = ActorInstagram
 		record, _, err = c.resolveRecord(ctx, db, usage, ActorInstagram, instagramInput{PostURLs: []string{instagramCanonicalURL(targetURL)}}, logWriter, "code")

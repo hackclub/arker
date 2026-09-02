@@ -34,3 +34,16 @@ func TestExtractMHTMLHTMLEnforcesDecodedLimit(t *testing.T) {
 		t.Fatal("expected decoded HTML limit error")
 	}
 }
+
+func TestExtractMHTMLResourceMatchesLocationAndDecodes(t *testing.T) {
+	image := []byte("real-image-bytes")
+	location := "https://images.example/post.jpg?x=1&y=2"
+	mhtml := fmt.Sprintf("Content-Type: multipart/related; boundary=x\r\n\r\n--x\r\nContent-Type: text/html\r\n\r\n<html></html>\r\n--x\r\nContent-Type: image/jpeg\r\nContent-Location: %s\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n--x--\r\n", "https://images.example/post.jpg?different=signed-resize", base64.StdEncoding.EncodeToString(image))
+	got, contentType, err := ExtractMHTMLResource(strings.NewReader(mhtml), location, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, image) || contentType != "image/jpeg" {
+		t.Fatalf("resource = %q/%q, want %q/image/jpeg", got, contentType, image)
+	}
+}

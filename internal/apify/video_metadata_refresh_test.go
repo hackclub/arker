@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"arker/internal/archivers"
+	"arker/internal/models"
 )
 
 func TestRefreshStoredVideoMetadataUsesRecordsWithoutDownloadingMedia(t *testing.T) {
@@ -118,5 +119,33 @@ func TestSupportsStoredVideoMetadata(t *testing.T) {
 	}
 	if (&Client{}).SupportsStoredVideoMetadata("https://www.instagram.com/reel/X/") {
 		t.Error("unconfigured client claimed a metadata-only path")
+	}
+}
+
+func TestRefreshStoredVimeoMetadataUsesOfficialOEmbedWithoutApify(t *testing.T) {
+	targetURL := "https://vimeo.com/1103981345?share=copy"
+	network := newFakeNetwork()
+	network.serve(vimeoOEmbedURL(targetURL), []byte(`{"title":"Tail prosthetic animation.","author_name":"Rikhav Mardia","description":"simple animation","upload_date":"2025-07-23 21:57:55","video_id":1103981345,"duration":5,"width":252,"height":240}`))
+	client, db := newTestClient(t, network)
+	client.cfg.Token = "" // the official endpoint needs no paid fallback
+	if !client.SupportsStoredVideoMetadata(targetURL) {
+		t.Fatal("official Vimeo metadata should not require an Apify token")
+	}
+	result, err := client.RefreshStoredVideoMetadata(context.Background(), targetURL, io.Discard, db, 0, archivers.VideoMedia{Extension: ".mp4", SizeBytes: 321})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Data != nil || result.Source != models.ArchiveSourceNative {
+		t.Fatalf("Vimeo metadata result = %+v", result)
+	}
+	metadata := videoMetadataFromSidecar(t, result.Metadata)
+	if metadata.Title != "Tail prosthetic animation." || metadata.Channel != "Rikhav Mardia" || metadata.PublicationTimestamp != "2025-07-23T21:57:55Z" || metadata.DurationSeconds == nil || *metadata.DurationSeconds != 5 {
+		t.Fatalf("Vimeo metadata = %+v", metadata)
+	}
+	if rows := usageRows(t, db); len(rows) != 0 {
+		t.Fatalf("usage rows = %+v", rows)
+	}
+	if actors := network.startedActors(); len(actors) != 0 {
+		t.Fatalf("started actors %v", actors)
 	}
 }

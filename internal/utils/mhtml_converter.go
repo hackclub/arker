@@ -10,6 +10,8 @@ import (
 	"mime/multipart"
 	"mime/quotedprintable"
 	"net/mail"
+	"net/url"
+	"path"
 	"regexp"
 	"strings"
 )
@@ -95,6 +97,94 @@ func ExtractMHTMLHTML(input io.Reader, maxBytes int64) ([]byte, error) {
 		}
 		return data, nil
 	}
+}
+
+// ExtractMHTMLResource returns the decoded multipart resource whose
+// Content-Location identifies location. Exact URLs win; provider CDN URLs may
+// change resize/signature query parameters — and occasionally the delivery
+// category segment — between the meta tag and image request, so the same host
+// plus path or unique asset filename is the same immutable asset. Matching
+// that identity is what distinguishes the post poster from avatars and
+// recommendation cards.
+func ExtractMHTMLResource(input io.Reader, location string, maxBytes int64) ([]byte, string, error) {
+	if input == nil {
+		return nil, "", fmt.Errorf("MHTML input is nil")
+	}
+	location = strings.TrimSpace(location)
+	if location == "" {
+		return nil, "", fmt.Errorf("MHTML resource location is empty")
+	}
+	if maxBytes <= 0 {
+		return nil, "", fmt.Errorf("MHTML resource byte limit must be positive")
+	}
+	msg, err := mail.ReadMessage(input)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read mail message: %w", err)
+	}
+	mediaType, params, err := mime.ParseMediaType(msg.Header.Get("Content-Type"))
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to parse media type: %w", err)
+	}
+	if !strings.HasPrefix(strings.ToLower(mediaType), "multipart/related") {
+		return nil, "", fmt.Errorf("not a multipart/related message, got: %s", mediaType)
+	}
+	boundary := params["boundary"]
+	if boundary == "" {
+		return nil, "", fmt.Errorf("no boundary found in content type")
+	}
+
+	mr := multipart.NewReader(msg.Body, boundary)
+	for {
+		part, err := mr.NextRawPart()
+		if err == io.EOF {
+			return nil, "", fmt.Errorf("requested MHTML resource not found")
+		}
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to read multipart: %w", err)
+		}
+		if !sameMHTMLResourceLocation(part.Header.Get("Content-Location"), location) {
+			_, _ = io.Copy(io.Discard, part)
+			continue
+		}
+
+		var decoded io.Reader = part
+		switch strings.ToLower(strings.TrimSpace(part.Header.Get("Content-Transfer-Encoding"))) {
+		case "quoted-printable":
+			decoded = quotedprintable.NewReader(part)
+		case "base64":
+			decoded = base64.NewDecoder(base64.StdEncoding, part)
+		}
+		data, err := io.ReadAll(io.LimitReader(decoded, maxBytes+1))
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to decode MHTML resource: %w", err)
+		}
+		if int64(len(data)) > maxBytes {
+			return nil, "", fmt.Errorf("MHTML resource exceeds %d bytes", maxBytes)
+		}
+		contentType := part.Header.Get("Content-Type")
+		if parsed, _, parseErr := mime.ParseMediaType(contentType); parseErr == nil {
+			contentType = parsed
+		}
+		return data, contentType, nil
+	}
+}
+
+func sameMHTMLResourceLocation(candidate, wanted string) bool {
+	candidate, wanted = strings.TrimSpace(candidate), strings.TrimSpace(wanted)
+	if candidate == wanted {
+		return true
+	}
+	candidateURL, candidateErr := url.Parse(candidate)
+	wantedURL, wantedErr := url.Parse(wanted)
+	if candidateErr != nil || wantedErr != nil || candidateURL.Hostname() == "" || wantedURL.Hostname() == "" {
+		return false
+	}
+	if !strings.EqualFold(candidateURL.Scheme, wantedURL.Scheme) || !strings.EqualFold(candidateURL.Hostname(), wantedURL.Hostname()) {
+		return false
+	}
+	candidatePath, wantedPath := candidateURL.EscapedPath(), wantedURL.EscapedPath()
+	return candidatePath != "" && wantedPath != "" &&
+		(candidatePath == wantedPath || path.Base(candidatePath) == path.Base(wantedPath))
 }
 
 // ConvertMHTMLToHTML converts MHTML to HTML using streaming approach
