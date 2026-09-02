@@ -269,3 +269,46 @@ func TestVideoMetadataBackfillUsesArchivedProbeLogAfterProviderFailure(t *testin
 		t.Fatalf("captured probe metadata = %+v", metadata)
 	}
 }
+
+func TestVideoMetadataBackfillUsesCanonicalVimeoPageAfterProviderFailure(t *testing.T) {
+	db := newWorkerTestDB(t)
+	store := storage.NewMemoryStorage()
+	url := "https://vimeo.com/770625302"
+	item := seedPriorVideoCapture(t, db, store, url, "vimmd", func(item *models.ArchiveItem) {
+		item.MetadataKey, item.RawMetadataKey = "", ""
+	})
+	mhtmlKey := "vimmd/page.mhtml"
+	mhtml := "Content-Type: multipart/related; boundary=root\r\n\r\n--root\r\nContent-Type: text/html\r\n\r\n" +
+		`<html><head><meta property="og:title" content="Cedric Hutchings - Sprig"><meta property="og:description" content="The console where every player is creator."><link rel="canonical" href="https://vimeo.com/770625302"></head></html>` +
+		"\r\n--root--\r\n"
+	putObject(t, store, mhtmlKey, []byte(mhtml))
+	if err := db.Create(&models.ArchiveItem{CaptureID: item.CaptureID, Type: "mhtml", Status: "completed", StorageKey: mhtmlKey, Extension: ".mhtml"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	primary := &failedLeanMetadataRefresher{}
+	provider := &failedProviderMetadataRefresher{}
+	worker := NewVideoMetadataBackfillWorker(store, db, primary, provider)
+	args := VideoMetadataBackfillJobArgs{Identity: utils.CanonicalizeArchiveURL(url), URL: url, ShortID: "vimmd", Version: 3}
+	if err := worker.generateAttempt(context.Background(), args, true); err != nil {
+		t.Fatal(err)
+	}
+	if primary.calls != 0 || provider.calls != 1 {
+		t.Fatalf("native/provider calls = %d/%d, want 0/1", primary.calls, provider.calls)
+	}
+	var got models.ArchiveItem
+	if err := db.First(&got, item.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	reader, err := store.Reader(got.MetadataKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	var metadata archivers.VideoMetadata
+	if err := json.NewDecoder(reader).Decode(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Title != "Cedric Hutchings - Sprig" || metadata.Description == "" || metadata.Provider != "captured_mhtml" {
+		t.Fatalf("canonical Vimeo metadata = %+v", metadata)
+	}
+}

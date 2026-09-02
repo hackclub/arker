@@ -95,3 +95,27 @@ func TestBuildCapturedHTMLVideoArtifactsRecoversTikTokOpenGraphAuthor(t *testing
 		t.Fatalf("TikTok title/channel = %q/%q", metadata.Title, metadata.Channel)
 	}
 }
+
+func TestCapturedTikTokChannelHandlesProfileTitle(t *testing.T) {
+	if got := capturedTikTokChannel("55gms (@55gms_com) | TikTok"); got != "55gms_com" {
+		t.Fatalf("profile channel = %q", got)
+	}
+}
+
+func TestBuildCapturedHTMLVideoArtifactsAllowsDescriptionWithMatchingCanonical(t *testing.T) {
+	htmlData := []byte(`<html><head><meta property="og:title" content="Cedric Hutchings - Sprig"><meta property="og:description" content="The console where every player is creator."><link rel="canonical" href="https://vimeo.com/770625302"></head></html>`)
+	metadataSidecar, _, err := BuildCapturedHTMLVideoArtifactsAllowingDescription(htmlData, "https://vimeo.com/770625302?share=copy", VideoMedia{}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata VideoMetadata
+	if err := json.Unmarshal(metadataSidecar.Data, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Title != "Cedric Hutchings - Sprig" || metadata.Description != "The console where every player is creator." {
+		t.Fatalf("Vimeo metadata = %+v", metadata)
+	}
+	if _, _, err := BuildCapturedHTMLVideoArtifactsAllowingDescription([]byte(`<html><head><meta property="og:title" content="Log in"><meta property="og:description" content="Join Vimeo"><link rel="canonical" href="https://vimeo.com/log_in"></head></html>`), "https://vimeo.com/770625302", VideoMedia{}, time.Now()); err == nil {
+		t.Fatal("wrong-page canonical should not make sparse metadata available")
+	}
+}

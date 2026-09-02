@@ -20,6 +20,11 @@ import (
 // need only the API key. YouTube needs a Browser API session, but only to call
 // Innertube from an accepted network position; it never transfers the video.
 func (c *Client) SupportsStoredVideoMetadata(targetURL string) bool {
+	// Vimeo's official oEmbed endpoint is public and metadata-only, so it is
+	// available even when the paid Bright Data fallback is disabled.
+	if isVimeoMetadataURL(targetURL) {
+		return true
+	}
 	if !c.Enabled() {
 		return false
 	}
@@ -48,6 +53,8 @@ func (c *Client) RefreshStoredVideoMetadata(ctx context.Context, targetURL strin
 	}
 	shortID := shortIDForItem(db, itemID)
 	switch {
+	case isVimeoMetadataURL(targetURL):
+		return c.refreshStoredVimeoMetadata(ctx, targetURL, logWriter, media)
 	case utils.IsInstagramURL(targetURL):
 		return c.refreshStoredInstagramMetadata(ctx, targetURL, logWriter, db, itemID, shortID, media)
 	case utils.IsTikTokURL(targetURL):

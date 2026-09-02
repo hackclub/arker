@@ -104,3 +104,30 @@ func TestRefreshStoredYouTubeMetadataDoesNotFetchVideo(t *testing.T) {
 		t.Errorf("usage = %+v", usage)
 	}
 }
+
+func TestRefreshStoredVimeoMetadataUsesOfficialOEmbedWithoutBrightData(t *testing.T) {
+	targetURL := "https://vimeo.com/1103981345?share=copy"
+	network := newFakeNetwork()
+	network.serve(vimeoOEmbedURL(targetURL), []byte(`{"title":"Tail prosthetic animation.","author_name":"Rikhav Mardia","description":"simple animation","upload_date":"2025-07-23 21:57:55","video_id":1103981345,"duration":5,"width":252,"height":240}`))
+	client := New(context.Background(), Config{})
+	client.http.Transport = network
+	db := newTestDB(t)
+	if !client.SupportsStoredVideoMetadata(targetURL) {
+		t.Fatal("official Vimeo metadata should not require a Bright Data API key")
+	}
+	result, err := client.RefreshStoredVideoMetadata(context.Background(), targetURL, io.Discard, db, 0, archivers.VideoMedia{Extension: ".mp4", SizeBytes: 321})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Data != nil || result.Source != models.ArchiveSourceNative {
+		t.Fatalf("Vimeo metadata result = %+v", result)
+	}
+	metadata := videoMetadataFromSidecar(t, result.Metadata)
+	if metadata.Title != "Tail prosthetic animation." || metadata.Channel != "Rikhav Mardia" || metadata.PublicationTimestamp != "2025-07-23T21:57:55Z" || metadata.DurationSeconds == nil || *metadata.DurationSeconds != 5 {
+		t.Fatalf("Vimeo metadata = %+v", metadata)
+	}
+	var usageCount int64
+	if err := db.Model(&models.BrightDataUsage{}).Count(&usageCount).Error; err != nil || usageCount != 0 {
+		t.Fatalf("Bright Data usage count = %d, error = %v", usageCount, err)
+	}
+}

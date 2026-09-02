@@ -45,6 +45,18 @@ func CapturedHTMLSocialImage(htmlData []byte) (imageURL, canonicalURL string) {
 // Only those narrow facts are copied; signed media URLs and the rest of the
 // page never enter the new raw sidecar.
 func BuildCapturedHTMLVideoArtifacts(htmlData []byte, sourceURL string, media VideoMedia, archivedAt time.Time) (*Sidecar, *Sidecar, error) {
+	return buildCapturedHTMLVideoArtifacts(htmlData, sourceURL, media, archivedAt, false)
+}
+
+// BuildCapturedHTMLVideoArtifactsAllowingDescription is the final fallback
+// for an official video page whose stronger live metadata sources have all
+// failed. It accepts title plus description only when the captured canonical
+// URL proves that the page is the requested post, rather than an error page.
+func BuildCapturedHTMLVideoArtifactsAllowingDescription(htmlData []byte, sourceURL string, media VideoMedia, archivedAt time.Time) (*Sidecar, *Sidecar, error) {
+	return buildCapturedHTMLVideoArtifacts(htmlData, sourceURL, media, archivedAt, true)
+}
+
+func buildCapturedHTMLVideoArtifacts(htmlData []byte, sourceURL string, media VideoMedia, archivedAt time.Time, allowDescription bool) (*Sidecar, *Sidecar, error) {
 	doc, err := html.Parse(strings.NewReader(string(htmlData)))
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse captured HTML: %w", err)
@@ -72,6 +84,9 @@ func BuildCapturedHTMLVideoArtifacts(htmlData []byte, sourceURL string, media Vi
 		if present {
 			factCount++
 		}
+	}
+	if allowDescription && facts.Description != "" && capturedCanonicalMatches(sourceURL, facts.Canonical) {
+		factCount++
 	}
 	if factCount < 2 {
 		return nil, nil, fmt.Errorf("captured HTML contains fewer than two usable video facts")
@@ -122,6 +137,17 @@ func BuildCapturedHTMLVideoArtifacts(htmlData []byte, sourceURL string, media Vi
 		return nil, nil, fmt.Errorf("encode captured HTML facts: %w", err)
 	}
 	return &Sidecar{Data: metadataJSON}, &Sidecar{Data: rawJSON}, nil
+}
+
+func capturedCanonicalMatches(sourceURL, capturedURL string) bool {
+	source, sourceErr := url.Parse(strings.TrimSpace(sourceURL))
+	captured, capturedErr := url.Parse(strings.TrimSpace(capturedURL))
+	if sourceErr != nil || capturedErr != nil {
+		return false
+	}
+	sourceHost := strings.TrimPrefix(strings.ToLower(source.Hostname()), "www.")
+	capturedHost := strings.TrimPrefix(strings.ToLower(captured.Hostname()), "www.")
+	return sourceHost != "" && sourceHost == capturedHost && strings.TrimRight(source.EscapedPath(), "/") == strings.TrimRight(captured.EscapedPath(), "/")
 }
 
 func extractCapturedHTMLVideoFacts(root *html.Node) capturedHTMLVideoFacts {
@@ -200,6 +226,7 @@ var (
 	instagramAttributionPattern = regexp.MustCompile(`(?i)(?:^|[-\x{2013}\x{2014}]\s*)(@?[a-z0-9._]+)\s+on\s+((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4})`)
 	instagramTitleAuthorPattern = regexp.MustCompile(`(?i)^(.+?)\s+on\s+Instagram\s*:`)
 	tikTokTitleAuthorPattern    = regexp.MustCompile(`(?i)^(.+?)\s+on\s+TikTok\s*$`)
+	tikTokProfileTitlePattern   = regexp.MustCompile(`(?i)^.+?\s+\(@?([a-z0-9._]+)\)\s*\|\s*TikTok\s*$`)
 )
 
 // Instagram's captured Open Graph description carries an explicit provider
@@ -221,6 +248,9 @@ func capturedInstagramAttribution(title, description string) (channel, published
 }
 
 func capturedTikTokChannel(title string) string {
+	if match := tikTokProfileTitlePattern.FindStringSubmatch(strings.TrimSpace(title)); len(match) == 2 {
+		return strings.TrimPrefix(strings.TrimSpace(match[1]), "@")
+	}
 	match := tikTokTitleAuthorPattern.FindStringSubmatch(strings.TrimSpace(title))
 	if len(match) != 2 {
 		return ""

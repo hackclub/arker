@@ -130,7 +130,16 @@ func (w *VideoMetadataBackfillWorker) generateAttempt(ctx context.Context, args 
 				fmt.Fprintf(&logs, "Metadata-only provider failed (%v); checking the original capture probe log\n", providerErr)
 				result, err = w.refreshFromArchivedProbeLogs(ctx, args.URL, items, media, &logs)
 				if err != nil {
-					return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); provider failed (%v); capture log failed: %w", args.ShortID, capturedErr, providerErr, err)
+					logErr := err
+					if utils.IsVimeoURL(args.URL) {
+						fmt.Fprintf(&logs, "Capture probe log was unavailable (%v); checking canonical Vimeo page metadata\n", logErr)
+						result, err = w.refreshFromCapturedMHTMLAllowingDescription(ctx, args.URL, items, media, &logs)
+						if err != nil {
+							return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); provider failed (%v); capture log failed (%v); canonical page fallback failed: %w", args.ShortID, capturedErr, providerErr, logErr, err)
+						}
+					} else {
+						return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); provider failed (%v); capture log failed: %w", args.ShortID, capturedErr, providerErr, logErr)
+					}
 				}
 			}
 		} else {
@@ -224,6 +233,14 @@ func (w *VideoMetadataBackfillWorker) refreshFromArchivedProbeLogs(ctx context.C
 // historically faithful: a post deleted today can still have its title,
 // author, publication time, and schema.org duration in the old page snapshot.
 func (w *VideoMetadataBackfillWorker) refreshFromCapturedMHTML(ctx context.Context, sourceURL string, videos []models.ArchiveItem, media archivers.VideoMedia, logWriter io.Writer) (archivers.Result, error) {
+	return w.refreshFromCapturedMHTMLMode(ctx, sourceURL, videos, media, logWriter, false)
+}
+
+func (w *VideoMetadataBackfillWorker) refreshFromCapturedMHTMLAllowingDescription(ctx context.Context, sourceURL string, videos []models.ArchiveItem, media archivers.VideoMedia, logWriter io.Writer) (archivers.Result, error) {
+	return w.refreshFromCapturedMHTMLMode(ctx, sourceURL, videos, media, logWriter, true)
+}
+
+func (w *VideoMetadataBackfillWorker) refreshFromCapturedMHTMLMode(ctx context.Context, sourceURL string, videos []models.ArchiveItem, media archivers.VideoMedia, logWriter io.Writer, allowDescription bool) (archivers.Result, error) {
 	captureIDs := make([]uint, 0, len(videos))
 	seen := make(map[uint]bool, len(videos))
 	for i := range videos {
@@ -264,7 +281,13 @@ func (w *VideoMetadataBackfillWorker) refreshFromCapturedMHTML(ctx context.Conte
 		if capturedAt.IsZero() {
 			capturedAt = pages[i].CreatedAt
 		}
-		metadata, raw, buildErr := archivers.BuildCapturedHTMLVideoArtifacts(htmlData, sourceURL, media, capturedAt)
+		var metadata, raw *archivers.Sidecar
+		var buildErr error
+		if allowDescription {
+			metadata, raw, buildErr = archivers.BuildCapturedHTMLVideoArtifactsAllowingDescription(htmlData, sourceURL, media, capturedAt)
+		} else {
+			metadata, raw, buildErr = archivers.BuildCapturedHTMLVideoArtifacts(htmlData, sourceURL, media, capturedAt)
+		}
 		if buildErr != nil {
 			lastErr = buildErr
 			continue
@@ -372,7 +395,7 @@ func EnqueueVideoMetadataBackfill(ctx context.Context, db *gorm.DB, client *rive
 		return summary, errors.New("River client is not configured")
 	}
 	for i, candidate := range candidates {
-		args := VideoMetadataBackfillJobArgs{Identity: strings.TrimSpace(candidate.Identity), URL: candidate.Original, ShortID: candidate.ShortID, Version: 2}
+		args := VideoMetadataBackfillJobArgs{Identity: strings.TrimSpace(candidate.Identity), URL: candidate.Original, ShortID: candidate.ShortID, Version: 3}
 		if _, err := client.Insert(ctx, args, &river.InsertOpts{Queue: videoMetadataBackfillQueue, MaxAttempts: 2,
 			ScheduledAt: now.Add(time.Duration(i) * time.Second), Tags: []string{"video-metadata-backfill", "run-" + summary.RunID},
 			UniqueOpts: river.UniqueOpts{ByArgs: true, ByPeriod: 24 * time.Hour}}); err != nil {
