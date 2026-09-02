@@ -269,6 +269,21 @@ func isVideoArtifact(result archivers.Result) bool {
 // Probe failures are only a metadata warning and do not change social
 // completeness or fail good media.
 func backfillStoredVideoMetadata(ctx context.Context, store storage.Storage, key string, metadataJSON []byte, logWriter io.Writer) []byte {
+	// Object-backed storage can let ffprobe seek/range-read the media directly.
+	// That avoids streaming an entire multi-gigabyte historical video through
+	// the app merely to inspect its header and index. Fall back to Storage.Reader
+	// for local/test backends and object hosts ffprobe cannot reach.
+	if direct, ok := store.(storage.DirectURLStorage); ok {
+		probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		if directURL, err := direct.DirectURL(probeCtx, key, storage.DirectURLOptions{}); err == nil {
+			if probe, probeErr := archivers.ProbeVideoFile(probeCtx, directURL); probeErr == nil {
+				cancel()
+				return applyStoredVideoProbe(metadataJSON, probe, key, logWriter)
+			}
+		}
+		cancel()
+	}
+
 	reader, err := store.Reader(key)
 	if err != nil {
 		logVideoProbeWarning(logWriter, key, fmt.Errorf("open stored artifact: %w", err))
@@ -283,6 +298,10 @@ func backfillStoredVideoMetadata(ctx context.Context, store storage.Storage, key
 		logVideoProbeWarning(logWriter, key, err)
 		return metadataJSON
 	}
+	return applyStoredVideoProbe(metadataJSON, probe, key, logWriter)
+}
+
+func applyStoredVideoProbe(metadataJSON []byte, probe archivers.VideoProbe, key string, logWriter io.Writer) []byte {
 	backfilled, err := archivers.BackfillVideoMetadata(metadataJSON, probe)
 	if err != nil {
 		logVideoProbeWarning(logWriter, key, err)
