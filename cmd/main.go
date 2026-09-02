@@ -630,6 +630,16 @@ func main() {
 	// only runs after they fail.
 	var socialThumbnailProvider workers.SocialThumbnailProvider
 	var videoMetadataProvider workers.VideoContractMetadataProvider
+	// Same redeploy-survival rule as the cookie jar: an env var on the
+	// container is lost on recreation, a file on the secrets mount is not.
+	if cfg.ApifyAPIToken == "" {
+		if raw, readErr := os.ReadFile("/data/secrets/apify-token"); readErr == nil {
+			cfg.ApifyAPIToken = strings.TrimSpace(string(raw))
+			if cfg.ApifyAPIToken != "" {
+				slog.Info("Apify token read from the secrets mount", "path", "/data/secrets/apify-token")
+			}
+		}
+	}
 	if cfg.ApifyAPIToken != "" {
 		apifyClient := apify.New(apify.Config{
 			Token:         cfg.ApifyAPIToken,

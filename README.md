@@ -180,7 +180,7 @@ totals, per-actor and per-day spend, and recent events. Historical Bright Data
 rows are carried over into the same table with their original estimates.
 
 ```bash
-APIFY_API_TOKEN=...            # required to enable the fallback
+APIFY_API_TOKEN=...            # required to enable the fallback (or a /data/secrets/apify-token file)
 APIFY_RUN_TIMEOUT=10m          # bound on one actor run; overrunning runs are aborted
 APIFY_MAX_RUN_COST_USD=0.5     # a run costing more than this is logged loudly
 ```
