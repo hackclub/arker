@@ -634,6 +634,7 @@ func main() {
 	// second chance. Native flows stay preferred; the fallback only runs after
 	// they fail.
 	var socialThumbnailProvider workers.SocialThumbnailProvider
+	var videoMetadataProvider workers.VideoContractMetadataProvider
 	if cfg.BrightDataAPIKey != "" {
 		bdClient := brightdata.New(context.Background(), brightdata.Config{
 			APIKey:               cfg.BrightDataAPIKey,
@@ -648,6 +649,7 @@ func main() {
 		archiversMap[utils.ArchiveTypeYtDlp] = brightdata.WithFallback(archiversMap[utils.ArchiveTypeYtDlp], utils.ArchiveTypeYtDlp, bdClient)
 		archiversMap[utils.ArchiveTypeGalleryDl] = brightdata.WithFallback(archiversMap[utils.ArchiveTypeGalleryDl], utils.ArchiveTypeGalleryDl, bdClient)
 		socialThumbnailProvider = bdClient
+		videoMetadataProvider = bdClient
 		// Routing asks the client itself whether a login-only URL has a paid
 		// path to success before queueing an item for it, so the coverage
 		// table lives in exactly one place.
@@ -702,7 +704,7 @@ func main() {
 		storageInstance, db, &archivers.YtDlpArchiver{}, socialThumbnailProvider,
 	))
 	river.AddWorker(riverWorkers, workers.NewVideoMetadataBackfillWorker(
-		storageInstance, db, &archivers.YtDlpArchiver{},
+		storageInstance, db, &archivers.YtDlpArchiver{}, videoMetadataProvider,
 	))
 	// Create River client with configuration
 	errorHandler := &CustomErrorHandler{db: db}

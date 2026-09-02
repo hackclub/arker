@@ -97,10 +97,12 @@ and queue progress; pass `?since=<RFC3339>` to include spend for that run.
 
 Historical video sidecars can be repaired independently with
 `POST /admin/backfill-video-metadata` (or previewed with `?dry_run=true`). Its
-single-worker queue re-runs yt-dlp with media downloads disabled, probes the
+two-worker queue makes one bounded, media-disabled yt-dlp request, probes the
 already-stored video for intrinsic dimensions/duration, and shares fresh
-normalized/raw sidecars across duplicate canonical URLs. `GET` on the same
-endpoint reports coverage and queue progress.
+normalized/raw sidecars across duplicate canonical URLs. On the final attempt,
+covered platform failures use a metadata-only Bright Data lookup; it buys the
+post record (or a YouTube page resolution) but never downloads or replaces the
+stored video. `GET` on the same endpoint reports coverage and queue progress.
 
 For manual installs, prefer:
 

@@ -331,10 +331,12 @@ served from `/thumb/{shortid}[/{type}]`.
   `social_original` is also accepted, and `social_fallback` retains an old
   preview only until stored-video frame extraction can replace it.
 - Completed legacy videos without structured sidecars use the explicit
-  `/admin/backfill-video-metadata` operation and the one-worker
-  `video_metadata_backfill` queue. The job uses yt-dlp `--skip-download`, probes
-  the immutable stored media, writes new append-only sidecars, and shares them
-  across duplicate canonical URLs; it never downloads the video again.
+  `/admin/backfill-video-metadata` operation and the two-worker
+  `video_metadata_backfill` queue. The job makes one bounded yt-dlp
+  `--skip-download` request, probes the immutable stored media, writes new
+  append-only sidecars, and shares them across duplicate canonical URLs. A
+  final-attempt Bright Data fallback resolves metadata only for covered
+  platforms; neither path downloads the video again.
 - **Never generate inline in a request** — a full-page screenshot reaches 60
   megapixels (~240MB decoded) and one dashboard render asks for hundreds.
 - **gallery-dl's thumbnail must be built before the ZIP goroutine starts.** That

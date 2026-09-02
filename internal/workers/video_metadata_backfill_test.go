@@ -2,9 +2,12 @@ package workers
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
+
+	"gorm.io/gorm"
 
 	"arker/internal/archivers"
 	"arker/internal/models"
@@ -14,6 +17,36 @@ import (
 type leanMetadataRefresher struct {
 	normalCalls int
 	leanCalls   int
+}
+
+type failedLeanMetadataRefresher struct{ calls int }
+
+func (r *failedLeanMetadataRefresher) RefreshVideoMetadata(context.Context, string, io.Writer, archivers.VideoMedia) (archivers.Result, error) {
+	r.calls++
+	return archivers.Result{}, errors.New("native refused")
+}
+
+func (r *failedLeanMetadataRefresher) RefreshVideoContractMetadata(context.Context, string, io.Writer, archivers.VideoMedia) (archivers.Result, error) {
+	r.calls++
+	return archivers.Result{}, errors.New("native refused")
+}
+
+type providerMetadataRefresher struct {
+	calls int
+	media archivers.VideoMedia
+}
+
+func (r *providerMetadataRefresher) SupportsStoredVideoMetadata(string) bool { return true }
+
+func (r *providerMetadataRefresher) RefreshStoredVideoMetadata(_ context.Context, _ string, _ io.Writer, _ *gorm.DB, _ uint, media archivers.VideoMedia) (archivers.Result, error) {
+	r.calls++
+	r.media = media
+	return archivers.Result{
+		Extension: ".mp4", ContentType: "video/mp4",
+		Metadata:     &archivers.Sidecar{Data: []byte(`{"schema_version":"1","title":"Provider rescue"}`)},
+		RawMetadata:  &archivers.Sidecar{Data: []byte(`{"id":"provider"}`)},
+		Completeness: archivers.CompletenessComplete,
+	}, nil
 }
 
 func (r *leanMetadataRefresher) RefreshVideoMetadata(context.Context, string, io.Writer, archivers.VideoMedia) (archivers.Result, error) {
@@ -103,5 +136,41 @@ func TestVideoMetadataBackfillPrefersLeanContractRefresh(t *testing.T) {
 	}
 	if got.MetadataKey == "" || got.RawMetadataKey == "" {
 		t.Fatalf("lean refresh did not persist both sidecars: %+v", got)
+	}
+}
+
+func TestVideoMetadataBackfillUsesMetadataOnlyProviderOnFinalAttempt(t *testing.T) {
+	db := newWorkerTestDB(t)
+	store := storage.NewMemoryStorage()
+	url := "https://www.instagram.com/reel/metadata-rescue/"
+	item := seedPriorVideoCapture(t, db, store, url, "rescu", func(item *models.ArchiveItem) {
+		item.MetadataKey, item.RawMetadataKey = "", ""
+	})
+	primary := &failedLeanMetadataRefresher{}
+	provider := &providerMetadataRefresher{}
+	worker := NewVideoMetadataBackfillWorker(store, db, primary, provider)
+	args := VideoMetadataBackfillJobArgs{Identity: url, URL: url, ShortID: "rescu", Version: 2}
+
+	if err := worker.generateAttempt(context.Background(), args, false); err == nil {
+		t.Fatal("first native failure should remain retryable")
+	}
+	if provider.calls != 0 {
+		t.Fatalf("provider calls after non-final attempt = %d, want 0", provider.calls)
+	}
+	if err := worker.generateAttempt(context.Background(), args, true); err != nil {
+		t.Fatalf("final provider rescue: %v", err)
+	}
+	if primary.calls != 2 || provider.calls != 1 {
+		t.Fatalf("native/provider calls = %d/%d, want 2/1", primary.calls, provider.calls)
+	}
+	if provider.media.Extension != item.Extension || provider.media.SizeBytes != item.FileSize {
+		t.Errorf("provider media = %+v, want stored extension %q and size %d", provider.media, item.Extension, item.FileSize)
+	}
+	var got models.ArchiveItem
+	if err := db.First(&got, item.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.MetadataKey == "" || got.RawMetadataKey == "" {
+		t.Fatalf("provider rescue did not persist both sidecars: %+v", got)
 	}
 }

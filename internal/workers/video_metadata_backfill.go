@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -37,24 +38,42 @@ type VideoMetadataBackfillJobArgs struct {
 
 func (VideoMetadataBackfillJobArgs) Kind() string { return "video_metadata_backfill" }
 
+// VideoContractMetadataProvider is the paid provider's metadata-only path.
+// It is deliberately narrower than an Archiver: historical media bytes are
+// already safe in storage, so a provider fallback must buy only the post
+// record (or a page resolution), never download the video a second time.
+type VideoContractMetadataProvider interface {
+	SupportsStoredVideoMetadata(url string) bool
+	RefreshStoredVideoMetadata(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint, media archivers.VideoMedia) (archivers.Result, error)
+}
+
 type VideoMetadataBackfillWorker struct {
 	river.WorkerDefaults[VideoMetadataBackfillJobArgs]
 	storage   storage.Storage
 	db        *gorm.DB
 	refresher archivers.VideoMetadataRefresher
+	provider  VideoContractMetadataProvider
 }
 
-func NewVideoMetadataBackfillWorker(store storage.Storage, db *gorm.DB, refresher archivers.VideoMetadataRefresher) *VideoMetadataBackfillWorker {
-	return &VideoMetadataBackfillWorker{storage: store, db: db, refresher: refresher}
+func NewVideoMetadataBackfillWorker(store storage.Storage, db *gorm.DB, refresher archivers.VideoMetadataRefresher, providers ...VideoContractMetadataProvider) *VideoMetadataBackfillWorker {
+	worker := &VideoMetadataBackfillWorker{storage: store, db: db, refresher: refresher}
+	if len(providers) > 0 {
+		worker.provider = providers[0]
+	}
+	return worker
 }
 
 func (w *VideoMetadataBackfillWorker) Work(ctx context.Context, job *river.Job[VideoMetadataBackfillJobArgs]) error {
 	jobCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	return w.generate(jobCtx, job.Args)
+	return w.generateAttempt(jobCtx, job.Args, job.Attempt >= job.MaxAttempts)
 }
 
 func (w *VideoMetadataBackfillWorker) generate(ctx context.Context, args VideoMetadataBackfillJobArgs) error {
+	return w.generateAttempt(ctx, args, false)
+}
+
+func (w *VideoMetadataBackfillWorker) generateAttempt(ctx context.Context, args VideoMetadataBackfillJobArgs, finalAttempt bool) error {
 	items, err := w.groupItems(args.Identity)
 	if err != nil {
 		return err
@@ -98,7 +117,19 @@ func (w *VideoMetadataBackfillWorker) generate(ctx context.Context, args VideoMe
 		defer result.Bundle.Cleanup()
 	}
 	if err != nil {
-		return fmt.Errorf("refresh video metadata for %s: %w", args.ShortID, err)
+		nativeErr := err
+		if finalAttempt && ctx.Err() == nil && w.provider != nil && w.provider.SupportsStoredVideoMetadata(args.URL) {
+			fmt.Fprintf(&logs, "\nNative metadata refresh failed (%v); attempting metadata-only provider fallback\n", nativeErr)
+			result, err = w.provider.RefreshStoredVideoMetadata(ctx, args.URL, &logs, w.db, representative.ID, media)
+			if err != nil {
+				return fmt.Errorf("refresh video metadata for %s: native failed (%v); provider failed: %w", args.ShortID, nativeErr, err)
+			}
+			if result.Bundle != nil {
+				defer result.Bundle.Cleanup()
+			}
+		} else {
+			return fmt.Errorf("refresh video metadata for %s: %w", args.ShortID, err)
+		}
 	}
 	keyBase := fmt.Sprintf("%s/%s-%s-metadata-backfill", args.ShortID, utils.ArchiveTypeYtDlp, uploadNonce())
 	if err := saveRefreshedArchiveResult(ctx, result, keyBase, representative, w.storage, w.db, representative, &logs); err != nil {
@@ -197,7 +228,7 @@ func EnqueueVideoMetadataBackfill(ctx context.Context, db *gorm.DB, client *rive
 		return summary, errors.New("River client is not configured")
 	}
 	for i, candidate := range candidates {
-		args := VideoMetadataBackfillJobArgs{Identity: strings.TrimSpace(candidate.Identity), URL: candidate.Original, ShortID: candidate.ShortID, Version: 1}
+		args := VideoMetadataBackfillJobArgs{Identity: strings.TrimSpace(candidate.Identity), URL: candidate.Original, ShortID: candidate.ShortID, Version: 2}
 		if _, err := client.Insert(ctx, args, &river.InsertOpts{Queue: videoMetadataBackfillQueue, MaxAttempts: 2,
 			ScheduledAt: now.Add(time.Duration(i) * time.Second), Tags: []string{"video-metadata-backfill", "run-" + summary.RunID},
 			UniqueOpts: river.UniqueOpts{ByArgs: true, ByPeriod: 24 * time.Hour}}); err != nil {
