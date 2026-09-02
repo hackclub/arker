@@ -21,6 +21,13 @@ import (
 
 const videoMetadataBackfillQueue = "video_metadata_backfill"
 
+// Contract repair is one metadata-only extractor request. Healthy platforms
+// finish it in seconds; channel/playlist URLs and retired posts can otherwise
+// occupy one of the deliberately scarce backfill workers for the full ten
+// minute River job budget. Cap only the lean request and let River's second
+// attempt handle transient slowness.
+const videoContractMetadataRefreshTimeout = 2 * time.Minute
+
 type VideoMetadataBackfillJobArgs struct {
 	Identity string `json:"identity"`
 	URL      string `json:"url"`
@@ -81,7 +88,9 @@ func (w *VideoMetadataBackfillWorker) generate(ctx context.Context, args VideoMe
 	}
 	var result archivers.Result
 	if lean, ok := w.refresher.(archivers.VideoContractMetadataRefresher); ok {
-		result, err = lean.RefreshVideoContractMetadata(ctx, args.URL, &logs, media)
+		refreshCtx, cancel := context.WithTimeout(ctx, videoContractMetadataRefreshTimeout)
+		result, err = lean.RefreshVideoContractMetadata(refreshCtx, args.URL, &logs, media)
+		cancel()
 	} else {
 		result, err = w.refresher.RefreshVideoMetadata(ctx, args.URL, &logs, media)
 	}
