@@ -112,16 +112,12 @@ func (w *VideoMetadataBackfillWorker) generateAttempt(ctx context.Context, args 
 	}
 	var result archivers.Result
 	var capturedErr error
-	if finalAttempt {
-		if capturedErr = ctx.Err(); capturedErr == nil {
-			fmt.Fprintf(&logs, "Checking the capture's MHTML metadata before a second live extractor request\n")
-			result, capturedErr = w.refreshFromCapturedMHTML(ctx, args.URL, items, media, &logs)
-		}
+	if capturedErr = ctx.Err(); capturedErr == nil {
+		fmt.Fprintf(&logs, "Checking the capture's MHTML metadata before a live extractor request\n")
+		result, capturedErr = w.refreshFromCapturedMHTML(ctx, args.URL, items, media, &logs)
 	}
-	if !finalAttempt || capturedErr != nil {
-		if capturedErr != nil {
-			fmt.Fprintf(&logs, "Captured MHTML metadata was unavailable (%v); retrying the native metadata extractor\n", capturedErr)
-		}
+	if capturedErr != nil {
+		fmt.Fprintf(&logs, "Captured MHTML metadata was unavailable (%v); trying the native metadata extractor\n", capturedErr)
 		if lean, ok := w.refresher.(archivers.VideoContractMetadataRefresher); ok {
 			refreshCtx, cancel := context.WithTimeout(ctx, videoContractMetadataRefreshTimeout)
 			result, err = lean.RefreshVideoContractMetadata(refreshCtx, args.URL, &logs, media)

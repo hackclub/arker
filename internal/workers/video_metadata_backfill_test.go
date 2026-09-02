@@ -177,7 +177,7 @@ func TestVideoMetadataBackfillUsesMetadataOnlyProviderOnFinalAttempt(t *testing.
 	}
 }
 
-func TestVideoMetadataBackfillPrefersCapturedMHTMLToPaidProvider(t *testing.T) {
+func TestVideoMetadataBackfillPrefersCapturedMHTMLToLiveOrPaidProvider(t *testing.T) {
 	db := newWorkerTestDB(t)
 	store := storage.NewMemoryStorage()
 	url := "https://youtube.com/shorts/jAUZFBlZmiE"
@@ -196,7 +196,7 @@ func TestVideoMetadataBackfillPrefersCapturedMHTMLToPaidProvider(t *testing.T) {
 	provider := &providerMetadataRefresher{}
 	worker := NewVideoMetadataBackfillWorker(store, db, primary, provider)
 	args := VideoMetadataBackfillJobArgs{Identity: utils.CanonicalizeArchiveURL(url), URL: url, ShortID: "mhtml", Version: 2}
-	if err := worker.generateAttempt(context.Background(), args, true); err != nil {
+	if err := worker.generateAttempt(context.Background(), args, false); err != nil {
 		t.Fatal(err)
 	}
 	if provider.calls != 0 {
