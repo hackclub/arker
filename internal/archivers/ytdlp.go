@@ -43,7 +43,7 @@ func (r *tempVideoReader) Close() error {
 type YtDlpArchiver struct{}
 
 func (a *YtDlpArchiver) Archive(ctx context.Context, url string, logWriter io.Writer, db *gorm.DB, itemID uint) (Result, error) {
-	return a.archive(ctx, url, logWriter, true, VideoMedia{})
+	return a.archive(ctx, url, logWriter, true, VideoMedia{}, false)
 }
 
 // RefreshSocialThumbnail asks yt-dlp for only the platform-authored poster.
@@ -105,14 +105,23 @@ func (a *YtDlpArchiver) RefreshSocialThumbnail(ctx context.Context, url string, 
 // than whatever the extractor would pick today. The returned Result carries no
 // Data.
 func (a *YtDlpArchiver) RefreshVideoMetadata(ctx context.Context, url string, logWriter io.Writer, media VideoMedia) (Result, error) {
-	return a.archive(ctx, url, logWriter, false, media)
+	return a.archive(ctx, url, logWriter, false, media, false)
+}
+
+// RefreshVideoContractMetadata is the historical bulk-repair path. One
+// extractor call writes normalized/raw records only; posters and captions are
+// repaired independently and would make thousands of legacy jobs needlessly
+// slow. The stored media is still probed by the worker for authoritative
+// duration and dimensions.
+func (a *YtDlpArchiver) RefreshVideoContractMetadata(ctx context.Context, url string, logWriter io.Writer, media VideoMedia) (Result, error) {
+	return a.archive(ctx, url, logWriter, false, media, true)
 }
 
 // archive is the shared flow behind Archive and RefreshVideoMetadata. The two
 // runs are identical — cookies, probe, subtitle selection, info JSON, poster —
 // except that a metadata-only run passes --skip-download and describes the
 // already-stored media instead of a freshly downloaded file.
-func (a *YtDlpArchiver) archive(ctx context.Context, url string, logWriter io.Writer, downloadVideo bool, storedMedia VideoMedia) (Result, error) {
+func (a *YtDlpArchiver) archive(ctx context.Context, url string, logWriter io.Writer, downloadVideo bool, storedMedia VideoMedia, contractOnly bool) (Result, error) {
 	if downloadVideo {
 		fmt.Fprintf(logWriter, "Starting video archive for: %s\n", url)
 	} else {
@@ -156,29 +165,31 @@ func (a *YtDlpArchiver) archive(ctx context.Context, url string, logWriter io.Wr
 	refererArgs := utils.YtDlpRefererArgsForURL(fetchURL)
 	refererArgs = append(refererArgs, utils.YtDlpFormatFallbackArgsForURL(fetchURL)...)
 
-	// Prepare command arguments. The language is printed last and on its own so
-	// the subtitle filter can be built from the video's actual language rather
-	// than guessed; yt-dlp prints "NA" when it does not know.
-	testArgs := []string{"--print", "title,duration,uploader", "--print", "%(language)s"}
+	detectedLang := ""
+	if !contractOnly {
+		// Prepare command arguments. The language is printed last and on its own
+		// so the subtitle filter can be built from the video's actual language.
+		testArgs := []string{"--print", "title,duration,uploader", "--print", "%(language)s"}
 
-	// First, test if yt-dlp can access the video
-	fmt.Fprintf(logWriter, "Testing video accessibility with yt-dlp...\n")
-	testCmd := exec.CommandContext(ctx, "yt-dlp")
-	testCmd.Args = append(testCmd.Args, testArgs...)
-	testCmd.Args = append(testCmd.Args, utils.YtDlpImpersonateArgsForURL(url)...)
-	testCmd.Args = append(testCmd.Args, refererArgs...)
-	testCmd.Args = append(testCmd.Args, cookieArgs...)
-	testCmd.Args = append(testCmd.Args, utils.YtDlpProxyArgs()...)
-	testCmd.Args = append(testCmd.Args, fetchURL)
-	testOutput, err := testCmd.CombinedOutput()
-	if err != nil {
-		fmt.Fprintf(redactedLog, "yt-dlp test failed: %v\nOutput: %s\n", err, string(testOutput))
-		return Result{}, fmt.Errorf("yt-dlp cannot access video: %v", err)
-	}
-	fmt.Fprintf(redactedLog, "Video info:\n%s\n", string(testOutput))
-	detectedLang := detectedLanguageFromProbe(string(testOutput))
-	if detectedLang != "" {
-		fmt.Fprintf(logWriter, "Detected video language: %s\n", detectedLang)
+		// First, test if yt-dlp can access the video.
+		fmt.Fprintf(logWriter, "Testing video accessibility with yt-dlp...\n")
+		testCmd := exec.CommandContext(ctx, "yt-dlp")
+		testCmd.Args = append(testCmd.Args, testArgs...)
+		testCmd.Args = append(testCmd.Args, utils.YtDlpImpersonateArgsForURL(url)...)
+		testCmd.Args = append(testCmd.Args, refererArgs...)
+		testCmd.Args = append(testCmd.Args, cookieArgs...)
+		testCmd.Args = append(testCmd.Args, utils.YtDlpProxyArgs()...)
+		testCmd.Args = append(testCmd.Args, fetchURL)
+		testOutput, err := testCmd.CombinedOutput()
+		if err != nil {
+			fmt.Fprintf(redactedLog, "yt-dlp test failed: %v\nOutput: %s\n", err, string(testOutput))
+			return Result{}, fmt.Errorf("yt-dlp cannot access video: %v", err)
+		}
+		fmt.Fprintf(redactedLog, "Video info:\n%s\n", string(testOutput))
+		detectedLang = detectedLanguageFromProbe(string(testOutput))
+		if detectedLang != "" {
+			fmt.Fprintf(logWriter, "Detected video language: %s\n", detectedLang)
+		}
 	}
 
 	// Check context before main download
@@ -200,13 +211,19 @@ func (a *YtDlpArchiver) archive(ctx context.Context, url string, logWriter io.Wr
 
 	outputTemplate := tempBase + ".%(ext)s"
 	cmd := exec.CommandContext(ctx, "yt-dlp")
-	cmd.Args = append(cmd.Args, ytDlpDownloadArgs(outputTemplate)...)
-	if !downloadVideo {
+	if contractOnly {
+		cmd.Args = append(cmd.Args, ytDlpContractMetadataArgs(outputTemplate)...)
+	} else {
+		cmd.Args = append(cmd.Args, ytDlpDownloadArgs(outputTemplate)...)
+	}
+	if !downloadVideo && !contractOnly {
 		// The media bytes are already archived; only the info JSON, captions,
 		// and poster image are wanted from this run.
 		cmd.Args = append(cmd.Args, "--skip-download")
 	}
-	cmd.Args = append(cmd.Args, utils.YtDlpSubtitleArgs(detectedLang)...)
+	if !contractOnly {
+		cmd.Args = append(cmd.Args, utils.YtDlpSubtitleArgs(detectedLang)...)
+	}
 	cmd.Args = append(cmd.Args, utils.YtDlpImpersonateArgsForURL(url)...)
 	cmd.Args = append(cmd.Args, refererArgs...)
 	cmd.Args = append(cmd.Args, cookieArgs...)
@@ -281,10 +298,15 @@ func (a *YtDlpArchiver) archive(ctx context.Context, url string, logWriter io.Wr
 	// Captions are read here, before the deferred cleanup sweeps the temp
 	// directory. A platform that exposes none is the normal case and must not
 	// disturb the capture, so every failure below is logged and dropped.
-	extras, tracks, contents := collectSubtitleArtifacts(tempBase, rawInfo, logWriter)
-	metadata.Subtitles = tracks
-	metadata.Transcript = BuildTranscript(tracks, contents, detectedLang)
-	logSubtitleOutcome(logWriter, metadata)
+	var extras []ExtraArtifact
+	if !contractOnly {
+		var tracks []SubtitleTrack
+		var contents map[string]string
+		extras, tracks, contents = collectSubtitleArtifacts(tempBase, rawInfo, logWriter)
+		metadata.Subtitles = tracks
+		metadata.Transcript = BuildTranscript(tracks, contents, detectedLang)
+		logSubtitleOutcome(logWriter, metadata)
+	}
 
 	metadataJSON, err := MarshalVideoMetadata(metadata)
 	if err != nil {
@@ -305,7 +327,10 @@ func (a *YtDlpArchiver) archive(ctx context.Context, url string, logWriter io.Wr
 
 	// Read the poster image before returning: the deferred cleanup sweeps every
 	// sibling temp file except the video, so it is gone the moment we return.
-	thumb := videoThumbnail(tempBase, outputPath, logWriter)
+	var thumb *Thumbnail
+	if !contractOnly {
+		thumb = videoThumbnail(tempBase, outputPath, logWriter)
+	}
 
 	if downloadVideo {
 		fmt.Fprintf(logWriter, "Video download completed successfully\n")
@@ -502,6 +527,17 @@ func ytDlpDownloadArgs(outputTemplate string) []string {
 		"--no-clean-infojson",
 		"--merge-output-format", "mp4",
 		"--remux-video", "mp4",
+		"--verbose",
+		"-o", outputTemplate,
+	}
+}
+
+func ytDlpContractMetadataArgs(outputTemplate string) []string {
+	return []string{
+		"--skip-download",
+		"--no-playlist",
+		"--write-info-json",
+		"--no-clean-infojson",
 		"--verbose",
 		"-o", outputTemplate,
 	}

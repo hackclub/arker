@@ -108,6 +108,15 @@ type VideoMetadataRefresher interface {
 	RefreshVideoMetadata(ctx context.Context, url string, logWriter io.Writer, media VideoMedia) (Result, error)
 }
 
+// VideoContractMetadataRefresher is the lean historical-repair form. Unlike a
+// fresh/repeat capture, the consumer contract needs normalized and raw
+// sidecars but not a new poster, captions, or transcript. Implementations can
+// use this to avoid ancillary upstream requests while still never downloading
+// the media itself.
+type VideoContractMetadataRefresher interface {
+	RefreshVideoContractMetadata(ctx context.Context, url string, logWriter io.Writer, media VideoMedia) (Result, error)
+}
+
 // SocialThumbnailRefresher fetches only a video's provider-authored poster.
 // Unlike VideoMetadataRefresher it does not download media, captions, or
 // sidecars, which makes it safe to run gradually across the historical corpus.

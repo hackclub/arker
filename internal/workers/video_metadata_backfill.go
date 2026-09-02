@@ -75,10 +75,16 @@ func (w *VideoMetadataBackfillWorker) generate(ctx context.Context, args VideoMe
 	}
 	representative := &targets[0]
 	var logs bytes.Buffer
-	result, err := w.refresher.RefreshVideoMetadata(ctx, args.URL, &logs, archivers.VideoMedia{
+	media := archivers.VideoMedia{
 		Extension: representative.Extension,
 		SizeBytes: representative.FileSize,
-	})
+	}
+	var result archivers.Result
+	if lean, ok := w.refresher.(archivers.VideoContractMetadataRefresher); ok {
+		result, err = lean.RefreshVideoContractMetadata(ctx, args.URL, &logs, media)
+	} else {
+		result, err = w.refresher.RefreshVideoMetadata(ctx, args.URL, &logs, media)
+	}
 	if result.Bundle != nil {
 		defer result.Bundle.Cleanup()
 	}

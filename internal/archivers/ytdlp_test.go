@@ -239,6 +239,26 @@ func TestYtDlpDownloadArgsRequestThumbnail(t *testing.T) {
 	}
 }
 
+func TestYtDlpContractMetadataArgsSkipAncillaryDownloads(t *testing.T) {
+	args := ytDlpContractMetadataArgs("/tmp/arker-video-123.%(ext)s")
+	want := map[string]bool{"--skip-download": false, "--no-playlist": false, "--write-info-json": false, "--no-clean-infojson": false}
+	for _, arg := range args {
+		if _, ok := want[arg]; ok {
+			want[arg] = true
+		}
+		for _, forbidden := range []string{"--write-thumbnail", "--write-subs", "--write-auto-subs"} {
+			if arg == forbidden {
+				t.Fatalf("contract-only refresh includes ancillary flag %q: %v", arg, args)
+			}
+		}
+	}
+	for arg, found := range want {
+		if !found {
+			t.Errorf("contract-only refresh missing %q: %v", arg, args)
+		}
+	}
+}
+
 func TestFindDownloadedThumbnail(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
