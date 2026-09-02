@@ -72,6 +72,37 @@ func (c *Client) archiveFacebook(ctx context.Context, targetURL, itemType string
 // URL; the same video addressed as /watch/?v=<id> answers as a video node,
 // so that is tried once before giving up.
 func (c *Client) facebookResolve(ctx context.Context, usage *models.FallbackUsage, targetURL string, db *gorm.DB, logWriter io.Writer) (facebookPost, map[string]any, error) {
+	for attempt := 0; ; attempt++ {
+		post, record, err := c.facebookResolveOnce(ctx, usage, targetURL, db, logWriter)
+		if err != nil {
+			return post, record, err
+		}
+		urls := make([]string, 0, len(post.Entries)+1)
+		for _, entry := range post.Entries {
+			urls = append(urls, entry.URL)
+		}
+		host := c.unreachableHost(ctx, urls...)
+		if host == "" {
+			return post, record, nil
+		}
+		if attempt >= facebookHostRetries {
+			err := fmt.Errorf("Facebook delivery host %s is IPv6-only and this host has no IPv6 route (after %d re-resolutions)", host, attempt)
+			usage.Detail = truncate(err.Error(), 500)
+			c.recordUsage(db, usage)
+			return post, record, err
+		}
+		fmt.Fprintf(logWriter, "Delivery host %s is IPv6-only and unreachable from here; resolving again for another CDN node\n", host)
+		usage.Detail = truncate("delivery host "+host+" unreachable (IPv6-only); re-resolved", 500)
+		c.recordUsage(db, usage)
+		*usage = models.FallbackUsage{ArchiveItemID: usage.ArchiveItemID, ShortID: usage.ShortID, URL: usage.URL}
+	}
+}
+
+// facebookHostRetries is how many extra actor runs an unreachable delivery
+// node is worth. Each costs one record; the node changes nearly every run.
+const facebookHostRetries = 2
+
+func (c *Client) facebookResolveOnce(ctx context.Context, usage *models.FallbackUsage, targetURL string, db *gorm.DB, logWriter io.Writer) (facebookPost, map[string]any, error) {
 	record, _, err := c.resolveRecord(ctx, db, usage, ActorFacebook, facebookRunInput(targetURL), logWriter, "postId", "videoId", "post_id", "id")
 	if err != nil {
 		return facebookPost{}, nil, err

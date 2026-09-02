@@ -462,6 +462,29 @@ guessing which one is the secret is how one gets left behind. Fixtures under
 `SYNTHETIC-NOT-A-REAL-SECRET`; the tests assert that marker never reaches an
 artifact.
 
+Two platform quirks the code compensates for, so do not "simplify" them away:
+
+- Pay-per-event actors report `usageTotalUsd = 0` at `SUCCEEDED`; the start
+  fee and the per-result fee land in the ledger a few seconds later (measured
+  ~4–20s). `settleCost` re-reads the run in the background at
+  `defaultCostSettleDelays` and updates only the row's `cost_usd`. Tests call
+  `Close()` to wait for it; the server does not drain on SIGTERM, so a run
+  that finished in the last three minutes before a redeploy can keep a
+  partial figure. Apify's console is the authority for reconciliation.
+- Facebook delivery URLs sometimes point at an ISP CDN appliance
+  (`*.fna.fbcdn.net`) that publishes only an AAAA record, and Arker's hosts
+  have no IPv6 route (rewriting the host 403s — the signature is bound to it).
+  `reachability.go` detects this and `facebookResolve` runs the actor again
+  for a different node, booking the wasted run as a failed usage row with the
+  reason in `Detail`.
+
+`internal/apify/live_test.go` exercises every actor against real posts and
+spends real money (~$0.07 for the full set). It is skipped unless
+`APIFY_LIVE_TOKEN` is set; `APIFY_LIVE_ONLY=<substring>` narrows it and
+`APIFY_LIVE_OUT=<dir>` keeps the artifacts and a `summary.json`. Run it before
+shipping anything that touches the fallback — recorded fixtures cannot tell you
+an actor changed its output.
+
 Archives rescued before the swap carry `source = "brightdata"` and a
 `brightdata.json` record; readers keep honoring both (`models.IsFallbackSource`).
 

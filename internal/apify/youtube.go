@@ -50,7 +50,7 @@ type youtubeScrapeInput struct {
 	MaxResultsShorts  int               `json:"maxResultsShorts"`
 	DownloadSubtitles bool              `json:"downloadSubtitles"`
 	SaveSubsToKVS     bool              `json:"saveSubsToKVS"`
-	SubtitlesFormat   string            `json:"subtitlesFormat"`
+	SubtitlesFormat   string            `json:"subtitlesFormat,omitempty"`
 }
 
 type youtubeStartURL struct {

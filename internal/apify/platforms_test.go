@@ -5,10 +5,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"arker/internal/archivers"
 	"arker/internal/utils"
@@ -396,10 +398,73 @@ func TestFacebookVideoArchivesDeliveryURL(t *testing.T) {
 	video := realMP4(t, true)
 	network.serve(post.Entries[0].URL, video)
 
-	result, _, _, _ := archive(t, network, "https://www.facebook.com/HackClubHQ/videos/1847881915262822/", utils.ArchiveTypeYtDlp)
+	result, log, _, _ := archive(t, network, "https://www.facebook.com/HackClubHQ/videos/1847881915262822/", utils.ArchiveTypeYtDlp)
 	meta := assertVideoResult(t, result, video)
 	if meta.Platform != "facebook" || meta.PostID != "1847881915262822" || meta.Author != "HackClubHQ" || meta.Engagement.Likes == nil || meta.DurationSeconds == nil {
 		t.Errorf("metadata = %+v", meta)
+	}
+	// The video node carries no poster; the row preview is the first frame.
+	if result.Thumbnail == nil || len(result.Thumbnail.Data) == 0 || result.Thumbnail.Width == 0 {
+		t.Errorf("no poster frame extracted from the video\n%s", log)
+	}
+}
+
+// Facebook sometimes hands out an ISP-local delivery node that only has an
+// AAAA record; without an IPv6 route the download cannot even start, so the
+// client resolves again for another node and books the wasted run honestly.
+func TestFacebookIPv6OnlyDeliveryHostIsReResolved(t *testing.T) {
+	record := loadRecord(t, "facebook_video.json")
+	post := parseFacebookRecord(record, io.Discard)
+	network := newFakeNetwork(runFor(ActorFacebook, record), runFor(ActorFacebook, record))
+	video := realMP4(t, false)
+	network.serve(post.Entries[0].URL, video)
+	client, db := newTestClient(t, network)
+	lookups := 0
+	client.resolveHost = func(_ context.Context, host string) ([]net.IP, error) {
+		lookups++
+		if lookups == 1 {
+			return []net.IP{net.ParseIP("2600:6c7f:10:3:face:b00c:0:358e")}, nil
+		}
+		return []net.IP{net.IPv4(203, 0, 113, 1)}, nil
+	}
+	var log strings.Builder
+	result, err := client.ArchiveFallback(context.Background(), "https://www.facebook.com/HackClubHQ/videos/1847881915262822/", utils.ArchiveTypeYtDlp, &log, db, 7)
+	if err != nil {
+		t.Fatalf("ArchiveFallback: %v\n%s", err, log.String())
+	}
+	assertVideoResult(t, result, video)
+	if len(network.startedRuns()) != 2 {
+		t.Fatalf("actor runs = %d, want 2", len(network.startedRuns()))
+	}
+	if !strings.Contains(log.String(), "IPv6-only and unreachable") {
+		t.Errorf("log does not explain the re-resolution:\n%s", log.String())
+	}
+	rows := usageRows(t, db)
+	if len(rows) != 2 || rows[0].Success || !strings.Contains(rows[0].Detail, "unreachable (IPv6-only)") || !rows[1].Success {
+		t.Errorf("usage rows = %+v", rows)
+	}
+}
+
+// With no IPv6 route and every run landing on an IPv6-only node, the client
+// gives up after a bounded number of paid runs instead of looping.
+func TestFacebookIPv6OnlyDeliveryHostGivesUpAfterRetries(t *testing.T) {
+	record := loadRecord(t, "facebook_video.json")
+	network := newFakeNetwork(runFor(ActorFacebook, record), runFor(ActorFacebook, record), runFor(ActorFacebook, record), runFor(ActorFacebook, record))
+	client, db := newTestClient(t, network)
+	client.resolveHost = func(_ context.Context, host string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("2600:6c7f:10:3:face:b00c:0:358e")}, nil
+	}
+	_, err := client.ArchiveFallback(context.Background(), "https://www.facebook.com/HackClubHQ/videos/1847881915262822/", utils.ArchiveTypeYtDlp, io.Discard, db, 7)
+	if err == nil || !strings.Contains(err.Error(), "IPv6-only") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(network.startedRuns()) != 1+facebookHostRetries {
+		t.Errorf("actor runs = %d, want %d", len(network.startedRuns()), 1+facebookHostRetries)
+	}
+	for _, row := range usageRows(t, db) {
+		if row.Success || row.Detail == "" {
+			t.Errorf("usage row = %+v", row)
+		}
 	}
 }
 
@@ -592,6 +657,31 @@ func TestXMissingTweetIsNotFound(t *testing.T) {
 }
 
 // ---- Pinterest ----
+
+// Pay-per-event actors report $0 for a few seconds after a run finishes.
+// The ledger row is corrected in the background once the charge lands, and
+// only its cost column, so the Success/Detail the archive finalized stand.
+func TestRunCostSettlesAfterTheRunFinishes(t *testing.T) {
+	record := loadRecord(t, "pinterest_image.json")
+	scripted := runFor(ActorPinterest, record)
+	scripted.SettledCostUSD = 0.00195
+	network := newFakeNetwork(scripted)
+	network.serve(pinterestMediaEntries(record)[0].URL, fakeJPEG(t))
+	client, db := newTestClient(t, network)
+	client.costSettleDelays = []time.Duration{time.Millisecond, 2 * time.Millisecond, 3 * time.Millisecond}
+	var log strings.Builder
+	if _, err := client.ArchiveFallback(context.Background(), "https://www.pinterest.com/pin/2181499817705551/", utils.ArchiveTypeGalleryDl, &log, db, 7); err != nil {
+		t.Fatalf("ArchiveFallback: %v", err)
+	}
+	client.Close()
+	rows := usageRows(t, db)
+	if len(rows) != 1 || rows[0].CostUSD != 0.00195 || !rows[0].Success || !strings.HasPrefix(rows[0].Detail, "gallery 1 file(s)") {
+		t.Errorf("usage rows = %+v", rows)
+	}
+	if !strings.Contains(log.String(), "cost not yet reported") {
+		t.Errorf("log does not mention settlement:\n%s", log.String())
+	}
+}
 
 func TestPinterestImagePinArchivesOriginal(t *testing.T) {
 	record := loadRecord(t, "pinterest_image.json")

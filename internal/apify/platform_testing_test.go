@@ -3,6 +3,7 @@ package apify
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -10,6 +11,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -71,6 +73,9 @@ type actorRun struct {
 	// Pending makes the first status poll report RUNNING once before the
 	// final status, exercising the poll loop.
 	Pending bool
+	// SettledCostUSD, when set, is reported instead of CostUSD from the
+	// third read onwards: pay-per-event charges land after the run ends.
+	SettledCostUSD float64
 
 	id        string
 	datasetID string
@@ -286,13 +291,17 @@ func (f *fakeNetwork) runJSON(run *actorRun) []byte {
 		status = "RUNNING"
 	}
 	run.polls++
+	cost := run.CostUSD
+	if run.SettledCostUSD != 0 && run.polls > 2 {
+		cost = run.SettledCostUSD
+	}
 	body, _ := json.Marshal(map[string]any{"data": map[string]any{
 		"id":                     run.id,
 		"status":                 status,
 		"statusMessage":          run.StatusMessage,
 		"defaultKeyValueStoreId": run.kvsID,
 		"defaultDatasetId":       run.datasetID,
-		"usageTotalUsd":          run.CostUSD,
+		"usageTotalUsd":          cost,
 	}})
 	return body
 }
@@ -315,6 +324,12 @@ func newTestClient(t *testing.T, network *fakeNetwork) (*Client, *gorm.DB) {
 		cfg:          Config{Token: "test-token", RunTimeout: 30 * time.Second, MaxRunCostUSD: 0.50},
 		http:         &http.Client{Transport: network},
 		pollInterval: time.Millisecond,
+		// No real DNS in the offline suite: every delivery host is
+		// dual-stack unless a test says otherwise.
+		resolveHost: func(_ context.Context, host string) ([]net.IP, error) {
+			return []net.IP{net.IPv4(203, 0, 113, 1)}, nil
+		},
+		ipv6: func() bool { return false },
 	}
 	return client, newTestDB(t)
 }

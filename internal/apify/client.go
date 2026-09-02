@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -71,6 +72,15 @@ type Client struct {
 	// pollInterval is how long to sleep between run status polls when the
 	// API returns before the run finishes; shortened in tests.
 	pollInterval time.Duration
+	// resolveHost and ipv6 back the delivery-host reachability check; nil
+	// means the real resolver and the process-wide IPv6 probe.
+	resolveHost hostResolver
+	ipv6        func() bool
+	// costSettleDelays schedules the re-reads of a finished run's cost (see
+	// settleCost). Empty disables settlement.
+	costSettleDelays []time.Duration
+	// background tracks settlement goroutines so Close can wait for them.
+	background sync.WaitGroup
 }
 
 // New builds a client. An empty token yields a disabled client so callers can
@@ -83,9 +93,25 @@ func New(cfg Config) *Client {
 		cfg.MaxRunCostUSD = 0.50
 	}
 	return &Client{
-		cfg:          cfg,
-		http:         &http.Client{Timeout: 5 * time.Minute},
-		pollInterval: 2 * time.Second,
+		cfg:              cfg,
+		http:             &http.Client{Timeout: 5 * time.Minute},
+		pollInterval:     2 * time.Second,
+		costSettleDelays: defaultCostSettleDelays,
+	}
+}
+
+// defaultCostSettleDelays: pay-per-event charges land in stages after a run
+// finishes — the start fee within a few seconds, the per-result fee some
+// seconds later (measured: both within ~10s, but a slow ledger has been seen
+// past 15s) — so the cost is re-read at each of these offsets after the run
+// finishes and the row keeps the latest figure.
+var defaultCostSettleDelays = []time.Duration{6 * time.Second, 20 * time.Second, 60 * time.Second, 3 * time.Minute}
+
+// Close waits for background cost settlement to finish. It is only needed
+// where the process is about to exit or a test is about to tear down.
+func (c *Client) Close() {
+	if c != nil {
+		c.background.Wait()
 	}
 }
 
@@ -155,10 +181,65 @@ func (c *Client) runActor(ctx context.Context, db *gorm.DB, usage *models.Fallba
 	usage.Records = len(items)
 	c.recordUsage(db, usage)
 	fmt.Fprintf(logWriter, "Apify run %s finished: %d item(s), $%.4f\n", finished.ID, len(items), finished.CostUSD)
-	if finished.CostUSD > c.cfg.MaxRunCostUSD {
-		slog.Warn("Apify run cost exceeded the per-run guard", "run", finished.ID, "actor", usage.Product, "cost_usd", finished.CostUSD, "guard_usd", c.cfg.MaxRunCostUSD)
+	c.checkRunCost(finished.ID, usage.Product, finished.CostUSD)
+	if finished.CostUSD == 0 {
+		fmt.Fprintf(logWriter, "Run cost not yet reported by the platform; the usage row is updated once it settles\n")
+		c.settleCost(db, usage.ID, finished.ID, usage.Product)
 	}
 	return finished, nil
+}
+
+func (c *Client) checkRunCost(runID, product string, costUSD float64) {
+	if costUSD > c.cfg.MaxRunCostUSD {
+		slog.Warn("Apify run cost exceeded the per-run guard", "run", runID, "actor", product, "cost_usd", costUSD, "guard_usd", c.cfg.MaxRunCostUSD)
+	}
+}
+
+// settleCost re-reads a run whose cost was still zero when it finished.
+// Pay-per-event actors are charged asynchronously, so the run object reports
+// $0 for a few seconds after SUCCEEDED and the ledger would otherwise
+// under-count every such run. The re-reads happen in the background so the
+// archive does not wait on billing, and touch only the cost column so they
+// cannot clobber the Success/Detail the caller finalizes meanwhile.
+func (c *Client) settleCost(db *gorm.DB, usageID uint, runID, product string) {
+	if db == nil || usageID == 0 || len(c.costSettleDelays) == 0 {
+		return
+	}
+	c.background.Add(1)
+	go func() {
+		defer c.background.Done()
+		recorded := 0.0
+		for i, delay := range c.costSettleDelays {
+			if i == 0 {
+				time.Sleep(delay)
+			} else {
+				time.Sleep(delay - c.costSettleDelays[i-1])
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			var resp struct {
+				Data runObject `json:"data"`
+			}
+			err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("%s/actor-runs/%s", apiBase, url.PathEscape(runID)), nil, &resp)
+			cancel()
+			if err != nil {
+				slog.Warn("Could not re-read Apify run cost", "run", runID, "error", err)
+				return
+			}
+			cost := resp.Data.UsageTotalUSD
+			if cost == 0 || cost == recorded {
+				continue
+			}
+			if err := db.Model(&models.FallbackUsage{}).Where("id = ?", usageID).Update("cost_usd", cost).Error; err != nil {
+				slog.Error("Failed to record settled Apify run cost", "run", runID, "error", err)
+				return
+			}
+			recorded = cost
+			c.checkRunCost(runID, product, cost)
+		}
+		if recorded == 0 {
+			slog.Warn("Apify run cost never settled; ledger row keeps $0", "run", runID, "actor", product)
+		}
+	}()
 }
 
 // runObject is the subset of the API's run resource the client reads.

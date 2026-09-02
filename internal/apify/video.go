@@ -141,11 +141,23 @@ func (c *Client) archiveVideo(ctx context.Context, plan videoPlan, usage *models
 	usage.Detail = fmt.Sprintf("video %d bytes", size)
 	c.recordUsage(db, usage)
 
+	thumb := c.thumbnailFromURL(ctx, plan.ThumbnailURL, logWriter)
+	if thumb == nil {
+		// Some video nodes (Facebook's, in particular) carry no poster at
+		// all; the first displayed frame is what the native flow would show.
+		frame, err := archivers.VideoFrameThumbnail(ctx, videoPath)
+		if err != nil {
+			fmt.Fprintf(logWriter, "Could not extract a poster frame: %v\n", err)
+		} else {
+			thumb = frame
+		}
+	}
+
 	return archivers.Result{
 		Data:        reader,
 		Extension:   ".mp4",
 		ContentType: "video/mp4",
-		Thumbnail:   c.thumbnailFromURL(ctx, plan.ThumbnailURL, logWriter),
+		Thumbnail:   thumb,
 		Source:      models.ArchiveSourceApify,
 		Metadata:    &archivers.Sidecar{Data: metadataJSON},
 		RawMetadata: raw,
