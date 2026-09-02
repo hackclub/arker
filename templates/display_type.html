@@ -197,6 +197,9 @@
         }
         .gallery-meta .gallery-author { font-weight: 600; }
         .gallery-meta .gallery-sub { color: #666; font-size: 13px; margin-top: 2px; }
+        .gallery-meta .gallery-music { margin-top: 8px; }
+        .gallery-meta .gallery-music-label { font-size: 13px; color: #333; margin-bottom: 4px; }
+        .gallery-meta .gallery-music audio { width: 100%; max-width: 420px; display: block; }
         /* Shown only when the archive is not the whole post. An incomplete
            capture that looks identical to a complete one is the thing this
            page must never do. */
@@ -406,6 +409,36 @@
                     capEl.className = 'gallery-caption';
                     capEl.textContent = caption;
                     metaEl.appendChild(capEl);
+                }
+                // The soundtrack sits under the caption, not in the slide
+                // strip: it plays across the whole post rather than at a
+                // position in it. Attribution shows even when the platform
+                // would not let the audio be downloaded.
+                const music = meta.music;
+                if (music || data.audio) {
+                    const musicEl = document.createElement('div');
+                    musicEl.className = 'gallery-music';
+                    const label = document.createElement('div');
+                    label.className = 'gallery-music-label';
+                    const parts = [];
+                    if (music && music.title) parts.push(music.title);
+                    if (music && music.artist) parts.push(music.artist);
+                    label.textContent = '♫ ' + (parts.length ? parts.join(' — ') : 'Soundtrack');
+                    if (music && music.original) label.textContent += ' (original sound)';
+                    musicEl.appendChild(label);
+                    if (data.audio && data.audio.url) {
+                        const player = document.createElement('audio');
+                        player.controls = true;
+                        player.preload = 'metadata';
+                        player.src = data.audio.url;
+                        musicEl.appendChild(player);
+                    } else {
+                        const note = document.createElement('div');
+                        note.className = 'gallery-sub';
+                        note.textContent = 'Audio not available for download from the platform; attribution only.';
+                        musicEl.appendChild(note);
+                    }
+                    metaEl.appendChild(musicEl);
                 }
                 if (!metaEl.childNodes.length) metaEl.style.display = 'none';
 

@@ -48,7 +48,7 @@ func (c *Client) archiveX(ctx context.Context, targetURL, itemType string, logWr
 	logXMetadata(logWriter, record)
 
 	meta := xGalleryMetadata(record, targetURL)
-	result, completeness, totalBytes, err := c.buildGalleryArchive(ctx, entries, meta, record, c.directFetch, logWriter)
+	result, completeness, totalBytes, err := c.buildGalleryArchive(ctx, entries, nil, meta, record, c.directFetch, logWriter)
 	if err != nil {
 		usage.Detail = truncate(err.Error(), 500)
 		c.recordUsage(db, usage)

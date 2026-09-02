@@ -50,7 +50,11 @@ type VideoMetadata struct {
 	MediaType  string          `json:"media_type,omitempty"`
 	Engagement VideoEngagement `json:"engagement"`
 	Tags       []string        `json:"tags,omitempty"`
-	Media      VideoMedia      `json:"media"`
+	// Music is the track behind the video when the platform names one (a
+	// TikTok's sound, a Reel's audio). The audio is already inside the video
+	// file, so this is attribution, not a second asset.
+	Music *VideoMusic `json:"music,omitempty"`
+	Media VideoMedia  `json:"media"`
 	// Subtitles lists the stored caption tracks, and Transcript is the readable
 	// text derived from the best of them. Both are additive and both are
 	// absent for most posts: a platform that exposes no captions is a fact
@@ -62,6 +66,30 @@ type VideoMetadata struct {
 	ArchivedAt   string          `json:"archived_at"`
 	Provenance   string          `json:"provenance"`
 	Provider     string          `json:"provider,omitempty"`
+}
+
+// VideoMusic is the attribution of a video's soundtrack.
+type VideoMusic struct {
+	Title    string `json:"title,omitempty"`
+	Artist   string `json:"artist,omitempty"`
+	Album    string `json:"album,omitempty"`
+	ID       string `json:"id,omitempty"`
+	Original *bool  `json:"original,omitempty"`
+}
+
+// videoMusicFromYtDlp reads yt-dlp's track/artist(s)/album fields. TikTok's
+// extractor fills them from the post's music record; most other extractors
+// leave them empty, in which case the post has no declared soundtrack.
+func videoMusicFromYtDlp(raw map[string]interface{}) *VideoMusic {
+	music := &VideoMusic{
+		Title:  videoString(raw, "track"),
+		Artist: firstVideoString(strings.Join(videoStrings(raw, "artists"), ", "), videoString(raw, "artist", "creator")),
+		Album:  videoString(raw, "album"),
+	}
+	if music.Title == "" {
+		return nil
+	}
+	return music
 }
 
 // VideoEngagement holds counts without treating a missing value as zero.
@@ -151,6 +179,7 @@ func BuildYtDlpVideoArtifacts(rawJSON []byte, sourceURL, toolVersion string, med
 			Reposts:  videoInt(raw, "repost_count"),
 		},
 		Tags:         videoStrings(raw, "tags", "categories"),
+		Music:        videoMusicFromYtDlp(raw),
 		Media:        media,
 		YtDlpVersion: toolVersion,
 		ArchivedAt:   archivedAt.UTC().Format(time.RFC3339),

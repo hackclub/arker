@@ -173,7 +173,7 @@ func (c *Client) tiktokPhotos(ctx context.Context, targetURL string, logWriter i
 	defer fetcher.close()
 
 	meta := tiktokGalleryMetadata(record, targetURL)
-	result, completeness, totalBytes, err := c.buildGalleryArchive(ctx, entries, meta, record, fetcher.fetch, logWriter)
+	result, completeness, totalBytes, err := c.buildGalleryArchive(ctx, entries, tiktokAudio(record), meta, record, fetcher.fetch, logWriter)
 
 	if fetcher.sessions > 0 {
 		// The session is a success only if it actually delivered media that was
@@ -562,7 +562,8 @@ func buildBrightDataTikTokVideoArtifacts(record map[string]any, sourceURL string
 			Comments: intField(record, "comment_count"),
 			Reposts:  intField(record, "share_count", "num_share_count"),
 		},
-		Tags: stringSlice(record, "hashtags"),
+		Tags:  stringSlice(record, "hashtags"),
+		Music: tiktokVideoMusic(record),
 		Media: archivers.VideoMedia{
 			Extension:    ".mp4",
 			ContentType:  "video/mp4",
@@ -599,5 +600,20 @@ func logTikTokMetadata(logWriter io.Writer, record map[string]any) {
 		if value := intField(record, counter.key); value != nil {
 			fmt.Fprintf(logWriter, "%s: %d\n", counter.label, *value)
 		}
+	}
+}
+
+// tiktokVideoMusic reads the sound attribution off a TikTok Posts record for
+// a video, where the audio is already mixed into the MP4.
+func tiktokVideoMusic(record map[string]any) *archivers.VideoMusic {
+	audio := tiktokAudio(record)
+	if audio == nil || (audio.Music.Title == "" && audio.Music.Artist == "") {
+		return nil
+	}
+	return &archivers.VideoMusic{
+		Title:    audio.Music.Title,
+		Artist:   audio.Music.Artist,
+		ID:       audio.Music.ID,
+		Original: audio.Music.Original,
 	}
 }

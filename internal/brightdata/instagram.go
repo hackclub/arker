@@ -266,6 +266,10 @@ func (c *Client) instagramGallery(ctx context.Context, targetURL string, logWrit
 	// moment they exist as probeable files rather than an immutable stored ZIP.
 	archivers.ProbeGalleryVideoFiles(ctx, tmpDir, meta.Files, logWriter)
 
+	// The post's soundtrack, when the dataset describes one. Instagram serves
+	// its audio from the same portable CDN as the slides.
+	totalBytes += fetchGalleryAudio(ctx, tmpDir, instagramAudio(record), meta, c.directFetch, logWriter)
+
 	logInstagramMetadata(logWriter, record)
 	fmt.Fprintf(logWriter, "Downloaded %d of %d media file(s), %d bytes total\n", len(meta.Files), len(entries), totalBytes)
 
@@ -341,7 +345,11 @@ func (c *Client) downloadToPath(ctx context.Context, mediaURL, dest string) (int
 // mediaEntry is one media slide resolved from a post record.
 type mediaEntry struct {
 	URL  string
-	Type string // "Photo" | "Video"
+	Type string // "Photo" | "Video" | "Audio"
+}
+
+func (e mediaEntry) isAudio() bool {
+	return strings.EqualFold(e.Type, "audio")
 }
 
 func (e mediaEntry) isVideo() bool {
@@ -351,9 +359,12 @@ func (e mediaEntry) isVideo() bool {
 func (e mediaEntry) extension() string {
 	if ext := strings.ToLower(path.Ext(urlPath(e.URL))); ext != "" && len(ext) <= 5 {
 		switch ext {
-		case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".mp4", ".mov", ".webm":
+		case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".mp4", ".mov", ".webm", ".mp3", ".m4a", ".aac", ".ogg":
 			return ext
 		}
+	}
+	if e.isAudio() {
+		return ".mp3"
 	}
 	if e.isVideo() {
 		return ".mp4"
@@ -523,11 +534,19 @@ func buildGalleryZip(dir string, meta *archivers.GalleryMetadata, record map[str
 		return "", err
 	}
 
+	mediaNames := make([]string, 0, len(meta.Files)+1)
 	for _, file := range meta.Files {
+		mediaNames = append(mediaNames, file.Name)
+	}
+	if meta.Music != nil && meta.Music.File != "" {
+		// The soundtrack travels with the slides; it is simply not one of them.
+		mediaNames = append(mediaNames, meta.Music.File)
+	}
+	for _, name := range mediaNames {
 		// Media is stored uncompressed, matching the native flow: JPEG/MP4
 		// does not deflate meaningfully.
-		if err := writeEntry(file.Name, zip.Store, func(w io.Writer) error {
-			f, err := os.Open(filepath.Join(dir, file.Name))
+		if err := writeEntry(name, zip.Store, func(w io.Writer) error {
+			f, err := os.Open(filepath.Join(dir, name))
 			if err != nil {
 				return err
 			}

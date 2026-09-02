@@ -159,7 +159,7 @@ When using Amp with `make dev` running in another window:
 - `GET /git/:shortid` - Git HTTP backend for cloning repositories
 - `GET /itch/:shortid/file/*filepath` - Stream individual files from itch.io game archives
 - `GET /itch/:shortid/list` - JSON list of files in itch.io game archive
-- `GET /gallery/:shortid/manifest` - Gallery capture status, normalized post metadata, and one absolute media URL per card in swipe order (the video manifest's counterpart; what API consumers should use)
+- `GET /gallery/:shortid/manifest` - Gallery capture status, normalized post metadata, and one absolute media URL per card in swipe order (the video manifest's counterpart; what API consumers should use). A post's soundtrack is reported in a top-level `music` block (`status` `stored`/`metadata_only`, title/artist/id, and `audio_url` when the bytes are in the bundle), never as a card: `media_count` is the slide count
 - `GET /gallery/:shortid/list` - JSON post metadata + media file list for a gallery-dl archive (viewer-facing, predates the manifest, shape frozen)
 - `GET /gallery/:shortid/file/*filepath` - Stream one media file out of a gallery-dl archive
 - `GET /video/:shortid/manifest` - Video capture status, normalized post metadata, and archived media URL. `metadata.media_type` is the platform's own delivery format (YouTube reports `short` or `video`), passed through verbatim from the provider record so it always matches `/video/:shortid/raw`; it is absent — never guessed — when the provider names none (Instagram, TikTok, Facebook, and the Bright Data fallbacks) or when the archive predates the field
@@ -389,6 +389,19 @@ Platform quirks worth knowing before changing a route:
   slideshow. Videos and `vm`/`vt`/`t` short links stay on yt-dlp; a short link
   that resolves to a photo post fails explicitly rather than being resolved at
   routing time, which would mean a network call from a pure function.
+- **Soundtracks on image posts.** Instagram carousels and TikTok slideshows
+  carry a music track. gallery-dl writes it as just another numbered file
+  (TikTok: `000.mp3`, `type: audio`; Instagram: numbered after the last slide,
+  only with `extractor.instagram.audio=true`, and *included in `count`*).
+  `separateGalleryAudio` renames it to `audio.<ext>` so it is never a slide:
+  not in `files`, not in `file_count`, not in completeness (Instagram's count is
+  decremented when the audio was stored). Attribution and status live in
+  `metadata.music` (`GalleryMusic`); the Bright Data builders do the same from
+  the record's `music` block (TikTok) or `audio`/`audio_url` (Instagram, which
+  the dataset has only ever returned as null). Licensed TikTok tracks arrive as
+  M4A whose ISO BMFF brand is `M4A `; the sniffer maps that to `audio/mp4`.
+  yt-dlp videos get the same attribution in `VideoMetadata.music` from
+  `track`/`artists`/`album` (TikTok fills these; most extractors do not).
 - **Bluesky** videos come back as the poster's original atproto blob, so the
   archive is the source file, byte for byte.
 - **Facebook** splits by shape. Video permalinks (`/reel/`, `/videos/`,

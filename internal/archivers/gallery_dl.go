@@ -71,8 +71,12 @@ type GalleryMetadata struct {
 	// distinguish a 3-slide post from 3 slides of a 10-slide carousel. Nil on
 	// archives written before this was recorded, which reads as unknown.
 	Completeness *Completeness `json:"completeness,omitempty"`
-	ToolVersion  string        `json:"gallery_dl_version,omitempty"`
-	ArchivedAt   string        `json:"archived_at"`
+	// Music is the sound attached to the post, when it has one. Additive: a
+	// post without music, and every archive written before this was
+	// recorded, omit it. See GalleryMusic for why it is not a Files entry.
+	Music       *GalleryMusic `json:"music,omitempty"`
+	ToolVersion string        `json:"gallery_dl_version,omitempty"`
+	ArchivedAt  string        `json:"archived_at"`
 }
 
 // GalleryFile describes one downloaded media file inside the ZIP.
@@ -195,9 +199,18 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 		fmt.Fprintf(logWriter, "Failed to normalize gallery-dl output: %v\n", err)
 		return Result{}, err
 	}
+	// The soundtrack is captured with the post but is not one of its slides:
+	// it leaves the media list here so every count below is a slide count.
+	media, audioName, audioSidecar, err := separateGalleryAudio(tmpDir, media, sidecars, logWriter)
+	if err != nil {
+		fmt.Fprintf(logWriter, "Failed to separate audio track from gallery-dl output: %v\n", err)
+		return Result{}, err
+	}
 
 	// gallery-dl exits non-zero for partial failures too, so a run that still
-	// produced media is worth keeping. Only fail when nothing came back.
+	// produced media is worth keeping. Only fail when nothing came back. An
+	// audio file alone is not a post: without slides there is nothing it is
+	// the soundtrack of.
 	if len(media) == 0 {
 		if ytdlWatch.Seen() {
 			fmt.Fprintf(logWriter, "%s\n", galleryDlMissingYtdlMessage)
@@ -224,7 +237,7 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 	// A kept partial download is the whole reason this exists: without a
 	// recorded completeness the stored archive claims to be the post, and a
 	// 3-of-10 carousel reads exactly like a 3-slide one.
-	completeness := galleryCompleteness(tmpDir, media, sidecars, runErr != nil, logWriter)
+	completeness := galleryCompleteness(tmpDir, media, sidecars, audioName != "", runErr != nil, logWriter)
 	// Some post shapes are structurally single-asset (a Flickr photo page, a
 	// Pinterest pin): when the extractor exposes no count field, the URL shape
 	// itself supplies expected=1, so those posts are not condemned to
@@ -242,6 +255,8 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 	// immutable stored object, so this is the only chance to read intrinsic
 	// video facts (duration, dimensions) off the actual bytes.
 	ProbeGalleryVideoFiles(ctx, tmpDir, metadata.Files, logWriter)
+	metadata.Music = resolveGalleryMusic(ctx, tmpDir, audioName, audioSidecar, media, sidecars, logWriter)
+	logGalleryMusic(logWriter, metadata.Music)
 	metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to encode gallery metadata: %v\n", err)
@@ -297,8 +312,18 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 // gallery-dl exits non-zero for a partial download and the archiver keeps that
 // output, so the only way to tell a complete post from a salvaged one is to
 // compare what landed against what the extractor said was there.
-func galleryCompleteness(dir string, media []string, sidecars map[string]string, runFailed bool, logWriter io.Writer) Completeness {
+//
+// media is the slide list, with the audio track already separated out.
+// audioStored says whether that track was downloaded: gallery-dl's Instagram
+// extractor counts the audio as one of the post's files ("count" = slides +
+// 1 when a track was yielded), so the stored track has to come back off the
+// expected count before slides are compared to slides.
+func galleryCompleteness(dir string, media []string, sidecars map[string]string, audioStored, runFailed bool, logWriter io.Writer) Completeness {
 	expected := galleryExpectedCount(dir, media, sidecars, logWriter)
+	if expected != nil && audioStored && galleryCountIncludesAudio(dir, media, sidecars, logWriter) && *expected > 1 {
+		slides := *expected - 1
+		expected = &slides
+	}
 	result := CompletenessFromCounts(expected, len(media), runFailed)
 	if result.State == CompletenessPartial && expected != nil {
 		result.MissingIndices = galleryMissingIndices(*expected, media)
@@ -368,8 +393,38 @@ func galleryExpectedCount(dir string, media []string, sidecars map[string]string
 	return nil
 }
 
+// galleryCountIncludesAudio reports whether the extractor's "count" field
+// counts the audio track as a file. Instagram's does (gallery-dl sets count =
+// len(files) after appending the audio entry, extractor/instagram.py); TikTok's
+// numbers the audio 000 outside the slide sequence and exposes no count at all.
+func galleryCountIncludesAudio(dir string, media []string, sidecars map[string]string, logWriter io.Writer) bool {
+	for _, name := range media {
+		sidecar, ok := sidecars[name]
+		if !ok {
+			continue
+		}
+		raw := readGalleryJSON(filepath.Join(dir, sidecar), logWriter)
+		if raw == nil {
+			continue
+		}
+		return strings.EqualFold(galleryString(raw, "category"), "instagram")
+	}
+	return false
+}
+
 func galleryCountFrom(raw map[string]interface{}) *int {
 	value := galleryInt(raw, galleryExpectedCountKeys...)
+	if value == nil {
+		// gallery-dl's TikTok extractor publishes no count, but it merges the
+		// post's own imagePost.images list into every sidecar, and that list
+		// is the slideshow: its length is the number of slides the post has.
+		if post := galleryObject(raw, "imagePost"); post != nil {
+			if images, ok := post["images"].([]interface{}); ok && len(images) > 0 {
+				n := int64(len(images))
+				value = &n
+			}
+		}
+	}
 	if value == nil || *value <= 0 || *value > maxGalleryExpectedCount {
 		return nil
 	}
@@ -506,6 +561,14 @@ func galleryDlDownloadArgs(destDir string) []string {
 		// request per video post and is the only route that reliably stores
 		// audio.
 		"-o", "extractor.reddit.videos=ytdl",
+		// A post's soundtrack is part of the post. gallery-dl's Instagram
+		// extractor knows how to fetch it (music_metadata / clips_metadata →
+		// progressive_download_url) but defaults to off; TikTok's defaults to
+		// on. Pin both so the archive does not depend on a tool default.
+		// The track is separated from the slides after download
+		// (separateGalleryAudio) so it never counts as one.
+		"-o", "extractor.instagram.audio=true",
+		"-o", "extractor.tiktok.audio=true",
 		"--no-part",
 		"-R", "3",
 		"--http-timeout", "30",
@@ -648,12 +711,18 @@ func canonicalizeGalleryFiles(dir string, media []string, sidecars map[string]st
 	canonicalSidecars := make(map[string]string, len(sidecars))
 
 	for _, name := range media {
-		canonicalName, _, err := InspectGalleryMediaFile(dir, name)
+		canonicalName, contentType, err := InspectGalleryMediaFile(dir, name)
 		if err != nil {
 			return nil, nil, fmt.Errorf("inspect %s: %w", name, err)
 		}
 
 		sidecar := sidecars[name]
+		// An audio-only MP4 (Instagram serves its tracks as .m4a with a plain
+		// isom/mp42 brand) sniffs as video/mp4. The extractor knows it is the
+		// soundtrack; that knowledge outranks the container brand.
+		if strings.HasPrefix(contentType, "video/") && sidecar != "" && gallerySidecarIsAudio(readGalleryJSON(filepath.Join(dir, sidecar), logWriter)) {
+			canonicalName = strings.TrimSuffix(name, filepath.Ext(name)) + ".m4a"
+		}
 		canonicalSidecar := sidecar
 		if sidecar != "" && canonicalName != name {
 			canonicalSidecar = canonicalName + ".json"
@@ -1101,6 +1170,7 @@ var galleryCanonicalExtensions = map[string]string{
 	"image/gif":       ".gif",
 	"image/webp":      ".webp",
 	"audio/mpeg":      ".mp3",
+	"audio/mp4":       ".m4a",
 	"video/mp4":       ".mp4",
 	"video/webm":      ".webm",
 	"video/quicktime": ".mov",
@@ -1131,6 +1201,12 @@ func galleryISOBaseMediaType(header []byte) (contentType, extension string, ok b
 	}
 	if brands["mif1"] || brands["msf1"] {
 		return "image/heif", ".heif", true
+	}
+	// Audio-only MP4 (AAC in an .m4a). net/http sniffs every ftyp box that
+	// carries an "mp4" brand as video/mp4, which would turn a soundtrack into
+	// a video slide.
+	if brands["M4A "] || brands["M4B "] {
+		return "audio/mp4", ".m4a", true
 	}
 	return "", "", false
 }

@@ -77,7 +77,7 @@ func TestGalleryCompletenessDetectsPartialCarousel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collectGalleryFiles: %v", err)
 	}
-	got := galleryCompleteness(dir, media, sidecars, true, io.Discard)
+	got := galleryCompleteness(dir, media, sidecars, false, true, io.Discard)
 
 	if got.State != CompletenessPartial {
 		t.Fatalf("state = %q, want partial", got.State)
@@ -105,7 +105,7 @@ func TestGalleryCompletenessReadsCountFromAnySurvivingSidecar(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collectGalleryFiles: %v", err)
 	}
-	got := galleryCompleteness(dir, media, sidecars, true, io.Discard)
+	got := galleryCompleteness(dir, media, sidecars, false, true, io.Discard)
 
 	if got.State != CompletenessPartial || got.Expected == nil || *got.Expected != 3 {
 		t.Fatalf("completeness = %+v, want partial with expected 3", got)
@@ -129,7 +129,7 @@ func TestGalleryCompletenessCompleteRunWithExitError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collectGalleryFiles: %v", err)
 	}
-	got := galleryCompleteness(dir, media, sidecars, true, io.Discard)
+	got := galleryCompleteness(dir, media, sidecars, false, true, io.Discard)
 
 	if got.State != CompletenessComplete {
 		t.Fatalf("state = %q, want complete (all 3 of 3 stored)", got.State)
@@ -151,7 +151,7 @@ func TestGalleryCompletenessUnknownWithoutACount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collectGalleryFiles: %v", err)
 	}
-	got := galleryCompleteness(dir, media, sidecars, false, io.Discard)
+	got := galleryCompleteness(dir, media, sidecars, false, false, io.Discard)
 
 	if got.State != CompletenessUnknown {
 		t.Fatalf("state = %q, want unknown", got.State)
@@ -172,7 +172,7 @@ func TestGalleryCompletenessFailedRunWithoutACountIsPartial(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collectGalleryFiles: %v", err)
 	}
-	if got := galleryCompleteness(dir, media, sidecars, true, io.Discard); got.State != CompletenessPartial {
+	if got := galleryCompleteness(dir, media, sidecars, false, true, io.Discard); got.State != CompletenessPartial {
 		t.Fatalf("state = %q, want partial", got.State)
 	}
 }
@@ -247,7 +247,7 @@ func TestBuildGalleryMetadataCarriesCompletenessIntoTheArchive(t *testing.T) {
 	}
 
 	meta := buildGalleryMetadata(dir, "https://www.instagram.com/p/DbktPO1Eopi/", "1.32.9", media, sidecars, io.Discard)
-	completeness := galleryCompleteness(dir, media, sidecars, true, io.Discard)
+	completeness := galleryCompleteness(dir, media, sidecars, false, true, io.Discard)
 	meta.Completeness = &completeness
 
 	if meta.FileCount != 1 {

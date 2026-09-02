@@ -31,7 +31,7 @@ type mediaFetcher func(ctx context.Context, entry mediaEntry, dest string) (int6
 // holds, never against what happened to download. That is the difference
 // between "a three-image post" and "three images of a ten-image post", and it
 // is the only reason a partial rescue cannot read green.
-func (c *Client) buildGalleryArchive(ctx context.Context, entries []mediaEntry, meta *archivers.GalleryMetadata, record map[string]any, fetch mediaFetcher, logWriter io.Writer) (archivers.Result, archivers.Completeness, int64, error) {
+func (c *Client) buildGalleryArchive(ctx context.Context, entries []mediaEntry, audio *galleryAudio, meta *archivers.GalleryMetadata, record map[string]any, fetch mediaFetcher, logWriter io.Writer) (archivers.Result, archivers.Completeness, int64, error) {
 	if len(entries) == 0 {
 		return archivers.Result{}, archivers.Completeness{}, 0, fmt.Errorf("Bright Data record contains no media")
 	}
@@ -94,6 +94,11 @@ func (c *Client) buildGalleryArchive(ctx context.Context, entries []mediaEntry, 
 	// still files: provider records rarely carry per-slide intrinsics, and the
 	// ZIP about to be built is immutable once stored.
 	archivers.ProbeGalleryVideoFiles(ctx, tmpDir, meta.Files, logWriter)
+
+	// The soundtrack is fetched after the slides and outside the count: it is
+	// part of the post, but a post is its slides, and a track TikTok will not
+	// serve must not make a whole slideshow read as partial.
+	totalBytes += fetchGalleryAudio(ctx, tmpDir, audio, meta, fetch, logWriter)
 
 	fmt.Fprintf(logWriter, "Downloaded %d of %d media file(s), %d bytes total\n", len(meta.Files), expected, totalBytes)
 
@@ -172,7 +177,7 @@ func verifyGalleryMedia(entry mediaEntry, path string) error {
 		return err
 	}
 	switch entry.extension() {
-	case ".mp4", ".mov":
+	case ".mp4", ".mov", ".m4a":
 		return verifyMP4(path)
 	}
 	return nil

@@ -42,6 +42,25 @@ type galleryManifestResponse struct {
 	RawMetadataURL            *string                `json:"raw_metadata_url"`
 	Provenance                string                 `json:"provenance,omitempty"`
 	MetadataUnavailableReason string                 `json:"metadata_unavailable_reason,omitempty"`
+	// Music is the post's soundtrack, when it has one. It is not a card: a
+	// three-photo post with a track is three cards and one soundtrack, and
+	// media_count says three.
+	Music *galleryManifestMusic `json:"music,omitempty"`
+}
+
+// galleryManifestMusic describes the track behind a post. AudioURL is set only
+// when the audio bytes are stored (status "stored"); a track the platform
+// described but would not serve is reported with attribution alone.
+type galleryManifestMusic struct {
+	Status          string   `json:"status"`
+	Title           string   `json:"title,omitempty"`
+	Artist          string   `json:"artist,omitempty"`
+	ID              string   `json:"id,omitempty"`
+	Original        *bool    `json:"original,omitempty"`
+	DurationSeconds *float64 `json:"duration_seconds,omitempty"`
+	AudioURL        *string  `json:"audio_url"`
+	ContentType     string   `json:"content_type,omitempty"`
+	SizeBytes       int64    `json:"size_bytes,omitempty"`
 }
 
 // galleryManifestMedia is one card of the post.
@@ -108,6 +127,7 @@ func ServeGalleryManifest(c *gin.Context, store storage.Storage, db *gorm.DB) {
 	response.ArchiveURL = &archiveURL
 
 	var metadata archivers.GalleryMetadata
+	var audioEntry *zip.File
 	rawMetadataAvailable := false
 	mediaEntries := make([]*zip.File, 0, len(zipReader.File))
 	for _, file := range zipReader.File {
@@ -122,6 +142,8 @@ func ServeGalleryManifest(c *gin.Context, store storage.Storage, db *gorm.DB) {
 			// A provider sidecar. Its sanitized contents are served by
 			// /gallery/:shortid/raw, never inlined here.
 			rawMetadataAvailable = true
+		case archivers.GalleryAudioFilename(file.Name):
+			audioEntry = file
 		default:
 			mediaEntries = append(mediaEntries, file)
 		}
@@ -168,8 +190,38 @@ func ServeGalleryManifest(c *gin.Context, store storage.Storage, db *gorm.DB) {
 		response.Media = append(response.Media, card)
 	}
 	response.MediaCount = len(response.Media)
+	response.Music = galleryManifestMusicFor(c, shortID, metadata.Music, audioEntry)
 
 	c.JSON(http.StatusOK, response)
+}
+
+// galleryManifestMusicFor reports the soundtrack from the bundle's own
+// contents: attribution from metadata.json, the URL only if the audio entry
+// is really in the ZIP. A legacy bundle with an audio file but no music
+// record is still reported, so the file is reachable.
+func galleryManifestMusicFor(c *gin.Context, shortID string, stored *archivers.GalleryMusic, audioEntry *zip.File) *galleryManifestMusic {
+	if stored == nil && audioEntry == nil {
+		return nil
+	}
+	music := &galleryManifestMusic{Status: archivers.GalleryMusicMetadataOnly}
+	if stored != nil {
+		music.Title = stored.Title
+		music.Artist = stored.Artist
+		music.ID = stored.ID
+		music.Original = stored.Original
+		if stored.DurationSeconds != nil && *stored.DurationSeconds > 0 {
+			duration := *stored.DurationSeconds
+			music.DurationSeconds = &duration
+		}
+	}
+	if audioEntry != nil {
+		music.Status = archivers.GalleryMusicStored
+		audioURL := fullPath(c, fmt.Sprintf("gallery/%s/file/%s", shortID, url.PathEscape(audioEntry.Name)))
+		music.AudioURL = &audioURL
+		music.ContentType = galleryZipFileContentType(audioEntry)
+		music.SizeBytes = int64(audioEntry.UncompressedSize64)
+	}
+	return music
 }
 
 // findGalleryItem resolves a capture's gallery item, answering 404 in the same

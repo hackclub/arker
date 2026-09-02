@@ -140,7 +140,7 @@ func TestBuildGalleryArchiveLayout(t *testing.T) {
 	fetch := func(ctx context.Context, entry mediaEntry, dest string) (int64, error) {
 		return int64(len(image)), os.WriteFile(dest, image, 0o644)
 	}
-	result, completeness, totalBytes, err := client.buildGalleryArchive(context.Background(), entries, meta, record, fetch, io.Discard)
+	result, completeness, totalBytes, err := client.buildGalleryArchive(context.Background(), entries, nil, meta, record, fetch, io.Discard)
 	if err != nil {
 		t.Fatalf("buildGalleryArchive: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestBuildGalleryArchiveFailsWhenNothingDownloads(t *testing.T) {
 	fetch := func(ctx context.Context, entry mediaEntry, dest string) (int64, error) {
 		return 0, fmt.Errorf("refused")
 	}
-	_, _, _, err := client.buildGalleryArchive(context.Background(), entries, meta, map[string]any{}, fetch, io.Discard)
+	_, _, _, err := client.buildGalleryArchive(context.Background(), entries, nil, meta, map[string]any{}, fetch, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "all 1 media download") {
 		t.Fatalf("error = %v; want an all-downloads-failed failure", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -43,6 +44,12 @@ type galleryManifestBody struct {
 	RawMetadataURL            *string         `json:"raw_metadata_url"`
 	Provenance                string          `json:"provenance"`
 	MetadataUnavailableReason string          `json:"metadata_unavailable_reason"`
+	Music                     *struct {
+		Status   string  `json:"status"`
+		Title    string  `json:"title"`
+		Artist   string  `json:"artist"`
+		AudioURL *string `json:"audio_url"`
+	} `json:"music"`
 }
 
 // writeGalleryZipFixture stores a ZIP with exactly the given entries under the
@@ -295,5 +302,50 @@ func TestServeGalleryManifestRejectsUnknownCapture(t *testing.T) {
 	rec, _ := getGalleryManifest(t, newGalleryRouter(db, store), "nope1")
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 for a capture with no gallery item", rec.Code)
+	}
+}
+
+// The soundtrack is reported beside the cards, never as one of them: a
+// two-photo post with a track has media_count 2 and a music block with the
+// audio's own URL.
+func TestServeGalleryManifestReportsSoundtrackOutsideTheCards(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	seedGalleryCapture(t, db, store, "mus01", "completed")
+	writeGalleryZipFixture(t, db, store, "mus01", []struct{ name, body string }{
+		{"metadata.json", `{"source_url":"https://www.tiktok.com/@a/photo/1","file_count":2,"music":{"status":"stored","title":"Song","artist":"Band","file":"audio.mp3"}}`},
+		{"001.jpg", "one"},
+		{"002.jpg", "two"},
+		{"audio.mp3", "ID3"},
+		{"audio.mp3.json", `{"type":"audio"}`},
+	})
+
+	_, manifest := getGalleryManifest(t, newGalleryRouter(db, store), "mus01")
+	if manifest.MediaCount != 2 || len(manifest.Media) != 2 {
+		t.Fatalf("media = %+v, want exactly the two slides", manifest.Media)
+	}
+	if manifest.Music == nil || manifest.Music.Status != "stored" || manifest.Music.Title != "Song" || manifest.Music.Artist != "Band" {
+		t.Fatalf("music = %+v", manifest.Music)
+	}
+	if manifest.Music.AudioURL == nil || !strings.HasSuffix(*manifest.Music.AudioURL, "/gallery/mus01/file/audio.mp3") {
+		t.Errorf("audio_url = %v", manifest.Music.AudioURL)
+	}
+}
+
+// A post whose track the platform would not serve still names the track.
+func TestServeGalleryManifestReportsMetadataOnlySoundtrack(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	seedGalleryCapture(t, db, store, "mus02", "completed")
+	writeGalleryZipFixture(t, db, store, "mus02", []struct{ name, body string }{
+		{"metadata.json", `{"source_url":"https://www.instagram.com/p/X/","file_count":1,"music":{"status":"metadata_only","title":"Song","artist":"Band"}}`},
+		{"001.jpg", "one"},
+	})
+	_, manifest := getGalleryManifest(t, newGalleryRouter(db, store), "mus02")
+	if manifest.Music == nil || manifest.Music.Status != "metadata_only" || manifest.Music.AudioURL != nil {
+		t.Fatalf("music = %+v", manifest.Music)
+	}
+	if manifest.MediaCount != 1 {
+		t.Errorf("media_count = %d", manifest.MediaCount)
 	}
 }

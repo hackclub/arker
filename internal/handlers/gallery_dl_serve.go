@@ -244,6 +244,17 @@ func ServeGalleryList(c *gin.Context, storageInstance storage.Storage, db *gorm.
 		if file.Name == galleryMetadataFilename || strings.HasSuffix(file.Name, ".json") {
 			continue
 		}
+		if archivers.GalleryAudioFilename(file.Name) {
+			// The soundtrack is not a slide. It is surfaced separately so the
+			// viewer plays it under the post instead of as a broken image.
+			manifest["audio"] = gin.H{
+				"name":         file.Name,
+				"size":         file.UncompressedSize64,
+				"content_type": galleryZipFileContentType(file),
+				"url":          fmt.Sprintf("/gallery/%s/file/%s", shortID, url.PathEscape(file.Name)),
+			}
+			continue
+		}
 		files = append(files, gin.H{
 			"name":         file.Name,
 			"size":         file.UncompressedSize64,
