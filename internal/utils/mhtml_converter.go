@@ -36,6 +36,67 @@ func NewStreamingConverter() *StreamingConverter {
 	}
 }
 
+// ExtractMHTMLHTML returns only the first HTML root part from a Chrome MHTML
+// snapshot. Historical repair needs the page's embedded schema/Open Graph
+// metadata, not a fully rewritten document with every image expanded to a
+// data URL, so running ConvertMHTMLToHTML would needlessly retain the whole
+// archive. maxBytes bounds the decoded root document independently of the
+// size of the resource bundle that follows it.
+func ExtractMHTMLHTML(input io.Reader, maxBytes int64) ([]byte, error) {
+	if input == nil {
+		return nil, fmt.Errorf("MHTML input is nil")
+	}
+	if maxBytes <= 0 {
+		return nil, fmt.Errorf("MHTML HTML byte limit must be positive")
+	}
+	msg, err := mail.ReadMessage(input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read mail message: %w", err)
+	}
+	mediaType, params, err := mime.ParseMediaType(msg.Header.Get("Content-Type"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse media type: %w", err)
+	}
+	if !strings.HasPrefix(strings.ToLower(mediaType), "multipart/related") {
+		return nil, fmt.Errorf("not a multipart/related message, got: %s", mediaType)
+	}
+	boundary := params["boundary"]
+	if boundary == "" {
+		return nil, fmt.Errorf("no boundary found in content type")
+	}
+
+	mr := multipart.NewReader(msg.Body, boundary)
+	for {
+		part, err := mr.NextRawPart()
+		if err == io.EOF {
+			return nil, fmt.Errorf("no HTML part found")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read multipart: %w", err)
+		}
+		if !strings.HasPrefix(strings.ToLower(part.Header.Get("Content-Type")), "text/html") {
+			_, _ = io.Copy(io.Discard, part)
+			continue
+		}
+
+		var decoded io.Reader = part
+		switch strings.ToLower(strings.TrimSpace(part.Header.Get("Content-Transfer-Encoding"))) {
+		case "quoted-printable":
+			decoded = quotedprintable.NewReader(part)
+		case "base64":
+			decoded = base64.NewDecoder(base64.StdEncoding, part)
+		}
+		data, err := io.ReadAll(io.LimitReader(decoded, maxBytes+1))
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode HTML part: %w", err)
+		}
+		if int64(len(data)) > maxBytes {
+			return nil, fmt.Errorf("MHTML HTML part exceeds %d bytes", maxBytes)
+		}
+		return data, nil
+	}
+}
+
 // ConvertMHTMLToHTML converts MHTML to HTML using streaming approach
 func (sc *StreamingConverter) ConvertMHTMLToHTML(input io.Reader, output io.Writer) error {
 	// Read all data first (we need to do two passes)

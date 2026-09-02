@@ -22,6 +22,11 @@ import (
 
 const videoMetadataBackfillQueue = "video_metadata_backfill"
 
+const (
+	maxCapturedMHTMLScanBytes = 64 << 20
+	maxCapturedHTMLBytes      = 16 << 20
+)
+
 // Contract repair is one metadata-only extractor request. Healthy platforms
 // finish it in seconds; channel/playlist URLs and retired posts can otherwise
 // occupy one of the deliberately scarce backfill workers for the full ten
@@ -118,14 +123,23 @@ func (w *VideoMetadataBackfillWorker) generateAttempt(ctx context.Context, args 
 	}
 	if err != nil {
 		nativeErr := err
-		if finalAttempt && ctx.Err() == nil && w.provider != nil && w.provider.SupportsStoredVideoMetadata(args.URL) {
-			fmt.Fprintf(&logs, "\nNative metadata refresh failed (%v); attempting metadata-only provider fallback\n", nativeErr)
-			result, err = w.provider.RefreshStoredVideoMetadata(ctx, args.URL, &logs, w.db, representative.ID, media)
-			if err != nil {
-				return fmt.Errorf("refresh video metadata for %s: native failed (%v); provider failed: %w", args.ShortID, nativeErr, err)
-			}
-			if result.Bundle != nil {
-				defer result.Bundle.Cleanup()
+		var capturedErr error
+		if finalAttempt && ctx.Err() == nil {
+			fmt.Fprintf(&logs, "\nNative metadata refresh failed (%v); checking the capture's MHTML metadata\n", nativeErr)
+			result, capturedErr = w.refreshFromCapturedMHTML(ctx, args.URL, items, media, &logs)
+			if capturedErr == nil {
+				err = nil
+			} else if w.provider != nil && w.provider.SupportsStoredVideoMetadata(args.URL) {
+				fmt.Fprintf(&logs, "Captured MHTML metadata was unavailable (%v); attempting metadata-only provider fallback\n", capturedErr)
+				result, err = w.provider.RefreshStoredVideoMetadata(ctx, args.URL, &logs, w.db, representative.ID, media)
+				if err != nil {
+					return fmt.Errorf("refresh video metadata for %s: native failed (%v); captured MHTML failed (%v); provider failed: %w", args.ShortID, nativeErr, capturedErr, err)
+				}
+				if result.Bundle != nil {
+					defer result.Bundle.Cleanup()
+				}
+			} else {
+				return fmt.Errorf("refresh video metadata for %s: native failed (%v); captured MHTML failed: %w", args.ShortID, nativeErr, capturedErr)
 			}
 		} else {
 			return fmt.Errorf("refresh video metadata for %s: %w", args.ShortID, err)
@@ -139,6 +153,72 @@ func (w *VideoMetadataBackfillWorker) generateAttempt(ctx context.Context, args 
 		return err
 	}
 	return w.share(representative, targets)
+}
+
+// refreshFromCapturedMHTML recovers the post facts captured alongside the
+// video before asking a paid live provider. This is both cheaper and more
+// historically faithful: a post deleted today can still have its title,
+// author, publication time, and schema.org duration in the old page snapshot.
+func (w *VideoMetadataBackfillWorker) refreshFromCapturedMHTML(ctx context.Context, sourceURL string, videos []models.ArchiveItem, media archivers.VideoMedia, logWriter io.Writer) (archivers.Result, error) {
+	captureIDs := make([]uint, 0, len(videos))
+	seen := make(map[uint]bool, len(videos))
+	for i := range videos {
+		if !seen[videos[i].CaptureID] {
+			seen[videos[i].CaptureID] = true
+			captureIDs = append(captureIDs, videos[i].CaptureID)
+		}
+	}
+	if len(captureIDs) == 0 {
+		return archivers.Result{}, errors.New("video group has no captures")
+	}
+	var pages []models.ArchiveItem
+	if err := w.db.Where("capture_id IN ? AND type = ? AND status = ? AND storage_key <> ''", captureIDs, utils.ArchiveTypeMHTML, "completed").
+		Order("updated_at DESC").Find(&pages).Error; err != nil {
+		return archivers.Result{}, fmt.Errorf("load sibling MHTML items: %w", err)
+	}
+	var lastErr error
+	for i := range pages {
+		if ctx.Err() != nil {
+			return archivers.Result{}, ctx.Err()
+		}
+		reader, err := w.storage.Reader(pages[i].StorageKey)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		htmlData, extractErr := utils.ExtractMHTMLHTML(io.LimitReader(reader, maxCapturedMHTMLScanBytes), maxCapturedHTMLBytes)
+		closeErr := reader.Close()
+		if extractErr != nil {
+			lastErr = extractErr
+			continue
+		}
+		if closeErr != nil {
+			lastErr = closeErr
+			continue
+		}
+		capturedAt := pages[i].UpdatedAt
+		if capturedAt.IsZero() {
+			capturedAt = pages[i].CreatedAt
+		}
+		metadata, raw, buildErr := archivers.BuildCapturedHTMLVideoArtifacts(htmlData, sourceURL, media, capturedAt)
+		if buildErr != nil {
+			lastErr = buildErr
+			continue
+		}
+		fmt.Fprintf(logWriter, "Recovered historical post metadata from sibling MHTML object %s\n", pages[i].StorageKey)
+		return archivers.Result{
+			Extension:    media.Extension,
+			ContentType:  media.ContentType,
+			Source:       models.ArchiveSourceNative,
+			Metadata:     metadata,
+			RawMetadata:  raw,
+			Completeness: archivers.CompletenessComplete,
+		}, nil
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no completed sibling MHTML archive")
+	}
+	return archivers.Result{}, lastErr
 }
 
 func (w *VideoMetadataBackfillWorker) groupItems(identity string) ([]models.ArchiveItem, error) {

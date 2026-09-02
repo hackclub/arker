@@ -100,9 +100,11 @@ Historical video sidecars can be repaired independently with
 two-worker queue makes one bounded, media-disabled yt-dlp request, probes the
 already-stored video for intrinsic dimensions/duration, and shares fresh
 normalized/raw sidecars across duplicate canonical URLs. On the final attempt,
-covered platform failures use a metadata-only Bright Data lookup; it buys the
-post record (or a YouTube page resolution) but never downloads or replaces the
-stored video. `GET` on the same endpoint reports coverage and queue progress.
+it first recovers embedded post facts from the sibling MHTML captured with the
+video; covered platform failures then use a metadata-only Bright Data lookup.
+That lookup buys the post record (or a YouTube page resolution) but never
+downloads or replaces the stored video. `GET` on the same endpoint reports
+coverage and queue progress.
 
 For manual installs, prefer:
 

@@ -2,6 +2,7 @@ package workers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"arker/internal/archivers"
 	"arker/internal/models"
 	"arker/internal/storage"
+	"arker/internal/utils"
 )
 
 type leanMetadataRefresher struct {
@@ -172,5 +174,48 @@ func TestVideoMetadataBackfillUsesMetadataOnlyProviderOnFinalAttempt(t *testing.
 	}
 	if got.MetadataKey == "" || got.RawMetadataKey == "" {
 		t.Fatalf("provider rescue did not persist both sidecars: %+v", got)
+	}
+}
+
+func TestVideoMetadataBackfillPrefersCapturedMHTMLToPaidProvider(t *testing.T) {
+	db := newWorkerTestDB(t)
+	store := storage.NewMemoryStorage()
+	url := "https://youtube.com/shorts/jAUZFBlZmiE"
+	item := seedPriorVideoCapture(t, db, store, url, "mhtml", func(item *models.ArchiveItem) {
+		item.MetadataKey, item.RawMetadataKey = "", ""
+	})
+	mhtmlKey := "mhtml/page.mhtml"
+	mhtml := "Content-Type: multipart/related; boundary=root\r\n\r\n--root\r\nContent-Type: text/html\r\n\r\n" +
+		`<html><head><meta property="og:title" content="Captured title"><meta itemprop="datePublished" content="2026-07-15T05:55:09-07:00"><meta itemprop="duration" content="PT33S"><span itemprop="author"><link itemprop="name" content="Captured channel"></span></head></html>` +
+		"\r\n--root--\r\n"
+	putObject(t, store, mhtmlKey, []byte(mhtml))
+	if err := db.Create(&models.ArchiveItem{CaptureID: item.CaptureID, Type: "mhtml", Status: "completed", StorageKey: mhtmlKey, Extension: ".mhtml"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	primary := &failedLeanMetadataRefresher{}
+	provider := &providerMetadataRefresher{}
+	worker := NewVideoMetadataBackfillWorker(store, db, primary, provider)
+	args := VideoMetadataBackfillJobArgs{Identity: utils.CanonicalizeArchiveURL(url), URL: url, ShortID: "mhtml", Version: 2}
+	if err := worker.generateAttempt(context.Background(), args, true); err != nil {
+		t.Fatal(err)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("paid provider calls = %d, want 0 when captured MHTML is usable", provider.calls)
+	}
+	var got models.ArchiveItem
+	if err := db.First(&got, item.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	reader, err := store.Reader(got.MetadataKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	var metadata archivers.VideoMetadata
+	if err := json.NewDecoder(reader).Decode(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Title != "Captured title" || metadata.Channel != "Captured channel" || metadata.Provider != "captured_mhtml" {
+		t.Errorf("captured metadata = %+v", metadata)
 	}
 }

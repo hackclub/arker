@@ -335,8 +335,10 @@ served from `/thumb/{shortid}[/{type}]`.
   `video_metadata_backfill` queue. The job makes one bounded yt-dlp
   `--skip-download` request, probes the immutable stored media, writes new
   append-only sidecars, and shares them across duplicate canonical URLs. A
-  final-attempt Bright Data fallback resolves metadata only for covered
-  platforms; neither path downloads the video again.
+  final attempt first recovers embedded schema/Open Graph facts from the
+  sibling MHTML snapshot, then uses a metadata-only Bright Data fallback for
+  covered platforms when the snapshot is insufficient. None of these paths
+  downloads the video again.
 - **Never generate inline in a request** — a full-page screenshot reaches 60
   megapixels (~240MB decoded) and one dashboard render asks for hundreds.
 - **gallery-dl's thumbnail must be built before the ZIP goroutine starts.** That
