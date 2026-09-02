@@ -202,6 +202,9 @@ func TestVideoMetadataBackfillPrefersCapturedMHTMLToPaidProvider(t *testing.T) {
 	if provider.calls != 0 {
 		t.Fatalf("paid provider calls = %d, want 0 when captured MHTML is usable", provider.calls)
 	}
+	if primary.calls != 0 {
+		t.Fatalf("second live extractor calls = %d, want 0 when captured MHTML is usable", primary.calls)
+	}
 	var got models.ArchiveItem
 	if err := db.First(&got, item.ID).Error; err != nil {
 		t.Fatal(err)
