@@ -126,7 +126,12 @@ func (w *VideoMetadataBackfillWorker) generateAttempt(ctx context.Context, args 
 			fmt.Fprintf(&logs, "Captured MHTML metadata was unavailable (%v); attempting metadata-only provider fallback\n", capturedErr)
 			result, err = w.provider.RefreshStoredVideoMetadata(ctx, args.URL, &logs, w.db, representative.ID, media)
 			if err != nil {
-				return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); provider failed: %w", args.ShortID, capturedErr, err)
+				providerErr := err
+				fmt.Fprintf(&logs, "Metadata-only provider failed (%v); checking the original capture probe log\n", providerErr)
+				result, err = w.refreshFromArchivedProbeLogs(ctx, args.URL, items, media, &logs)
+				if err != nil {
+					return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); provider failed (%v); capture log failed: %w", args.ShortID, capturedErr, providerErr, err)
+				}
 			}
 		} else {
 			fmt.Fprintf(&logs, "Captured MHTML metadata was unavailable (%v); trying the native metadata extractor\n", capturedErr)
@@ -139,9 +144,15 @@ func (w *VideoMetadataBackfillWorker) generateAttempt(ctx context.Context, args 
 			}
 			if err != nil {
 				if finalAttempt {
-					return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); native failed: %w", args.ShortID, capturedErr, err)
+					nativeErr := err
+					fmt.Fprintf(&logs, "Native metadata extractor failed (%v); checking the original capture probe log\n", nativeErr)
+					result, err = w.refreshFromArchivedProbeLogs(ctx, args.URL, items, media, &logs)
+					if err != nil {
+						return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); native failed (%v); capture log failed: %w", args.ShortID, capturedErr, nativeErr, err)
+					}
+				} else {
+					return fmt.Errorf("refresh video metadata for %s: %w", args.ShortID, err)
 				}
-				return fmt.Errorf("refresh video metadata for %s: %w", args.ShortID, err)
 			}
 		}
 	}
@@ -156,6 +167,56 @@ func (w *VideoMetadataBackfillWorker) generateAttempt(ctx context.Context, args 
 		return err
 	}
 	return w.share(representative, targets)
+}
+
+// refreshFromArchivedProbeLogs uses only the three values written by the
+// successful pre-download yt-dlp probe. Querying marker-bearing chunks keeps
+// this fallback cheap even when an old item's diagnostic log is very large.
+func (w *VideoMetadataBackfillWorker) refreshFromArchivedProbeLogs(ctx context.Context, sourceURL string, videos []models.ArchiveItem, media archivers.VideoMedia, logWriter io.Writer) (archivers.Result, error) {
+	itemIDs := make([]uint, 0, len(videos))
+	for i := range videos {
+		itemIDs = append(itemIDs, videos[i].ID)
+	}
+	if len(itemIDs) == 0 {
+		return archivers.Result{}, errors.New("video group has no archive items")
+	}
+	var rows []models.ArchiveItemLog
+	if err := w.db.Where("archive_item_id IN ? AND chunk LIKE ?", itemIDs, "%Video info:%").Order("id DESC").Find(&rows).Error; err != nil {
+		return archivers.Result{}, fmt.Errorf("load archived probe logs: %w", err)
+	}
+	var lastErr error
+	for _, row := range rows {
+		if ctx.Err() != nil {
+			return archivers.Result{}, ctx.Err()
+		}
+		metadata, raw, err := archivers.BuildArchivedProbeVideoArtifacts(row.Chunk, sourceURL, media, row.CreatedAt)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		fmt.Fprintf(logWriter, "Recovered historical post metadata from capture probe log chunk %d\n", row.ID)
+		return archivers.Result{Extension: media.Extension, ContentType: media.ContentType, Source: models.ArchiveSourceNative, Metadata: metadata, RawMetadata: raw, Completeness: archivers.CompletenessComplete}, nil
+	}
+	for i := range videos {
+		if !strings.Contains(videos[i].Logs, "Video info:") {
+			continue
+		}
+		capturedAt := videos[i].UpdatedAt
+		if capturedAt.IsZero() {
+			capturedAt = videos[i].CreatedAt
+		}
+		metadata, raw, err := archivers.BuildArchivedProbeVideoArtifacts(videos[i].Logs, sourceURL, media, capturedAt)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		fmt.Fprintf(logWriter, "Recovered historical post metadata from legacy capture probe log\n")
+		return archivers.Result{Extension: media.Extension, ContentType: media.ContentType, Source: models.ArchiveSourceNative, Metadata: metadata, RawMetadata: raw, Completeness: archivers.CompletenessComplete}, nil
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no archived probe log contains usable metadata")
+	}
+	return archivers.Result{}, lastErr
 }
 
 // refreshFromCapturedMHTML recovers the post facts captured alongside the

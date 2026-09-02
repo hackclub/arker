@@ -38,6 +38,15 @@ type providerMetadataRefresher struct {
 	media archivers.VideoMedia
 }
 
+type failedProviderMetadataRefresher struct{ calls int }
+
+func (r *failedProviderMetadataRefresher) SupportsStoredVideoMetadata(string) bool { return true }
+
+func (r *failedProviderMetadataRefresher) RefreshStoredVideoMetadata(context.Context, string, io.Writer, *gorm.DB, uint, archivers.VideoMedia) (archivers.Result, error) {
+	r.calls++
+	return archivers.Result{}, errors.New("provider no longer sees post")
+}
+
 func (r *providerMetadataRefresher) SupportsStoredVideoMetadata(string) bool { return true }
 
 func (r *providerMetadataRefresher) RefreshStoredVideoMetadata(_ context.Context, _ string, _ io.Writer, _ *gorm.DB, _ uint, media archivers.VideoMedia) (archivers.Result, error) {
@@ -220,5 +229,43 @@ func TestVideoMetadataBackfillPrefersCapturedMHTMLToLiveOrPaidProvider(t *testin
 	}
 	if metadata.Title != "Captured title" || metadata.Channel != "Captured channel" || metadata.Provider != "captured_mhtml" {
 		t.Errorf("captured metadata = %+v", metadata)
+	}
+}
+
+func TestVideoMetadataBackfillUsesArchivedProbeLogAfterProviderFailure(t *testing.T) {
+	db := newWorkerTestDB(t)
+	store := storage.NewMemoryStorage()
+	url := "https://www.instagram.com/reel/deleted-post/"
+	item := seedPriorVideoCapture(t, db, store, url, "logmd", func(item *models.ArchiveItem) {
+		item.MetadataKey, item.RawMetadataKey = "", ""
+	})
+	if err := utils.AppendArchiveItemLog(db, item.ID, 1, "Testing video accessibility with yt-dlp...\nVideo info:\nCaptured reel title\n12.75\nCaptured author\n\nStarting yt-dlp download process...\n"); err != nil {
+		t.Fatal(err)
+	}
+	primary := &failedLeanMetadataRefresher{}
+	provider := &failedProviderMetadataRefresher{}
+	worker := NewVideoMetadataBackfillWorker(store, db, primary, provider)
+	args := VideoMetadataBackfillJobArgs{Identity: utils.CanonicalizeArchiveURL(url), URL: url, ShortID: "logmd", Version: 2}
+	if err := worker.generateAttempt(context.Background(), args, true); err != nil {
+		t.Fatal(err)
+	}
+	if primary.calls != 0 || provider.calls != 1 {
+		t.Fatalf("native/provider calls = %d/%d, want 0/1", primary.calls, provider.calls)
+	}
+	var got models.ArchiveItem
+	if err := db.First(&got, item.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	reader, err := store.Reader(got.MetadataKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	var metadata archivers.VideoMetadata
+	if err := json.NewDecoder(reader).Decode(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Title != "Captured reel title" || metadata.Channel != "Captured author" || metadata.DurationSeconds == nil || *metadata.DurationSeconds != 12.75 || metadata.Provider != "captured_probe_log" {
+		t.Fatalf("captured probe metadata = %+v", metadata)
 	}
 }
