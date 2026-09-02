@@ -74,6 +74,15 @@ func buildCapturedHTMLVideoArtifacts(htmlData []byte, sourceURL string, media Vi
 	} else if platform == "tiktok" && facts.Channel == "" {
 		facts.Channel = capturedTikTokChannel(facts.Title)
 	}
+	if platform == "tiktok" && facts.Published == "" {
+		// TikTok's provider-assigned video snowflake carries its creation
+		// second. Prefer the resolved canonical URL because vm.tiktok.com
+		// share links do not contain the video ID themselves.
+		facts.Published = TikTokPublicationTimestamp(facts.Canonical)
+		if facts.Published == "" {
+			facts.Published = TikTokPublicationTimestamp(sourceURL)
+		}
+	}
 	duration := parseISODurationSeconds(facts.Duration)
 	published := normalizeCapturedDate(facts.Published)
 
@@ -276,6 +285,39 @@ func capturedTikTokChannel(title string) string {
 		return ""
 	}
 	return strings.TrimPrefix(strings.TrimSpace(match[1]), "@")
+}
+
+// TikTokPublicationTimestamp decodes the creation second that TikTok embeds
+// in the high 32 bits of its provider-assigned video snowflake. This is only
+// accepted for a TikTok /video/<decimal-id> URL and for plausible platform-era
+// dates, so profile paths and unrelated numeric routes can never become a
+// publication timestamp.
+func TikTokPublicationTimestamp(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return ""
+	}
+	host := strings.TrimPrefix(strings.ToLower(parsed.Hostname()), "www.")
+	if host != "tiktok.com" && !strings.HasSuffix(host, ".tiktok.com") {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	for i := 0; i+1 < len(parts); i++ {
+		if !strings.EqualFold(parts[i], "video") {
+			continue
+		}
+		id, err := strconv.ParseUint(parts[i+1], 10, 64)
+		if err != nil {
+			return ""
+		}
+		created := time.Unix(int64(id>>32), 0).UTC()
+		platformLaunch := time.Date(2016, time.September, 1, 0, 0, 0, 0, time.UTC)
+		if created.Before(platformLaunch) || created.After(time.Now().UTC().Add(24*time.Hour)) {
+			return ""
+		}
+		return created.Format(time.RFC3339)
+	}
+	return ""
 }
 
 func parseISODurationSeconds(value string) *float64 {

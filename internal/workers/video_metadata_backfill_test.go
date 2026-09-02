@@ -186,6 +186,31 @@ func TestVideoMetadataBackfillUsesMetadataOnlyProviderOnFinalAttempt(t *testing.
 	}
 }
 
+func TestVideoMetadataBackfillCanExplicitlyPreferMetadataOnlyProvider(t *testing.T) {
+	db := newWorkerTestDB(t)
+	store := storage.NewMemoryStorage()
+	url := "https://vimeo.com/1190579612"
+	item := seedPriorVideoCapture(t, db, store, url, "vimeo", func(item *models.ArchiveItem) {
+		item.MetadataKey, item.RawMetadataKey = "", ""
+	})
+	provider := &providerMetadataRefresher{}
+	worker := NewVideoMetadataBackfillWorker(store, db, nil, provider)
+	args := VideoMetadataBackfillJobArgs{Identity: url, URL: url, ShortID: "vimeo", Version: 4, ProviderFirst: true}
+	if err := worker.generateAttempt(context.Background(), args, false); err != nil {
+		t.Fatal(err)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls)
+	}
+	var got models.ArchiveItem
+	if err := db.First(&got, item.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.MetadataKey == "" || got.RawMetadataKey == "" {
+		t.Fatalf("provider-first refresh did not persist both sidecars: %+v", got)
+	}
+}
+
 func TestVideoMetadataBackfillPrefersCapturedMHTMLToLiveOrPaidProvider(t *testing.T) {
 	db := newWorkerTestDB(t)
 	store := storage.NewMemoryStorage()

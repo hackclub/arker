@@ -113,11 +113,29 @@ func TestBuildCapturedHTMLVideoArtifactsRecoversTikTokOpenGraphAuthor(t *testing
 	if metadata.Title != "Hiktron on TikTok" || metadata.Channel != "Hiktron" {
 		t.Fatalf("TikTok title/channel = %q/%q", metadata.Title, metadata.Channel)
 	}
+	if metadata.PublicationTimestamp != "2025-06-24T19:54:04Z" {
+		t.Fatalf("TikTok publication timestamp = %q", metadata.PublicationTimestamp)
+	}
 }
 
 func TestCapturedTikTokChannelHandlesProfileTitle(t *testing.T) {
 	if got := capturedTikTokChannel("55gms (@55gms_com) | TikTok"); got != "55gms_com" {
 		t.Fatalf("profile channel = %q", got)
+	}
+}
+
+func TestTikTokPublicationTimestampUsesProviderVideoSnowflake(t *testing.T) {
+	if got := TikTokPublicationTimestamp("https://www.tiktok.com/@dapobarabany.games/video/7391770313878555909"); got != "2024-07-15T08:03:59Z" {
+		t.Fatalf("publication timestamp = %q", got)
+	}
+	for _, rawURL := range []string{
+		"https://www.tiktok.com/@dapobarabany.games",
+		"https://example.com/@user/video/7391770313878555909",
+		"https://www.tiktok.com/@user/video/not-a-number",
+	} {
+		if got := TikTokPublicationTimestamp(rawURL); got != "" {
+			t.Fatalf("timestamp for %q = %q, want empty", rawURL, got)
+		}
 	}
 }
 

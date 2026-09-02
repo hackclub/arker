@@ -100,6 +100,16 @@ func normalizeVideoManifestMetadata(raw json.RawMessage) json.RawMessage {
 			metadata[key] = nil
 		}
 	}
+	if metadata["publication_timestamp"] == nil || metadata["publication_timestamp"] == "" {
+		for _, key := range []string{"canonical_url", "source_url"} {
+			if value, ok := metadata[key].(string); ok {
+				if published := archivers.TikTokPublicationTimestamp(value); published != "" {
+					metadata["publication_timestamp"] = published
+					break
+				}
+			}
+		}
+	}
 	if metadata["title"] == nil || metadata["title"] == "" {
 		if description, ok := metadata["description"].(string); ok && description != "" {
 			metadata["title"] = description

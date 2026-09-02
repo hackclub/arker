@@ -125,6 +125,17 @@ func TestNormalizeVideoManifestMetadataRecoversProviderAuthoredChannelIDs(t *tes
 	}
 }
 
+func TestNormalizeVideoManifestMetadataRecoversTikTokSnowflakePublication(t *testing.T) {
+	raw := json.RawMessage(`{"canonical_url":"https://www.tiktok.com/@nanos.ro/video/7657828960058789142","publication_timestamp":null,"media":{}}`)
+	var metadata map[string]interface{}
+	if err := json.Unmarshal(normalizeVideoManifestMetadata(raw), &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata["publication_timestamp"] != "2026-07-02T07:27:25Z" {
+		t.Fatalf("publication timestamp = %#v", metadata["publication_timestamp"])
+	}
+}
+
 func TestServeVideoManifestDoesNotSynthesizeLegacyMetadata(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newHandlerLogTestDB(t)

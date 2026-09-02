@@ -35,10 +35,11 @@ const (
 const videoContractMetadataRefreshTimeout = 2 * time.Minute
 
 type VideoMetadataBackfillJobArgs struct {
-	Identity string `json:"identity"`
-	URL      string `json:"url"`
-	ShortID  string `json:"short_id"`
-	Version  int    `json:"version"`
+	Identity      string `json:"identity"`
+	URL           string `json:"url"`
+	ShortID       string `json:"short_id"`
+	Version       int    `json:"version"`
+	ProviderFirst bool   `json:"provider_first,omitempty"`
 }
 
 func (VideoMetadataBackfillJobArgs) Kind() string { return "video_metadata_backfill" }
@@ -101,7 +102,7 @@ func (w *VideoMetadataBackfillWorker) generateAttempt(ctx context.Context, args 
 	if source != nil {
 		return w.share(source, targets)
 	}
-	if w.refresher == nil {
+	if !args.ProviderFirst && w.refresher == nil {
 		return errors.New("video metadata refresher is not configured")
 	}
 	representative := &targets[0]
@@ -111,56 +112,70 @@ func (w *VideoMetadataBackfillWorker) generateAttempt(ctx context.Context, args 
 		SizeBytes: representative.FileSize,
 	}
 	var result archivers.Result
-	var capturedErr error
-	if capturedErr = ctx.Err(); capturedErr == nil {
-		fmt.Fprintf(&logs, "Checking the capture's MHTML metadata before a live extractor request\n")
-		result, capturedErr = w.refreshFromCapturedMHTML(ctx, args.URL, items, media, &logs)
-	}
-	if capturedErr != nil {
-		// The first attempt has already exercised the live extractor. On the
-		// final attempt, go straight to the independent metadata-only provider
-		// when one supports this URL instead of repeating the same expensive
-		// request. Captured MHTML remains first because it is immutable, free,
-		// and historically faithful.
-		if finalAttempt && ctx.Err() == nil && w.provider != nil && w.provider.SupportsStoredVideoMetadata(args.URL) {
-			fmt.Fprintf(&logs, "Captured MHTML metadata was unavailable (%v); attempting metadata-only provider fallback\n", capturedErr)
-			result, err = w.provider.RefreshStoredVideoMetadata(ctx, args.URL, &logs, w.db, representative.ID, media)
-			if err != nil {
-				providerErr := err
-				fmt.Fprintf(&logs, "Metadata-only provider failed (%v); checking the original capture probe log\n", providerErr)
-				result, err = w.refreshFromArchivedProbeLogs(ctx, args.URL, items, media, &logs)
+	if args.ProviderFirst {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if w.provider == nil || !w.provider.SupportsStoredVideoMetadata(args.URL) {
+			return fmt.Errorf("metadata-only provider does not support %s", args.URL)
+		}
+		fmt.Fprintf(&logs, "Refreshing explicitly selected metadata with the independent metadata-only provider\n")
+		result, err = w.provider.RefreshStoredVideoMetadata(ctx, args.URL, &logs, w.db, representative.ID, media)
+		if err != nil {
+			return fmt.Errorf("refresh video metadata for %s with provider: %w", args.ShortID, err)
+		}
+	} else {
+		var capturedErr error
+		if capturedErr = ctx.Err(); capturedErr == nil {
+			fmt.Fprintf(&logs, "Checking the capture's MHTML metadata before a live extractor request\n")
+			result, capturedErr = w.refreshFromCapturedMHTML(ctx, args.URL, items, media, &logs)
+		}
+		if capturedErr != nil {
+			// The first attempt has already exercised the live extractor. On the
+			// final attempt, go straight to the independent metadata-only provider
+			// when one supports this URL instead of repeating the same expensive
+			// request. Captured MHTML remains first because it is immutable, free,
+			// and historically faithful.
+			if finalAttempt && ctx.Err() == nil && w.provider != nil && w.provider.SupportsStoredVideoMetadata(args.URL) {
+				fmt.Fprintf(&logs, "Captured MHTML metadata was unavailable (%v); attempting metadata-only provider fallback\n", capturedErr)
+				result, err = w.provider.RefreshStoredVideoMetadata(ctx, args.URL, &logs, w.db, representative.ID, media)
 				if err != nil {
-					logErr := err
-					if utils.IsVimeoURL(args.URL) {
-						fmt.Fprintf(&logs, "Capture probe log was unavailable (%v); checking canonical Vimeo page metadata\n", logErr)
-						result, err = w.refreshFromCapturedMHTMLAllowingDescription(ctx, args.URL, items, media, &logs)
-						if err != nil {
-							return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); provider failed (%v); capture log failed (%v); canonical page fallback failed: %w", args.ShortID, capturedErr, providerErr, logErr, err)
-						}
-					} else {
-						return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); provider failed (%v); capture log failed: %w", args.ShortID, capturedErr, providerErr, logErr)
-					}
-				}
-			}
-		} else {
-			fmt.Fprintf(&logs, "Captured MHTML metadata was unavailable (%v); trying the native metadata extractor\n", capturedErr)
-			if lean, ok := w.refresher.(archivers.VideoContractMetadataRefresher); ok {
-				refreshCtx, cancel := context.WithTimeout(ctx, videoContractMetadataRefreshTimeout)
-				result, err = lean.RefreshVideoContractMetadata(refreshCtx, args.URL, &logs, media)
-				cancel()
-			} else {
-				result, err = w.refresher.RefreshVideoMetadata(ctx, args.URL, &logs, media)
-			}
-			if err != nil {
-				if finalAttempt {
-					nativeErr := err
-					fmt.Fprintf(&logs, "Native metadata extractor failed (%v); checking the original capture probe log\n", nativeErr)
+					providerErr := err
+					fmt.Fprintf(&logs, "Metadata-only provider failed (%v); checking the original capture probe log\n", providerErr)
 					result, err = w.refreshFromArchivedProbeLogs(ctx, args.URL, items, media, &logs)
 					if err != nil {
-						return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); native failed (%v); capture log failed: %w", args.ShortID, capturedErr, nativeErr, err)
+						logErr := err
+						if utils.IsVimeoURL(args.URL) {
+							fmt.Fprintf(&logs, "Capture probe log was unavailable (%v); checking canonical Vimeo page metadata\n", logErr)
+							result, err = w.refreshFromCapturedMHTMLAllowingDescription(ctx, args.URL, items, media, &logs)
+							if err != nil {
+								return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); provider failed (%v); capture log failed (%v); canonical page fallback failed: %w", args.ShortID, capturedErr, providerErr, logErr, err)
+							}
+						} else {
+							return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); provider failed (%v); capture log failed: %w", args.ShortID, capturedErr, providerErr, logErr)
+						}
 					}
+				}
+			} else {
+				fmt.Fprintf(&logs, "Captured MHTML metadata was unavailable (%v); trying the native metadata extractor\n", capturedErr)
+				if lean, ok := w.refresher.(archivers.VideoContractMetadataRefresher); ok {
+					refreshCtx, cancel := context.WithTimeout(ctx, videoContractMetadataRefreshTimeout)
+					result, err = lean.RefreshVideoContractMetadata(refreshCtx, args.URL, &logs, media)
+					cancel()
 				} else {
-					return fmt.Errorf("refresh video metadata for %s: %w", args.ShortID, err)
+					result, err = w.refresher.RefreshVideoMetadata(ctx, args.URL, &logs, media)
+				}
+				if err != nil {
+					if finalAttempt {
+						nativeErr := err
+						fmt.Fprintf(&logs, "Native metadata extractor failed (%v); checking the original capture probe log\n", nativeErr)
+						result, err = w.refreshFromArchivedProbeLogs(ctx, args.URL, items, media, &logs)
+						if err != nil {
+							return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); native failed (%v); capture log failed: %w", args.ShortID, capturedErr, nativeErr, err)
+						}
+					} else {
+						return fmt.Errorf("refresh video metadata for %s: %w", args.ShortID, err)
+					}
 				}
 			}
 		}
