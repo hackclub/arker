@@ -50,6 +50,18 @@ func BuildCapturedHTMLVideoArtifacts(htmlData []byte, sourceURL string, media Vi
 		return nil, nil, fmt.Errorf("parse captured HTML: %w", err)
 	}
 	facts := extractCapturedHTMLVideoFacts(doc)
+	platform := capturedVideoPlatform(sourceURL)
+	if platform == "instagram" {
+		channel, published := capturedInstagramAttribution(facts.Title, facts.Description)
+		if facts.Channel == "" {
+			facts.Channel = channel
+		}
+		if facts.Published == "" {
+			facts.Published = published
+		}
+	} else if platform == "tiktok" && facts.Channel == "" {
+		facts.Channel = capturedTikTokChannel(facts.Title)
+	}
 	duration := parseISODurationSeconds(facts.Duration)
 	published := normalizeCapturedDate(facts.Published)
 
@@ -79,7 +91,7 @@ func BuildCapturedHTMLVideoArtifacts(htmlData []byte, sourceURL string, media Vi
 	metadataJSON, err := MarshalVideoMetadata(&VideoMetadata{
 		SchemaVersion:        VideoMetadataSchemaVersion,
 		SourceURL:            safeSourceURL,
-		Platform:             capturedVideoPlatform(sourceURL),
+		Platform:             platform,
 		Extractor:            "captured_html",
 		CanonicalURL:         canonical,
 		Title:                facts.Title,
@@ -184,6 +196,38 @@ func nodeText(node *html.Node) string {
 
 var isoDurationPattern = regexp.MustCompile(`(?i)^PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$`)
 
+var (
+	instagramAttributionPattern = regexp.MustCompile(`(?i)(?:^|[-\x{2013}\x{2014}]\s*)(@?[a-z0-9._]+)\s+on\s+((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4})`)
+	instagramTitleAuthorPattern = regexp.MustCompile(`(?i)^(.+?)\s+on\s+Instagram\s*:`)
+	tikTokTitleAuthorPattern    = regexp.MustCompile(`(?i)^(.+?)\s+on\s+TikTok\s*$`)
+)
+
+// Instagram's captured Open Graph description carries an explicit provider
+// attribution even when its schema.org author/date nodes are absent, for
+// example "handle on July 14, 2026: ...". Recovering those two authored facts
+// turns a snapshot that is otherwise only a caption into useful historical
+// metadata without guessing from the shortcode or today's live page.
+func capturedInstagramAttribution(title, description string) (channel, published string) {
+	if match := instagramAttributionPattern.FindStringSubmatch(strings.TrimSpace(description)); len(match) == 3 {
+		channel = strings.TrimPrefix(strings.TrimSpace(match[1]), "@")
+		published = strings.TrimSpace(match[2])
+	}
+	if channel == "" {
+		if match := instagramTitleAuthorPattern.FindStringSubmatch(strings.TrimSpace(title)); len(match) == 2 {
+			channel = strings.TrimSpace(match[1])
+		}
+	}
+	return channel, published
+}
+
+func capturedTikTokChannel(title string) string {
+	match := tikTokTitleAuthorPattern.FindStringSubmatch(strings.TrimSpace(title))
+	if len(match) != 2 {
+		return ""
+	}
+	return strings.TrimPrefix(strings.TrimSpace(match[1]), "@")
+}
+
 func parseISODurationSeconds(value string) *float64 {
 	match := isoDurationPattern.FindStringSubmatch(strings.TrimSpace(value))
 	if match == nil {
@@ -208,7 +252,7 @@ func parseISODurationSeconds(value string) *float64 {
 
 func normalizeCapturedDate(value string) string {
 	value = strings.TrimSpace(value)
-	for _, layout := range []string{time.RFC3339, time.RFC3339Nano, "2006-01-02", "2006-01-02 15:04:05"} {
+	for _, layout := range []string{time.RFC3339, time.RFC3339Nano, "2006-01-02", "2006-01-02 15:04:05", "January 2, 2006"} {
 		if parsed, err := time.Parse(layout, value); err == nil {
 			return parsed.UTC().Format(time.RFC3339)
 		}

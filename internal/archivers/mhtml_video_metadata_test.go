@@ -54,3 +54,44 @@ func TestBuildCapturedHTMLVideoArtifactsRejectsGenericPage(t *testing.T) {
 		t.Fatal("generic page should not become video metadata")
 	}
 }
+
+func TestBuildCapturedHTMLVideoArtifactsRecoversInstagramOpenGraphAttribution(t *testing.T) {
+	htmlData := []byte(`<html><head>
+<meta property="og:title" content="Hari | College Admissions on Instagram: &quot;Build an app&quot;">
+<meta property="og:description" content="collegewith_hari on July 14, 2026: &quot;Build an app&quot;.">
+<link rel="canonical" href="https://www.instagram.com/reel/DazFFu2RdSk/">
+</head></html>`)
+	metadataSidecar, _, err := BuildCapturedHTMLVideoArtifacts(htmlData, "https://www.instagram.com/reel/DazFFu2RdSk/", VideoMedia{}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata VideoMetadata
+	if err := json.Unmarshal(metadataSidecar.Data, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Channel != "collegewith_hari" || metadata.PublicationTimestamp != "2026-07-14T00:00:00Z" {
+		t.Fatalf("Instagram attribution = channel %q, date %q", metadata.Channel, metadata.PublicationTimestamp)
+	}
+}
+
+func TestCapturedInstagramAttributionHandlesEngagementPrefix(t *testing.T) {
+	channel, published := capturedInstagramAttribution("Display Name on Instagram: caption", "1,234 likes, 8 comments - user.name on May 9, 2026: caption")
+	if channel != "user.name" || published != "May 9, 2026" {
+		t.Fatalf("attribution = %q / %q", channel, published)
+	}
+}
+
+func TestBuildCapturedHTMLVideoArtifactsRecoversTikTokOpenGraphAuthor(t *testing.T) {
+	htmlData := []byte(`<html><head><meta property="og:title" content="Hiktron on TikTok"><meta property="og:description" content="A captured caption"><link rel="canonical" href="https://www.tiktok.com/@hiktron/video/7519606597786537223"></head></html>`)
+	metadataSidecar, _, err := BuildCapturedHTMLVideoArtifacts(htmlData, "https://www.tiktok.com/@hiktron/video/7519606597786537223", VideoMedia{}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata VideoMetadata
+	if err := json.Unmarshal(metadataSidecar.Data, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Title != "Hiktron on TikTok" || metadata.Channel != "Hiktron" {
+		t.Fatalf("TikTok title/channel = %q/%q", metadata.Title, metadata.Channel)
+	}
+}
