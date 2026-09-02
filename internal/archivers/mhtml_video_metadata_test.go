@@ -11,6 +11,7 @@ func TestBuildCapturedHTMLVideoArtifactsRecoversSchemaFacts(t *testing.T) {
 <title>Fallback title - YouTube</title>
 <meta property="og:title" content="Turn coding hours into rewards, no catch.">
 <meta property="og:description" content="A captured description">
+<meta property="og:image" content="https://images.example/post.jpg?x=1&amp;y=2">
 <link rel="canonical" href="https://www.youtube.com/shorts/jAUZFBlZmiE">
 <meta itemprop="datePublished" content="2026-07-15T05:55:09-07:00">
 <meta itemprop="duration" content="PT1M2.5S">
@@ -35,6 +36,9 @@ func TestBuildCapturedHTMLVideoArtifactsRecoversSchemaFacts(t *testing.T) {
 	}
 	if metadata.Provider != "captured_mhtml" || metadata.Media.SizeBytes != 42 {
 		t.Errorf("provider/media = %q/%+v", metadata.Provider, metadata.Media)
+	}
+	if got := CapturedHTMLSocialImageURL(html); got != "https://images.example/post.jpg?x=1&y=2" {
+		t.Errorf("captured social image URL = %q", got)
 	}
 	var raw map[string]interface{}
 	if err := json.Unmarshal(rawSidecar.Data, &raw); err != nil {

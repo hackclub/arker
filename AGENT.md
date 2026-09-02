@@ -324,10 +324,11 @@ served from `/thumb/{shortid}[/{type}]`.
   (`CanDeriveFromArchive`) on the `high_priority` queue. Historical social
   images use the explicit `/admin/backfill-social-thumbnails` operation and a
   one-worker `thumbnail_backfill` queue: it reads the first still from stored
-  gallery ZIPs, asks yt-dlp for posters with media downloads disabled, and only
-  then uses the capped Bright Data poster resolver. Duplicate canonical
-  URL/type captures share one object. `thumbnail_kind` makes the operation
-  resumable: `social_preview` is contract-ready, a <=480px
+  gallery ZIPs, recovers a post-specific `og:image` resource from sibling MHTML
+  when present, asks yt-dlp for posters with media downloads disabled, and only
+  then uses the capped Bright Data poster resolver. Duplicate canonical URL/type
+  captures share one object. `thumbnail_kind` makes the operation resumable:
+  `social_preview` is contract-ready, a <=480px
   `social_original` is also accepted, and `social_fallback` retains an old
   preview only until stored-video frame extraction can replace it.
 - Completed legacy videos without structured sidecars use the explicit

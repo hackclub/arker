@@ -13,7 +13,28 @@ import (
 )
 
 type capturedHTMLVideoFacts struct {
-	Title, Description, Channel, Published, Canonical, Duration string
+	Title, Description, Channel, Published, Canonical, Duration, Image string
+}
+
+// CapturedHTMLSocialImageURL returns the provider-authored social preview URL
+// embedded in a captured page. The caller must resolve that URL against an
+// MHTML part rather than the live network: signatures expire, while the
+// snapshot's matching image bytes are immutable.
+func CapturedHTMLSocialImageURL(htmlData []byte) string {
+	imageURL, _ := CapturedHTMLSocialImage(htmlData)
+	return imageURL
+}
+
+// CapturedHTMLSocialImage returns both the preview and the root document's
+// canonical URL so callers can prove the image belongs to the requested post
+// rather than an Instagram/YouTube login or error page.
+func CapturedHTMLSocialImage(htmlData []byte) (imageURL, canonicalURL string) {
+	doc, err := html.Parse(strings.NewReader(string(htmlData)))
+	if err != nil {
+		return "", ""
+	}
+	facts := extractCapturedHTMLVideoFacts(doc)
+	return facts.Image, facts.Canonical
 }
 
 // BuildCapturedHTMLVideoArtifacts recovers provider-authored post facts from
@@ -110,6 +131,9 @@ func extractCapturedHTMLVideoFacts(root *html.Node) capturedHTMLVideoFacts {
 			}
 			if facts.Description == "" && content != "" && (property == "og:description" || name == "description") {
 				facts.Description = content
+			}
+			if content != "" && (property == "og:image" || (facts.Image == "" && name == "twitter:image")) {
+				facts.Image = content
 			}
 			if facts.Channel == "" && content != "" && ((inAuthor && itemProp == "name") || name == "author" || property == "article:author") {
 				facts.Channel = content

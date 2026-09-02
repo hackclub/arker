@@ -4,8 +4,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -133,6 +135,34 @@ func TestSocialThumbnailBackfillProviderRescuesAllVideoGallery(t *testing.T) {
 	}
 	if native.calls != 0 || provider.calls != 1 {
 		t.Fatalf("calls native=%d provider=%d, want the successful archive provider first", native.calls, provider.calls)
+	}
+}
+
+func TestSocialThumbnailBackfillRecoversExactPosterFromCapturedMHTML(t *testing.T) {
+	db := newWorkerTestDB(t)
+	store := storage.NewMemoryStorage()
+	url := "https://www.instagram.com/reel/DOSFwm1DBr8/"
+	item := seedSocialBackfillItem(t, db, store, "capmh", url, url, utils.ArchiveTypeYtDlp, []byte("historical-audio-only-media"))
+	poster := encodeBackfillPNG(t, 360, 640, color.RGBA{90, 20, 210, 255})
+	imageURL := "https://scontent.example/post.jpg?x=1&y=2"
+	mhtml := fmt.Sprintf("Content-Type: multipart/related; boundary=x\r\n\r\n--x\r\nContent-Type: text/html\r\n\r\n<html><head><link rel=\"canonical\" href=\"%s\"><meta property=\"og:image\" content=\"https://scontent.example/post.jpg?x=1&amp;y=2\"></head></html>\r\n--x\r\nContent-Type: image/png\r\nContent-Location: %s\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n--x--\r\n", url, imageURL, base64.StdEncoding.EncodeToString(poster))
+	mhtmlKey := "capmh/mhtml.mhtml"
+	writeMemoryObject(t, store, mhtmlKey, []byte(mhtml))
+	if err := db.Create(&models.ArchiveItem{CaptureID: item.CaptureID, Type: utils.ArchiveTypeMHTML, Status: "completed", StorageKey: mhtmlKey}).Error; err != nil {
+		t.Fatal(err)
+	}
+	native := &fakeSocialRefresher{err: errors.New("native should not run")}
+	provider := &fakeSocialProvider{err: errors.New("provider should not run"), supported: true}
+	w := NewSocialThumbnailBackfillWorker(store, db, native, provider)
+	if err := w.generate(context.Background(), SocialThumbnailBackfillJobArgs{Identity: url, URL: url, ShortID: "capmh", Type: utils.ArchiveTypeYtDlp, Version: 3}, true); err != nil {
+		t.Fatal(err)
+	}
+	if native.calls != 0 || provider.calls != 0 {
+		t.Fatalf("native/provider calls = %d/%d, want 0/0", native.calls, provider.calls)
+	}
+	got := reload(t, db, item.ID)
+	if got.ThumbnailKind != models.ThumbnailKindSocialPreview || got.ThumbnailWidth != 270 || got.ThumbnailHeight != 480 {
+		t.Fatalf("captured poster not stored at full aspect ratio: %+v", got)
 	}
 }
 
