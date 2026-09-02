@@ -117,34 +117,36 @@ func (w *VideoMetadataBackfillWorker) generateAttempt(ctx context.Context, args 
 		result, capturedErr = w.refreshFromCapturedMHTML(ctx, args.URL, items, media, &logs)
 	}
 	if capturedErr != nil {
-		fmt.Fprintf(&logs, "Captured MHTML metadata was unavailable (%v); trying the native metadata extractor\n", capturedErr)
-		if lean, ok := w.refresher.(archivers.VideoContractMetadataRefresher); ok {
-			refreshCtx, cancel := context.WithTimeout(ctx, videoContractMetadataRefreshTimeout)
-			result, err = lean.RefreshVideoContractMetadata(refreshCtx, args.URL, &logs, media)
-			cancel()
-		} else {
-			result, err = w.refresher.RefreshVideoMetadata(ctx, args.URL, &logs, media)
-		}
-		if result.Bundle != nil {
-			defer result.Bundle.Cleanup()
-		}
-	}
-	if err != nil {
-		nativeErr := err
+		// The first attempt has already exercised the live extractor. On the
+		// final attempt, go straight to the independent metadata-only provider
+		// when one supports this URL instead of repeating the same expensive
+		// request. Captured MHTML remains first because it is immutable, free,
+		// and historically faithful.
 		if finalAttempt && ctx.Err() == nil && w.provider != nil && w.provider.SupportsStoredVideoMetadata(args.URL) {
-			fmt.Fprintf(&logs, "Native metadata retry failed (%v); attempting metadata-only provider fallback\n", nativeErr)
+			fmt.Fprintf(&logs, "Captured MHTML metadata was unavailable (%v); attempting metadata-only provider fallback\n", capturedErr)
 			result, err = w.provider.RefreshStoredVideoMetadata(ctx, args.URL, &logs, w.db, representative.ID, media)
 			if err != nil {
-				return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); native failed (%v); provider failed: %w", args.ShortID, capturedErr, nativeErr, err)
+				return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); provider failed: %w", args.ShortID, capturedErr, err)
 			}
-			if result.Bundle != nil {
-				defer result.Bundle.Cleanup()
-			}
-		} else if finalAttempt {
-			return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); native failed: %w", args.ShortID, capturedErr, nativeErr)
 		} else {
-			return fmt.Errorf("refresh video metadata for %s: %w", args.ShortID, err)
+			fmt.Fprintf(&logs, "Captured MHTML metadata was unavailable (%v); trying the native metadata extractor\n", capturedErr)
+			if lean, ok := w.refresher.(archivers.VideoContractMetadataRefresher); ok {
+				refreshCtx, cancel := context.WithTimeout(ctx, videoContractMetadataRefreshTimeout)
+				result, err = lean.RefreshVideoContractMetadata(refreshCtx, args.URL, &logs, media)
+				cancel()
+			} else {
+				result, err = w.refresher.RefreshVideoMetadata(ctx, args.URL, &logs, media)
+			}
+			if err != nil {
+				if finalAttempt {
+					return fmt.Errorf("refresh video metadata for %s: captured MHTML failed (%v); native failed: %w", args.ShortID, capturedErr, err)
+				}
+				return fmt.Errorf("refresh video metadata for %s: %w", args.ShortID, err)
+			}
 		}
+	}
+	if result.Bundle != nil {
+		defer result.Bundle.Cleanup()
 	}
 	keyBase := fmt.Sprintf("%s/%s-%s-metadata-backfill", args.ShortID, utils.ArchiveTypeYtDlp, uploadNonce())
 	if err := saveRefreshedArchiveResult(ctx, result, keyBase, representative, w.storage, w.db, representative, &logs); err != nil {

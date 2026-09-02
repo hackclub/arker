@@ -162,8 +162,8 @@ func TestVideoMetadataBackfillUsesMetadataOnlyProviderOnFinalAttempt(t *testing.
 	if err := worker.generateAttempt(context.Background(), args, true); err != nil {
 		t.Fatalf("final provider rescue: %v", err)
 	}
-	if primary.calls != 2 || provider.calls != 1 {
-		t.Fatalf("native/provider calls = %d/%d, want 2/1", primary.calls, provider.calls)
+	if primary.calls != 1 || provider.calls != 1 {
+		t.Fatalf("native/provider calls = %d/%d, want 1/1", primary.calls, provider.calls)
 	}
 	if provider.media.Extension != item.Extension || provider.media.SizeBytes != item.FileSize {
 		t.Errorf("provider media = %+v, want stored extension %q and size %d", provider.media, item.Extension, item.FileSize)
