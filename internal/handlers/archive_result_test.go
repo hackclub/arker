@@ -726,3 +726,48 @@ func TestLastFailureReasonReadsOnlyTheLogTail(t *testing.T) {
 		t.Fatalf("last_failure_reason = %q, want the newest failure, not the first", reason)
 	}
 }
+
+// A post's soundtrack is reported under music, not as a media card, and the
+// completeness count is the slides alone: a TikTok slideshow of three photos
+// with a track is 3/3 complete, not 4/3.
+func TestApiArchiveResultGalleryReportsMusicOutsideMedia(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	seedGalleryCapture(t, db, store, "ttmusic", "completed")
+	writeGalleryZipFixture(t, db, store, "ttmusic", []struct{ name, body string }{
+		{"metadata.json", `{"source_url":"https://www.tiktok.com/@someone/photo/1","extractor":"tiktok","post_id":"1","author":"someone","file_count":3,"files":[{"name":"001.jpg","size":3,"content_type":"image/jpeg"},{"name":"002.jpg","size":3,"content_type":"image/jpeg"},{"name":"003.jpg","size":3,"content_type":"image/jpeg"}],"music":{"status":"stored","title":"original sound","artist":"Prince B","id":"765","original":true,"duration_seconds":64,"file":"audio.mp3","content_type":"audio/mpeg","size":9},"completeness":{"state":"complete","expected":3,"stored":3}}`},
+		{"001.jpg", "one"},
+		{"002.jpg", "two"},
+		{"003.jpg", "thr"},
+		{"audio.mp3", "mp3-bytes"},
+		{"audio.mp3.json", `{"type":"audio","music":{"id":"765"}}`},
+	})
+	if err := db.Model(&models.ArchiveItem{}).
+		Where("type = ?", utils.ArchiveTypeGalleryDl).
+		Update("completeness", archivers.CompletenessComplete).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, body := getResult(t, resultRouter(db, store), "ttmusic")
+	social := socialOf(t, body)
+	if media := social["media"].([]any); len(media) != 3 {
+		t.Fatalf("media cards = %d, want 3 (audio must not be a card): %#v", len(media), media)
+	}
+	completeness := social["completeness"].(map[string]any)
+	if completeness["state"] != "complete" || completeness["stored"] != float64(3) {
+		t.Errorf("completeness = %#v, want complete 3/3", completeness)
+	}
+	if social["fulfilled"] != true {
+		t.Errorf("fulfilled = %v, want true", social["fulfilled"])
+	}
+	music, ok := social["music"].(map[string]any)
+	if !ok {
+		t.Fatalf("music missing from social_post: %#v", social)
+	}
+	if music["status"] != "stored" || music["title"] != "original sound" || music["artist"] != "Prince B" || music["original"] != true || music["duration_seconds"] != float64(64) || music["size_bytes"] != float64(9) {
+		t.Errorf("music = %#v", music)
+	}
+	if audioURL, _ := music["audio_url"].(string); !strings.HasSuffix(audioURL, "/gallery/ttmusic/file/audio.mp3") {
+		t.Errorf("audio_url = %q", music["audio_url"])
+	}
+}

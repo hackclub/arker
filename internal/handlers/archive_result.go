@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"archive/zip"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -74,13 +75,18 @@ type socialPostResult struct {
 	// captions. Their absence says nothing about whether the archive is
 	// complete: most posts have none, and requiring them would make almost
 	// every archive read degraded.
-	Subtitles   []socialSubtitle  `json:"subtitles,omitempty"`
-	Transcript  *socialTranscript `json:"transcript,omitempty"`
-	BundleURL   *string           `json:"bundle_url"`
-	RawMetadata []rawMetadataLink `json:"raw_metadata"`
-	Provenance  socialProvenance  `json:"provenance"`
-	Warnings    []socialWarning   `json:"warnings"`
-	Failure     *socialFailure    `json:"failure"`
+	Subtitles  []socialSubtitle  `json:"subtitles,omitempty"`
+	Transcript *socialTranscript `json:"transcript,omitempty"`
+	// Music is the soundtrack behind an image post (Instagram carousel,
+	// TikTok slideshow). It is not a media card and is not counted by
+	// completeness: a three-photo post with a track is three assets and one
+	// soundtrack. Same shape as the gallery manifest's music object.
+	Music       *galleryManifestMusic `json:"music,omitempty"`
+	BundleURL   *string               `json:"bundle_url"`
+	RawMetadata []rawMetadataLink     `json:"raw_metadata"`
+	Provenance  socialProvenance      `json:"provenance"`
+	Warnings    []socialWarning       `json:"warnings"`
+	Failure     *socialFailure        `json:"failure"`
 }
 
 // socialCompleteness reports how much of the post this archive holds.
@@ -801,11 +807,16 @@ func buildGallerySocial(c *gin.Context, store storage.Storage, shortID string, i
 		fileMetadata[f.Name] = f
 	}
 	rawAvailable := false
+	var audioEntry *zip.File
 	for _, f := range zipReader.File {
 		if f.Name == galleryMetadataFilename || strings.HasSuffix(f.Name, ".json") {
 			if f.Name != galleryMetadataFilename {
 				rawAvailable = true
 			}
+			continue
+		}
+		if archivers.GalleryAudioFilename(f.Name) {
+			audioEntry = f
 			continue
 		}
 		ct := galleryZipFileContentType(f)
@@ -827,6 +838,7 @@ func buildGallerySocial(c *gin.Context, store storage.Storage, shortID string, i
 		}
 		out.Media = append(out.Media, media)
 	}
+	out.Music = galleryManifestMusicFor(c, shortID, meta.Music, audioEntry)
 	bundle := fullPath(c, fmt.Sprintf("archive/%s/%s", shortID, utils.ArchiveTypeGalleryDl))
 	out.BundleURL = &bundle
 	provider := "gallery-dl"

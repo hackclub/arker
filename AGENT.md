@@ -151,6 +151,7 @@ When using Amp with `make dev` running in another window:
   ```
 - `POST /api/v1/archive/find-or-create` - Reuse the latest completed canonical archive, join a matching capture in progress, or queue a new capture
 - `GET /api/v1/past-archives?url=...` - Get past archives for URL
+- `GET /api/v1/archive/:id` - The archive-consumer contract: items, cost, and `social_post` (normalized post, media cards, completeness, provenance). An image post's soundtrack is `social_post.music`, the same object the gallery manifest reports; it is never a media card and never counted by completeness
 
 ### Public Access
 - `GET /:shortid` - Archive display page with tabs for each type
