@@ -183,7 +183,7 @@ func (a *YtDlpArchiver) archive(ctx context.Context, url string, logWriter io.Wr
 		testOutput, err := testCmd.CombinedOutput()
 		if err != nil {
 			fmt.Fprintf(redactedLog, "yt-dlp test failed: %v\nOutput: %s\n", err, string(testOutput))
-			return Result{}, fmt.Errorf("yt-dlp cannot access video: %v", err)
+			return Result{}, classifyYtDlpFailure(fmt.Errorf("yt-dlp cannot access video: %v", err), string(testOutput))
 		}
 		fmt.Fprintf(redactedLog, "Video info:\n%s\n", string(testOutput))
 		detectedLang = detectedLanguageFromProbe(string(testOutput))

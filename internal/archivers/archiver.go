@@ -3,7 +3,9 @@ package archivers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -12,6 +14,38 @@ import (
 // provider-authored poster. Backfill workers preserve any legacy preview and
 // mark the group attempted instead of retrying this permanent condition.
 var ErrSocialThumbnailUnavailable = errors.New("social thumbnail unavailable")
+
+// ErrContentUnavailable means the platform itself reported that there is
+// nothing to fetch (a removed video, a livestream that has not started or
+// whose recording was never published). The failure is about the content,
+// not about Arker's access to it, so a paid fallback would fail the same way.
+var ErrContentUnavailable = errors.New("content unavailable at the source")
+
+// contentUnavailableMarkers are the platform messages yt-dlp relays verbatim
+// when the content is gone rather than gated. Access problems (bot checks,
+// login walls, HTTP 400/403, rate limits) are deliberately absent: those are
+// exactly the cases the fallback exists for.
+var contentUnavailableMarkers = []string{
+	"This live stream recording is not available",
+	"This live event will begin in",
+	"This live event has ended",
+	"Video unavailable",
+	"This video has been removed",
+	"This video is no longer available",
+	"Private video",
+	"Offline.",
+}
+
+// classifyYtDlpFailure wraps err with ErrContentUnavailable when yt-dlp's
+// output shows the platform said the content itself is gone.
+func classifyYtDlpFailure(err error, output string) error {
+	for _, marker := range contentUnavailableMarkers {
+		if strings.Contains(output, "ERROR:") && strings.Contains(output, marker) {
+			return fmt.Errorf("%w: %s: %v", ErrContentUnavailable, marker, err)
+		}
+	}
+	return err
+}
 
 // Thumbnail is an encoded preview image produced alongside the main artifact.
 //

@@ -471,6 +471,16 @@ brake one dead post was bought ~50 times in an evening (2026-09-02). The
 declined attempt is logged and surfaces in the job error as "Apify fallback
 declined after N recent paid failures".
 
+The fallback is also skipped outright when the native yt-dlp failure is about
+the content rather than Arker's access to it: `classifyYtDlpFailure`
+(internal/archivers/archiver.go) wraps "This live stream recording is not
+available", "This live event will begin in…", "Video unavailable" and the
+like in `archivers.ErrContentUnavailable`, and `FallbackArchiver` returns
+that error without starting a run. Keep access failures (bot checks, login
+walls, HTTP 400/403) out of that marker list — they are what the fallback is
+for. Dead livestream recordings alone cost ~$0.50/h in metadata runs before
+this.
+
 Two platform quirks the code compensates for, so do not "simplify" them away:
 
 - Pay-per-event actors report `usageTotalUsd = 0` at `SUCCEEDED`; the start

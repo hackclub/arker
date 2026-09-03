@@ -356,3 +356,27 @@ func TestFallbackDeclinedAfterRepeatedPaidFailures(t *testing.T) {
 		t.Fatalf("after window: err=%v called=%v", err, backend.called)
 	}
 }
+
+func TestFallbackSkippedWhenSourceReportsContentUnavailable(t *testing.T) {
+	db := newTestDB(t)
+	backend := &fakeBackend{supports: true}
+	native := fmt.Errorf("%w: This live stream recording is not available: yt-dlp cannot access video: exit status 1", archivers.ErrContentUnavailable)
+	arch := &FallbackArchiver{Primary: &fakePrimary{err: native}, Type: utils.ArchiveTypeYtDlp, Backend: backend}
+
+	var log strings.Builder
+	_, err := arch.Archive(context.Background(), "https://www.youtube.com/watch?v=aTe_x3MWhbw", &log, db, 1)
+	if !errors.Is(err, archivers.ErrContentUnavailable) {
+		t.Fatalf("err = %v", err)
+	}
+	if backend.called {
+		t.Fatal("backend was called for content the source reports unavailable")
+	}
+	if !strings.Contains(log.String(), "content unavailable") {
+		t.Errorf("log = %q", log.String())
+	}
+	var rows int64
+	db.Model(&models.FallbackUsage{}).Count(&rows)
+	if rows != 0 {
+		t.Errorf("usage rows = %d, want 0", rows)
+	}
+}

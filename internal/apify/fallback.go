@@ -2,6 +2,7 @@ package apify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -157,6 +158,13 @@ func (f *FallbackArchiver) Archive(ctx context.Context, url string, logWriter io
 		return result, nativeErr
 	}
 	if !f.Backend.SupportsFallback(url, f.Type) {
+		return result, nativeErr
+	}
+	// The platform said the content is gone. Every provider fetches the
+	// same content, so this is not a case for a paid retry.
+	if errors.Is(nativeErr, archivers.ErrContentUnavailable) {
+		fmt.Fprintf(logWriter, "\nNative flow failed (%v); not attempting the Apify fallback: the source reports the content unavailable\n", nativeErr)
+		slog.Info("Apify fallback skipped: content unavailable at source", "url", url, "type", f.Type, "native_error", nativeErr)
 		return result, nativeErr
 	}
 	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < minFallbackBudget {
