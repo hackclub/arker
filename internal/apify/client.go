@@ -395,8 +395,27 @@ func (c *Client) recordUsage(db *gorm.DB, usage *models.FallbackUsage) {
 	if db == nil {
 		return
 	}
-	if err := db.Save(usage).Error; err != nil {
+	if usage.ID == 0 {
+		if err := db.Create(usage).Error; err != nil {
+			slog.Error("Failed to record Apify usage", "error", err, "url", usage.URL)
+		}
+		return
+	}
+
+	// Cost settlement runs in the background. A caller can still be finalizing
+	// Success/Detail when that goroutine records the charge, so saving this
+	// in-memory struct wholesale would race and could put its stale $0 back over
+	// the settled database value. Ordinary updates therefore leave cost alone;
+	// a nonzero cost reported synchronously by the run is written explicitly.
+	cost := usage.CostUSD
+	if err := db.Omit("cost_usd").Save(usage).Error; err != nil {
 		slog.Error("Failed to record Apify usage", "error", err, "url", usage.URL)
+		return
+	}
+	if cost > 0 {
+		if err := db.Model(&models.FallbackUsage{}).Where("id = ?", usage.ID).UpdateColumn("cost_usd", cost).Error; err != nil {
+			slog.Error("Failed to record Apify usage cost", "error", err, "url", usage.URL)
+		}
 	}
 }
 
