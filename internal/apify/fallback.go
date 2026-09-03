@@ -18,6 +18,17 @@ import (
 // in: a dataset collection alone routinely takes two minutes.
 const minFallbackBudget = 3 * time.Minute
 
+// Paid failures are rate-limited per URL. A post the provider could not
+// fetch is overwhelmingly still unfetchable a minute later, yet River retries
+// each job three times and integrations re-submit failed URLs on their own
+// schedule; without a brake the same dead post was bought ~50 times in an
+// evening. Two paid attempts per URL per window leave room for a transient
+// provider hiccup and no room for a loop.
+const (
+	paidFailureWindow     = 24 * time.Hour
+	paidFailuresPerWindow = 2
+)
+
 // Backend is the slice of Client the fallback archiver uses, split out so
 // tests can substitute a fake without network access.
 type Backend interface {
@@ -154,6 +165,13 @@ func (f *FallbackArchiver) Archive(ctx context.Context, url string, logWriter io
 		return result, nativeErr
 	}
 
+	if declined := recentPaidFailure(db, url); declined != nil {
+		fmt.Fprintf(logWriter, "\nNative flow failed (%v); not attempting the Apify fallback: it has already failed %d times for this URL in the last %s (last: %s, %s ago)\n",
+			nativeErr, declined.Count, paidFailureWindow, declined.Detail, time.Since(declined.Last).Round(time.Minute))
+		slog.Warn("Apify fallback declined after repeated paid failures", "url", url, "type", f.Type, "failures", declined.Count, "last_detail", declined.Detail)
+		return result, fmt.Errorf("native flow failed (%v); Apify fallback declined after %d recent paid failures (last: %s)", nativeErr, declined.Count, declined.Detail)
+	}
+
 	fmt.Fprintf(logWriter, "\nNative flow failed (%v); attempting Apify fallback...\n", nativeErr)
 	slog.Info("Attempting Apify fallback", "url", url, "type", f.Type, "native_error", nativeErr)
 
@@ -166,4 +184,34 @@ func (f *FallbackArchiver) Archive(ctx context.Context, url string, logWriter io
 	fmt.Fprintf(logWriter, "Apify fallback succeeded\n")
 	slog.Info("Apify fallback succeeded", "url", url, "type", f.Type)
 	return fallbackResult, nil
+}
+
+// paidFailures summarizes the recent paid attempts on a URL that bought nothing.
+type paidFailures struct {
+	Count  int
+	Last   time.Time
+	Detail string
+}
+
+// recentPaidFailure reports the URL's failed Apify attempts inside
+// paidFailureWindow when they have reached the per-window limit, or nil when
+// another attempt is allowed. Only attempts that reached the provider count
+// (a run id was assigned); a start that never happened cost nothing and says
+// nothing about the post. A nil db means no ledger, so no brake.
+func recentPaidFailure(db *gorm.DB, url string) *paidFailures {
+	if db == nil {
+		return nil
+	}
+	var rows []models.FallbackUsage
+	err := db.Where("url = ? AND provider = ? AND success = ? AND operation_id <> '' AND created_at > ?",
+		url, models.FallbackProviderApify, false, time.Now().Add(-paidFailureWindow)).
+		Order("created_at DESC").Find(&rows).Error
+	if err != nil {
+		slog.Warn("Could not read the fallback ledger; allowing the attempt", "url", url, "error", err)
+		return nil
+	}
+	if len(rows) < paidFailuresPerWindow {
+		return nil
+	}
+	return &paidFailures{Count: len(rows), Last: rows[0].CreatedAt, Detail: rows[0].Detail}
 }

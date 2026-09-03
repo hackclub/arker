@@ -3,6 +3,7 @@ package apify
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -309,5 +310,49 @@ func TestFallbackArchiverRescuesRedditThroughTheRealClient(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "Apify fallback succeeded") {
 		t.Error("archive log does not record the rescue")
+	}
+}
+
+// Once a URL has burned the per-window allowance of paid failures, River's
+// own retries and an integration re-submitting the same URL must not keep
+// buying the same "post not found".
+func TestFallbackDeclinedAfterRepeatedPaidFailures(t *testing.T) {
+	db := newTestDB(t)
+	url := "https://www.instagram.com/reel/GONE/"
+	for i := 0; i < paidFailuresPerWindow; i++ {
+		if err := db.Create(&models.FallbackUsage{URL: url, Provider: models.FallbackProviderApify, Product: ActorInstagram, OperationID: fmt.Sprintf("run%d", i), Success: false, Detail: "post not found: failed_to_fetch_post_details"}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A start that never reached the provider is not a paid failure.
+	if err := db.Create(&models.FallbackUsage{URL: url, Provider: models.FallbackProviderApify, Product: ActorInstagram, Success: false, Detail: "start failed: context canceled"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	backend := &fakeBackend{supports: true}
+	arch := &FallbackArchiver{Primary: &fakePrimary{err: errors.New("login required")}, Type: utils.ArchiveTypeYtDlp, Backend: backend}
+
+	var log strings.Builder
+	_, err := arch.Archive(context.Background(), url, &log, db, 1)
+	if err == nil || !strings.Contains(err.Error(), "declined after 2 recent paid failures") {
+		t.Fatalf("err = %v", err)
+	}
+	if backend.called {
+		t.Fatal("backend was called despite the brake")
+	}
+	if !strings.Contains(log.String(), "already failed 2 times") || !strings.Contains(log.String(), "failed_to_fetch_post_details") {
+		t.Errorf("log = %q", log.String())
+	}
+
+	// A different URL is unaffected, and so is this one once the window passes.
+	backend.called = false
+	if _, err := arch.Archive(context.Background(), "https://www.instagram.com/reel/OTHER/", io.Discard, db, 1); err != nil || !backend.called {
+		t.Fatalf("other URL: err=%v called=%v", err, backend.called)
+	}
+	if err := db.Model(&models.FallbackUsage{}).Where("url = ?", url).Update("created_at", time.Now().Add(-paidFailureWindow-time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+	backend.called = false
+	if _, err := arch.Archive(context.Background(), url, io.Discard, db, 1); err != nil || !backend.called {
+		t.Fatalf("after window: err=%v called=%v", err, backend.called)
 	}
 }

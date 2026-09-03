@@ -464,6 +464,13 @@ guessing which one is the secret is how one gets left behind. Fixtures under
 `SYNTHETIC-NOT-A-REAL-SECRET`; the tests assert that marker never reaches an
 artifact.
 
+Paid failures are rate-limited per URL (`paidFailuresPerWindow` = 2 per
+24h, counting only attempts that got a run id): River retries three times
+and integrations re-submit failed URLs on their own schedule, and without the
+brake one dead post was bought ~50 times in an evening (2026-09-02). The
+declined attempt is logged and surfaces in the job error as "Apify fallback
+declined after N recent paid failures".
+
 Two platform quirks the code compensates for, so do not "simplify" them away:
 
 - Pay-per-event actors report `usageTotalUsd = 0` at `SUCCEEDED`; the start
