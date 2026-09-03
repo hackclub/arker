@@ -194,6 +194,10 @@ func TestGitURLDetection(t *testing.T) {
 		{"GitLab repo", "https://gitlab.com/user/project", true},
 		{"Bitbucket repo", "https://bitbucket.org/user/repo", true},
 		{"Codeberg repo", "https://codeberg.org/user/repo", true},
+		{"Tangled repo", "https://tangled.org/dunkirk.sh/akami", true},
+		{"Tangled repo with at-handle", "https://tangled.org/@dunkirk.sh/akami", true},
+		{"Tangled repo commit", "https://tangled.org/dunkirk.sh/akami/commit/45f6aaec", true},
+		{"Tangled repo blob", "https://tangled.org/@dunkirk.sh/akami/blob/main/README.md", true},
 		{"Direct git URL", "https://example.com/repo.git", true},
 		{"Git subdomain", "https://git.example.com/repo", true},
 
@@ -204,6 +208,9 @@ func TestGitURLDetection(t *testing.T) {
 		{"GitHub marketplace", "https://github.com/marketplace", false},
 		{"GitHub organizations", "https://github.com/organizations", false},
 		{"GitLab user profile", "https://gitlab.com/username", false},
+		{"Tangled user profile", "https://tangled.org/@dunkirk.sh", false},
+		{"Tangled settings", "https://tangled.org/settings/profile", false},
+		{"Tangled URL in query", "https://example.com/?next=https://tangled.org/user/repo", false},
 		{"Regular website", "https://example.com", false},
 		{"YouTube", "https://youtube.com/watch?v=123", false},
 	}
@@ -236,6 +243,11 @@ func TestGetArchiveTypes(t *testing.T) {
 			name:     "GitHub user profile",
 			url:      "https://github.com/gamerwaves",
 			expected: []string{"mhtml", "screenshot"},
+		},
+		{
+			name:     "Tangled repository file",
+			url:      "https://tangled.org/@dunkirk.sh/akami/blob/main/README.md",
+			expected: []string{"mhtml", "screenshot", "git"},
 		},
 		{
 			name:     "YouTube video",

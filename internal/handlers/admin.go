@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -326,11 +328,12 @@ func VideoMetadataBackfillStatus(c *gin.Context, db *gorm.DB) {
 	c.JSON(http.StatusOK, gin.H{"completed_video_items": completed, "metadata_available": completed - missing, "remaining": missing, "queue": queue})
 }
 
-// mediaBackfillURLPattern pre-filters candidate URLs in SQL for each media
-// archive type. Loading every capture and filtering in Go blows Postgres's
-// 65535-parameter limit at production scale (~100k captures); the Go predicate
-// named alongside each pattern stays the exact filter.
-var mediaBackfillURLPattern = map[string]struct {
+// missingItemBackfillURLPattern pre-filters candidate URLs in SQL for each
+// archive type that gained URL detection after launch. Loading every capture
+// and filtering in Go blows Postgres's 65535-parameter limit at production
+// scale (~100k captures); the Go predicate named alongside each pattern stays
+// the exact filter.
+var missingItemBackfillURLPattern = map[string]struct {
 	sqlLike string
 	matches func(string) bool
 }{
@@ -354,10 +357,27 @@ var mediaBackfillURLPattern = map[string]struct {
 		// Go predicate is what actually decides.
 		matches: utils.ShouldCreateGalleryDLItem,
 	},
+	utils.ArchiveTypeGit: {
+		// Git backfill is deliberately limited to Tangled. GitHub, GitLab,
+		// Bitbucket and Codeberg were recognized from Arker's first release;
+		// selecting all of them here would duplicate old git archives for no
+		// product reason.
+		sqlLike: "LOWER(archived_urls.original) LIKE '%tangled.org/%'",
+		matches: func(rawURL string) bool {
+			parsed, err := url.Parse(rawURL)
+			if err != nil || !utils.IsGitURL(rawURL) {
+				return false
+			}
+			host := strings.ToLower(parsed.Hostname())
+			return host == "tangled.org" || host == "www.tangled.org"
+		},
+	},
 }
 
-// BackfillMissingMediaItems creates and enqueues missing media archive items
-// for captures whose URL should have one.
+// BackfillMissingMediaItems creates and enqueues missing archive items for
+// captures whose URL should have one. The historical endpoint name is retained
+// because operator scripts already use it; ?type=git selects Tangled's git
+// backfill.
 //
 // Two things produce these gaps: a URL family that gained support after the
 // capture was taken (TikTok short links, or every Instagram photo post taken
@@ -365,8 +385,9 @@ var mediaBackfillURLPattern = map[string]struct {
 // existing rows. Failed items are re-run via RetryAllFailedJobs instead — this
 // only creates items that are absent entirely.
 //
-// Pass ?type=gallery-dl or ?type=yt-dlp to backfill one type (default: both),
-// ?dry_run=true to preview without queueing, and ?limit=N to bound a run.
+// Pass ?type=gallery-dl, ?type=yt-dlp, or ?type=git to backfill one type
+// (default: the two media types), ?dry_run=true to preview without queueing,
+// and ?limit=N to bound a run.
 // Bounding matters for Instagram, which has soft-blocked this account for hours
 // in response to bulk traffic.
 func BackfillMissingMediaItems(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
@@ -375,7 +396,7 @@ func BackfillMissingMediaItems(c *gin.Context, db *gorm.DB, riverClient *river.C
 	requestedTypes := []string{utils.ArchiveTypeGalleryDl, utils.ArchiveTypeYtDlp}
 	if requested := c.Query("type"); requested != "" {
 		canonical := utils.NormalizeArchiveType(requested)
-		if _, ok := mediaBackfillURLPattern[canonical]; !ok {
+		if _, ok := missingItemBackfillURLPattern[canonical]; !ok {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unsupported backfill type: %s", requested)})
 			return
 		}
@@ -396,7 +417,7 @@ func BackfillMissingMediaItems(c *gin.Context, db *gorm.DB, riverClient *river.C
 	total := 0
 
 	for _, archiveType := range requestedTypes {
-		filter := mediaBackfillURLPattern[archiveType]
+		filter := missingItemBackfillURLPattern[archiveType]
 		// The limit is per type, not a shared budget: with both types selected
 		// a shared budget would be spent entirely on whichever runs first and
 		// silently do none of the other.
@@ -465,9 +486,9 @@ func BackfillMissingMediaItems(c *gin.Context, db *gorm.DB, riverClient *river.C
 		}
 	}
 
-	message := fmt.Sprintf("Backfilled %d captures with media archive jobs", total)
+	message := fmt.Sprintf("Backfilled %d captures with archive jobs", total)
 	if dryRun {
-		message = fmt.Sprintf("Dry run: %d captures would be backfilled with media archive jobs", total)
+		message = fmt.Sprintf("Dry run: %d captures would be backfilled with archive jobs", total)
 	}
 	c.JSON(http.StatusOK, gin.H{"message": message, "count": total, "short_ids": backfilled})
 }

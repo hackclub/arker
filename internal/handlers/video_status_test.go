@@ -281,6 +281,40 @@ func TestBackfillMissingMediaItemsDryRunGalleryDL(t *testing.T) {
 	}
 }
 
+func TestBackfillMissingMediaItemsDryRunTangledGit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newHandlerLogTestDB(t)
+	createVideoCapture(t, db, "git01", "https://tangled.org/@dunkirk.sh/akami/commit/45f6aaec", map[string]string{
+		"screenshot": "completed",
+	})
+	// A Tangled capture that already has the item is settled.
+	createVideoCapture(t, db, "git02", "https://tangled.org/dunkirk.sh/dots", map[string]string{
+		"git": "completed",
+	})
+	// The backfill is intentionally scoped to the newly supported forge.
+	createVideoCapture(t, db, "git03", "https://github.com/hackclub/arker", map[string]string{
+		"screenshot": "completed",
+	})
+	// SQL prefiltering can see this substring, but the exact Go predicate must
+	// not mistake a link in a query parameter for the request's host.
+	createVideoCapture(t, db, "git04", "https://example.com/?next=https://tangled.org/a/b", map[string]string{
+		"screenshot": "completed",
+	})
+
+	body := doBackfill(t, newBackfillRouter(t, db), "type=git&dry_run=true")
+
+	got := body.ShortIDs[utils.ArchiveTypeGit]
+	if len(got) != 1 || got[0] != "git01" {
+		t.Fatalf("short_ids[git] = %v, want [git01]", got)
+	}
+
+	var count int64
+	db.Model(&models.ArchiveItem{}).Where("type = ?", utils.ArchiveTypeGit).Count(&count)
+	if count != 1 {
+		t.Fatalf("git item count = %d, want 1 (dry run must not create items)", count)
+	}
+}
+
 // The limit is the guard against re-running a bulk Instagram backfill at the
 // concurrency that previously got the account soft-blocked.
 func TestBackfillMissingMediaItemsRespectsLimit(t *testing.T) {

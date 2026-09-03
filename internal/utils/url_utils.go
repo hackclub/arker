@@ -10,13 +10,19 @@ import (
 	"strings"
 )
 
-// Extract repository name from git URL
-func ExtractRepoName(url string) string {
+// Extract repository name from git URL.
+//
+// Browser URLs can point below the repository root (for example, a Tangled
+// commit or blob). Normalize those first so the displayed clone directory is
+// the repository name rather than "commit", a revision, or a filename.
+func ExtractRepoName(rawURL string) string {
+	rawURL = ExtractGitRepoURL(rawURL)
+
 	// Remove .git suffix if present
-	url = strings.TrimSuffix(url, ".git")
+	rawURL = strings.TrimSuffix(rawURL, ".git")
 
 	// Extract last part of path
-	parts := strings.Split(strings.TrimRight(url, "/"), "/")
+	parts := strings.Split(strings.TrimRight(rawURL, "/"), "/")
 	if len(parts) > 0 {
 		return parts[len(parts)-1]
 	}
@@ -24,46 +30,89 @@ func ExtractRepoName(url string) string {
 }
 
 // Check if URL is a git repository
-func IsGitURL(url string) bool {
-	lowerURL := strings.ToLower(url)
+func IsGitURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	path := strings.ToLower(parsed.EscapedPath())
 
 	// Direct .git URLs
-	if strings.HasSuffix(lowerURL, ".git") {
+	if strings.HasSuffix(strings.TrimRight(path, "/"), ".git") {
 		return true
 	}
 
 	// URLs containing git subdomain
-	if strings.Contains(lowerURL, "git.") {
+	if strings.HasPrefix(host, "git.") && strings.Trim(path, "/") != "" {
 		return true
 	}
 
 	// Check for repository URLs on hosting platforms
 	// These require at least username/reponame format
 	platforms := []string{
-		"github.com/",
-		"gitlab.com/",
-		"bitbucket.org/",
-		"codeberg.org/",
+		"github.com",
+		"gitlab.com",
+		"bitbucket.org",
+		"codeberg.org",
+		"tangled.org",
 	}
 
 	for _, platform := range platforms {
-		if strings.Contains(lowerURL, platform) {
-			// Extract path after platform
-			parts := strings.Split(lowerURL, platform)
-			if len(parts) > 1 {
-				path := strings.Trim(parts[1], "/")
-				pathSegments := strings.Split(path, "/")
+		if host == platform || host == "www."+platform {
+			pathSegments := strings.Split(strings.Trim(path, "/"), "/")
 
-				// Must have at least username/reponame (2 segments)
-				// Exclude common non-repository paths
-				if len(pathSegments) >= 2 && !isNonRepoPath(pathSegments) {
-					return true
-				}
+			// Must have at least username/reponame (2 segments).
+			// Tangled owners can be handles (with an optional leading @) or
+			// DIDs; both remain one path segment.
+			if len(pathSegments) >= 2 && !isNonRepoPath(pathSegments) {
+				return true
 			}
 		}
 	}
 
 	return false
+}
+
+// ExtractGitRepoURL reduces browser URLs on forges whose repository path has
+// two segments to the HTTPS clone URL for the repository root. It intentionally
+// preserves the submitted spelling of the owner (including Tangled's optional
+// leading @) because both Tangled forms are valid clone URLs.
+//
+// Unknown/self-hosted forges are returned unchanged apart from a fragment,
+// since their repository path depth is not knowable here.
+func ExtractGitRepoURL(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	parsed.Fragment = ""
+
+	host := strings.ToLower(parsed.Hostname())
+	trimToTwoSegments := false
+	for _, platform := range []string{"github.com", "gitlab.com", "bitbucket.org", "codeberg.org", "tangled.org"} {
+		if host == platform || host == "www."+platform {
+			trimToTwoSegments = true
+			break
+		}
+	}
+	if !trimToTwoSegments {
+		return parsed.String()
+	}
+
+	escapedSegments := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
+	if len(escapedSegments) < 2 || isNonRepoPath([]string{strings.ToLower(escapedSegments[0]), strings.ToLower(escapedSegments[1])}) {
+		return parsed.String()
+	}
+	escapedRoot := "/" + escapedSegments[0] + "/" + escapedSegments[1]
+	root, err := url.PathUnescape(escapedRoot)
+	if err != nil {
+		return rawURL
+	}
+	parsed.Path = root
+	parsed.RawPath = escapedRoot
+	parsed.RawQuery = ""
+	return parsed.String()
 }
 
 // Check if path segments indicate a non-repository URL

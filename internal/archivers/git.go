@@ -2,6 +2,7 @@ package archivers
 
 import (
 	"archive/tar"
+	"arker/internal/utils"
 	"context"
 	"fmt"
 	"io"
@@ -13,7 +14,6 @@ import (
 	"gorm.io/gorm"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"sync"
 	"time"
@@ -73,8 +73,9 @@ func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 	// Register the pooled HTTP client for git operations exactly once.
 	installGitProtocols()
 
-	// Extract repository URL for GitHub URLs with extra paths
-	repoURL := extractGitRepoURL(url)
+	// Extract the cloneable repository root from forge browser URLs with
+	// commit/tree/blob paths.
+	repoURL := utils.ExtractGitRepoURL(url)
 	if repoURL != url {
 		fmt.Fprintf(logWriter, "Extracted repository URL: %s\n", repoURL)
 	}
@@ -141,31 +142,6 @@ func (a *GitArchiver) Archive(ctx context.Context, url string, logWriter io.Writ
 	}()
 
 	return Result{Data: pr, Extension: ".tar", ContentType: "application/x-tar"}, nil
-}
-
-// extractGitRepoURL extracts the repository URL from GitHub URLs with extra paths and fragments
-func extractGitRepoURL(url string) string {
-	// First, strip any fragment (part after #)
-	if fragmentIndex := regexp.MustCompile(`#.*$`).FindStringIndex(url); fragmentIndex != nil {
-		url = url[:fragmentIndex[0]]
-	}
-
-	// GitHub repository URL pattern: https://github.com/owner/repo
-	githubPattern := regexp.MustCompile(`^(https?://github\.com/[^/]+/[^/]+)(/.*)?$`)
-
-	if matches := githubPattern.FindStringSubmatch(url); len(matches) > 1 {
-		return matches[1] // Return just the repo part
-	}
-
-	// GitLab repository URL pattern: https://gitlab.com/owner/repo
-	gitlabPattern := regexp.MustCompile(`^(https?://gitlab\.com/[^/]+/[^/]+)(/.*)?$`)
-
-	if matches := gitlabPattern.FindStringSubmatch(url); len(matches) > 1 {
-		return matches[1] // Return just the repo part
-	}
-
-	// For other URLs, return as-is
-	return url
 }
 
 // Helper to tar dir streaming.
