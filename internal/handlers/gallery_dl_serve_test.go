@@ -24,23 +24,27 @@ import (
 // gallery-dl's raw per-file sidecars.
 func buildGalleryArchive(t *testing.T) []byte {
 	t.Helper()
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-
-	entries := []struct{ name, body string }{
+	return buildGalleryBundle(t, [][2]string{
 		{"metadata.json", `{"source_url":"https://www.instagram.com/p/ABC123/","extractor":"instagram","author":"someone","author_name":"Some One","description":"a caption","file_count":2}`},
 		{"001.jpg", "jpeg-bytes"},
 		{"001.jpg.json", `{"width":1080,"height":1350}`},
 		{"002.mp4", "mp4-bytes"},
 		{"002.mp4.json", `{"width":720,"height":1280}`},
-	}
+	})
+}
+
+// buildGalleryBundle zips the given name/body pairs in order.
+func buildGalleryBundle(t *testing.T, entries [][2]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
 	for _, entry := range entries {
-		w, err := zw.Create(entry.name)
+		w, err := zw.Create(entry[0])
 		if err != nil {
-			t.Fatalf("create %s: %v", entry.name, err)
+			t.Fatalf("create %s: %v", entry[0], err)
 		}
-		if _, err := w.Write([]byte(entry.body)); err != nil {
-			t.Fatalf("write %s: %v", entry.name, err)
+		if _, err := w.Write([]byte(entry[1])); err != nil {
+			t.Fatalf("write %s: %v", entry[0], err)
 		}
 	}
 	if err := zw.Close(); err != nil {
@@ -51,6 +55,13 @@ func buildGalleryArchive(t *testing.T) []byte {
 
 func seedGalleryCapture(t *testing.T, db *gorm.DB, storageInstance storage.Storage, shortID, status string) {
 	t.Helper()
+	seedGalleryBundle(t, db, storageInstance, shortID, status, "", buildGalleryArchive(t))
+}
+
+// seedGalleryBundle stores an arbitrary bundle for a capture, so a test can
+// describe the exact provider record whose shape it cares about.
+func seedGalleryBundle(t *testing.T, db *gorm.DB, storageInstance storage.Storage, shortID, status, source string, bundle []byte) {
+	t.Helper()
 
 	key := "archive/" + shortID + "/gallery-dl.zip"
 	if status == "completed" {
@@ -58,7 +69,7 @@ func seedGalleryCapture(t *testing.T, db *gorm.DB, storageInstance storage.Stora
 		if err != nil {
 			t.Fatalf("storage writer: %v", err)
 		}
-		if _, err := writer.Write(buildGalleryArchive(t)); err != nil {
+		if _, err := writer.Write(bundle); err != nil {
 			t.Fatalf("storage write: %v", err)
 		}
 		if err := writer.Close(); err != nil {
@@ -78,6 +89,7 @@ func seedGalleryCapture(t *testing.T, db *gorm.DB, storageInstance storage.Stora
 		Status:     status,
 		StorageKey: key,
 		Extension:  ".zip",
+		Source:     source,
 	}
 	if err := db.Create(&item).Error; err != nil {
 		t.Fatalf("create item: %v", err)
@@ -490,5 +502,164 @@ func TestServeGalleryFileAdvertisesRangeSupport(t *testing.T) {
 	}
 	if got := rec.Body.String(); got != "jpeg-bytes" {
 		t.Errorf("body = %q, want the full file when no Range is sent", got)
+	}
+}
+
+// TestGalleryRawCoercesProviderShapesToContractTypes pins the promise the raw
+// endpoint's normalized fields make: caption and user_posted are strings,
+// date_posted is a timestamp string, counts are numbers — whatever shape the
+// provider that produced the bundle happened to use. Ten Instagram galleries
+// re-captured through the Apify fallback on 2026-09-03 served the provider's
+// caption object and an epoch integer instead, leaving consumers that map
+// caption to a title and date_posted to a published-at with neither.
+func TestGalleryRawCoercesProviderShapesToContractTypes(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	router := newGalleryRouter(db, store)
+
+	const normalizedMetadata = `{"source_url":"https://www.instagram.com/p/ABC123/","extractor":"instagram","subcategory":"apify",` +
+		`"author":"starthackclub","author_name":"Hack Club","description":"normalized caption","date":"2026-08-28T01:00:42Z","likes":794,"comments":23,"file_count":1}`
+
+	cases := []struct {
+		name    string
+		shortID string
+		record  string
+		want    map[string]interface{}
+	}{
+		{
+			// Instagram through Apify: caption is Instagram's own caption
+			// object and taken_at is epoch seconds.
+			name:    "instagram fallback record",
+			shortID: "rawig",
+			record: `{"code":"ABC123","caption":{"pk":"18361650220301169","text":"Next Station 🚇","hashtags":["#pinpaint"],"mentions":["@apple.cheeks"]},` +
+				`"taken_at":1776344250,"like_count":794,"comment_count":23}`,
+			want: map[string]interface{}{
+				"caption":       "Next Station 🚇",
+				"user_posted":   "starthackclub",
+				"date_posted":   "2026-04-16T12:57:30Z",
+				"likes":         float64(794),
+				"num_comments":  float64(23),
+				"photos_number": float64(1),
+			},
+		},
+		{
+			// X through Apify: the poster is a user object and the date is
+			// Ruby's layout.
+			name:    "x fallback record",
+			shortID: "rawxx",
+			record: `{"id":"1","text":"a tweet","author":{"type":"user","userName":"icyelectronics","name":"Cyao"},` +
+				`"createdAt":"Sat Jun 06 07:21:57 +0000 2026","date":"Sat Jun 06 07:21:57 +0000 2026","likes":"1,024"}`,
+			want: map[string]interface{}{
+				"caption":     "a tweet",
+				"user_posted": "icyelectronics",
+				"date_posted": "2026-06-06T07:21:57Z",
+				"likes":       float64(1024),
+			},
+		},
+		{
+			// Facebook through Apify: the owner object names nobody, so the
+			// normalized author answers rather than an opaque numeric id.
+			name:    "facebook fallback record",
+			shortID: "rawfb",
+			record:  `{"post_id":"9","text":"a post","owner":{"__typename":"User","id":"100064643981468"},"timestamp":1787878842,"likes":25,"comments":0}`,
+			want: map[string]interface{}{
+				"caption":      "a post",
+				"user_posted":  "starthackclub",
+				"date_posted":  "2026-08-28T01:00:42Z",
+				"likes":        float64(25),
+				"num_comments": float64(0),
+			},
+		},
+		{
+			// A native gallery-dl sidecar keeps reporting exactly what it
+			// always did, in the one timestamp format the field promises.
+			name:    "native gallery-dl sidecar",
+			shortID: "rawgd",
+			record:  `{"username":"someone","description":"a caption","date":"2026-08-28 01:00:42","likes":12,"comments":3}`,
+			want: map[string]interface{}{
+				"caption":      "a caption",
+				"user_posted":  "someone",
+				"date_posted":  "2026-08-28T01:00:42Z",
+				"likes":        float64(12),
+				"num_comments": float64(3),
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seedGalleryBundle(t, db, store, tc.shortID, "completed", models.ArchiveSourceApify, buildGalleryBundle(t, [][2]string{
+				{"metadata.json", normalizedMetadata},
+				{"001.jpg", "jpeg-bytes"},
+				{"apify.json", tc.record},
+			}))
+
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/gallery/"+tc.shortID+"/raw", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			var body struct {
+				Records []struct {
+					Metadata map[string]interface{} `json:"metadata"`
+				} `json:"records"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if len(body.Records) != 1 {
+				t.Fatalf("records = %d, want 1", len(body.Records))
+			}
+			metadata := body.Records[0].Metadata
+			for field, want := range tc.want {
+				if got := metadata[field]; got != want {
+					t.Errorf("metadata[%q] = %#v (%T), want %#v", field, got, got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestGalleryRawKeepsFlattenedProviderValues checks that reducing a structured
+// provider field to the contract's scalar does not delete it: /raw serves
+// provider sidecars, and Instagram's mentions list lives only inside the
+// caption object it replaces.
+func TestGalleryRawKeepsFlattenedProviderValues(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	router := newGalleryRouter(db, store)
+
+	seedGalleryBundle(t, db, store, "rawkp", "completed", models.ArchiveSourceApify, buildGalleryBundle(t, [][2]string{
+		{"metadata.json", `{"source_url":"https://www.instagram.com/p/ABC123/","author":"starthackclub","file_count":1}`},
+		{"001.jpg", "jpeg-bytes"},
+		{"apify.json", `{"caption":{"pk":"1","text":"hello","mentions":["@somebody"]},"taken_at":1776344250}`},
+	}))
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/gallery/rawkp/raw", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Records []struct {
+			Metadata map[string]interface{} `json:"metadata"`
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Records) != 1 {
+		t.Fatalf("records = %d, want 1", len(body.Records))
+	}
+	details, ok := body.Records[0].Metadata["caption_details"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("caption_details = %#v, want the provider's caption object", body.Records[0].Metadata["caption_details"])
+	}
+	if details["text"] != "hello" {
+		t.Errorf("caption_details.text = %#v", details["text"])
+	}
+	mentions, ok := details["mentions"].([]interface{})
+	if !ok || len(mentions) != 1 || mentions[0] != "@somebody" {
+		t.Errorf("caption_details.mentions = %#v", details["mentions"])
 	}
 }

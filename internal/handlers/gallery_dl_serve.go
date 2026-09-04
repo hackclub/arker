@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -427,22 +428,125 @@ func fallbackRawRecordProvider(filename string) string {
 	return ""
 }
 
+// normalizeGalleryRawFields overlays the cross-provider post fields on a raw
+// provider record, so one consumer shape survives every extractor and every
+// paid fallback.
+//
+// Each field is coerced to the type the field name promises rather than merely
+// copied across. Providers publish these under familiar names in unfamiliar
+// shapes: Instagram's fallback record carries the caption as an object whose
+// text is one field among a dozen and its taken_at as epoch seconds, X and
+// Facebook name the poster with a user object, YouTube dates in a different
+// layout than Bright Data did. A consumer reading caption must get the caption
+// a reader would see, and date_posted a timestamp string, no matter which
+// capture route the post happened to take. A candidate that cannot be coerced
+// is skipped, so the next key — and finally Arker's own normalized metadata —
+// still answers.
 func normalizeGalleryRawFields(raw map[string]interface{}, normalized archivers.GalleryMetadata, photoCount int) {
-	raw["caption"] = firstGalleryRawValue(raw, []string{"caption", "description", "text", "content", "post_content"}, firstNonBlank(normalized.Description, normalized.Title))
-	raw["user_posted"] = firstGalleryRawValue(raw, []string{"user_posted", "username", "author", "uploader", "owner"}, firstNonBlank(normalized.Author, normalized.AuthorName))
-	raw["date_posted"] = firstGalleryRawValue(raw, []string{"date_posted", "post_date", "date", "created_at", "taken_at", "timestamp"}, normalized.Date)
-	raw["photos_number"] = firstGalleryRawValue(raw, []string{"photos_number", "photo_count", "image_count"}, photoCount)
-	raw["likes"] = firstGalleryRawValue(raw, []string{"likes", "like_count", "favorites", "favorite_count"}, normalized.Likes)
-	raw["num_comments"] = firstGalleryRawValue(raw, []string{"num_comments", "comments", "comment_count"}, normalized.Comments)
+	setGalleryRawField(raw, "caption", firstGalleryRawValue(raw, []string{"caption", "description", "text", "content", "post_content"}, galleryRawCaption, firstNonBlank(normalized.Description, normalized.Title)))
+	setGalleryRawField(raw, "user_posted", firstGalleryRawValue(raw, []string{"user_posted", "username", "author", "uploader", "owner"}, galleryRawUser, firstNonBlank(normalized.Author, normalized.AuthorName)))
+	setGalleryRawField(raw, "date_posted", firstGalleryRawValue(raw, []string{"date_posted", "post_date", "date", "created_at", "taken_at", "timestamp"}, galleryRawTimestamp, firstNonBlank(normalized.Date)))
+	setGalleryRawField(raw, "photos_number", firstGalleryRawValue(raw, []string{"photos_number", "photo_count", "image_count"}, galleryRawCount, photoCount))
+	setGalleryRawField(raw, "likes", firstGalleryRawValue(raw, []string{"likes", "like_count", "favorites", "favorite_count"}, galleryRawCount, normalized.Likes))
+	setGalleryRawField(raw, "num_comments", firstGalleryRawValue(raw, []string{"num_comments", "comments", "comment_count"}, galleryRawCount, normalized.Comments))
 }
 
-func firstGalleryRawValue(raw map[string]interface{}, keys []string, fallback interface{}) interface{} {
+// setGalleryRawField writes a normalized field into the record, keeping the
+// provider's own value when the normalized name collides with it and coercion
+// flattened something structured. This endpoint serves provider sidecars, so
+// reducing Instagram's caption object to its text must not be what deletes the
+// mentions list that lives nowhere else in the bundle.
+func setGalleryRawField(raw map[string]interface{}, field string, value interface{}) {
+	if original, exists := raw[field]; exists && !galleryRawFlat(original) {
+		raw[field+"_details"] = original
+	}
+	raw[field] = value
+}
+
+// galleryRawFlat reports whether a provider value is a scalar, which is to say
+// whether overwriting it in place would lose anything.
+func galleryRawFlat(value interface{}) bool {
+	switch value.(type) {
+	case map[string]interface{}, []interface{}:
+		return false
+	}
+	return true
+}
+
+// galleryRawCoercion narrows one provider value to the type a normalized field
+// promises, reporting false when the value cannot honestly be read that way.
+type galleryRawCoercion func(value interface{}) (interface{}, bool)
+
+func firstGalleryRawValue(raw map[string]interface{}, keys []string, coerce galleryRawCoercion, fallback interface{}) interface{} {
 	for _, key := range keys {
-		if value, exists := raw[key]; exists && value != nil && value != "" {
-			return value
+		value, exists := raw[key]
+		if !exists || value == nil {
+			continue
+		}
+		if coerced, ok := coerce(value); ok {
+			return coerced
 		}
 	}
 	return fallback
+}
+
+// galleryRawCaption reduces a caption candidate to the text a reader sees.
+// Instagram publishes it as an object ({id, pk, text, hashtags, ...}); every
+// other source publishes it as a string.
+func galleryRawCaption(value interface{}) (interface{}, bool) {
+	return galleryRawText(value, "text", "caption", "title", "description", "body")
+}
+
+// galleryRawUser reduces a poster candidate to a handle. X names the author
+// with a user object and Facebook names the owner with one; a Facebook owner
+// object carries no handle at all, so it is refused here and the normalized
+// metadata's author answers instead of an opaque numeric id.
+func galleryRawUser(value interface{}) (interface{}, bool) {
+	return galleryRawText(value, "username", "userName", "user_name", "screen_name", "handle", "name", "full_name", "page_name")
+}
+
+// galleryRawText accepts a non-blank string, or the first non-blank string at
+// one of the given keys of an object. The value is returned exactly as the
+// provider wrote it: trimming decides whether it counts, it does not rewrite it.
+func galleryRawText(value interface{}, keys ...string) (interface{}, bool) {
+	switch typed := value.(type) {
+	case string:
+		if strings.TrimSpace(typed) != "" {
+			return typed, true
+		}
+	case map[string]interface{}:
+		for _, key := range keys {
+			if nested, ok := typed[key].(string); ok && strings.TrimSpace(nested) != "" {
+				return nested, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// galleryRawTimestamp renders a date candidate as one timestamp string, so an
+// epoch integer from a fallback record and an ISO string from an extractor
+// read the same way. A string in an unrecognized layout is kept verbatim.
+func galleryRawTimestamp(value interface{}) (interface{}, bool) {
+	if normalized := utils.NormalizeTimestamp(value); normalized != "" {
+		return normalized, true
+	}
+	return nil, false
+}
+
+// galleryRawCount keeps an engagement count numeric. Numbers pass through
+// untouched; a count written as digits ("1,234") is parsed; anything else is
+// refused so the count Arker recorded at capture time answers instead.
+func galleryRawCount(value interface{}) (interface{}, bool) {
+	switch typed := value.(type) {
+	case float64, int, int64, json.Number:
+		return typed, true
+	case string:
+		if count, err := strconv.ParseInt(strings.ReplaceAll(strings.TrimSpace(typed), ",", ""), 10, 64); err == nil {
+			return count, true
+		}
+	}
+	return nil, false
 }
 
 func firstNonBlank(values ...string) interface{} {

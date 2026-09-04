@@ -18,6 +18,7 @@ import (
 	"arker/internal/archivers"
 	"arker/internal/models"
 	"arker/internal/thumbnail"
+	"arker/internal/utils"
 )
 
 // rawRecordName is the ZIP entry holding the sanitized provider record beside
@@ -415,40 +416,11 @@ func firstNonEmptyString(values ...string) string {
 
 // timestampString normalizes the timestamps actors publish — RFC 3339 strings
 // or epoch seconds/milliseconds — into RFC 3339 UTC. Unknown shapes are
-// returned as-is when they are strings and dropped otherwise.
+// returned as-is when they are strings and dropped otherwise. The rule is
+// shared with the gallery raw-metadata endpoint, which has to reconcile the
+// same shapes coming out of stored bundles, so it lives in utils.
 func timestampString(value any) string {
-	switch typed := value.(type) {
-	case string:
-		trimmed := strings.TrimSpace(typed)
-		if trimmed == "" {
-			return ""
-		}
-		// RubyDate is X's createdAt ("Sat Jun 06 07:21:57 +0000 2026");
-		// RFC1123Z is Pinterest's ("Wed, 26 Aug 2026 02:43:18 +0000").
-		for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000Z", "2006-01-02 15:04:05", time.RubyDate, time.RFC1123Z, time.RFC1123} {
-			if t, err := time.Parse(layout, trimmed); err == nil {
-				return t.UTC().Format(time.RFC3339)
-			}
-		}
-		if epoch, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
-			return timestampString(float64(epoch))
-		}
-		return trimmed
-	case float64:
-		if typed <= 0 {
-			return ""
-		}
-		seconds := int64(typed)
-		if seconds > 1e12 {
-			seconds /= 1000 // milliseconds
-		}
-		return time.Unix(seconds, 0).UTC().Format(time.RFC3339)
-	case json.Number:
-		if v, err := typed.Float64(); err == nil {
-			return timestampString(v)
-		}
-	}
-	return ""
+	return utils.NormalizeTimestamp(value)
 }
 
 var hashtagPattern = regexp.MustCompile(`#([\p{L}\p{N}_]+)`)
