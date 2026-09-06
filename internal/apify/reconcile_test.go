@@ -147,3 +147,40 @@ func TestReconciliationAdvancesPastUnavailableRun(t *testing.T) {
 		t.Fatalf("cursor=%d err=%v", cursor, err)
 	}
 }
+
+func TestCanceledStartStillRecordsAndAbortsAcceptedRun(t *testing.T) {
+	client, db := newTestClient(t, newFakeNetwork())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	aborted := false
+	client.http.Transport = billingTransport(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v2/acts/test/runs" {
+			if r.URL.Query().Get("waitForFinish") != "" {
+				t.Fatal("start must not wait for completion")
+			}
+			cancel() // downloader failed while Apify was accepting metadata run
+			if r.Context().Err() != nil {
+				t.Fatal("lost receipt context after caller canceled")
+			}
+			return httpResponse(r, 201, []byte(`{"data":{"id":"accepted","status":"RUNNING"}}`)), nil
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/v2/actor-runs/accepted/abort" {
+			aborted = true
+			return httpResponse(r, 200, []byte(`{}`)), nil
+		}
+		if err := r.Context().Err(); err != nil {
+			return nil, err
+		}
+		return httpResponse(r, 200, []byte(`{"data":{"id":"accepted","status":"ABORTED","usageTotalUsd":0.003}}`)), nil
+	})
+	client.costSettleDelays = []time.Duration{time.Millisecond}
+	usage := &models.FallbackUsage{}
+	if _, err := client.runActor(ctx, db, usage, "test", map[string]any{}, io.Discard); err == nil {
+		t.Fatal("expected canceled archive")
+	}
+	client.Close()
+	rows := usageRows(t, db)
+	if !aborted || len(rows) != 1 || rows[0].OperationID != "accepted" || rows[0].CostUSD != .003 {
+		t.Fatalf("aborted=%v rows=%+v", aborted, rows)
+	}
+}

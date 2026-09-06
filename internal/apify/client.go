@@ -136,6 +136,9 @@ type run struct {
 // Success/Detail are finalized by the caller once it knows whether the items
 // were actually usable.
 func (c *Client) runActor(ctx context.Context, db *gorm.DB, usage *models.FallbackUsage, actorID string, input any, logWriter io.Writer) (*run, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	usage.Provider = models.FallbackProviderApify
 	usage.Product = strings.ReplaceAll(actorID, "~", "/")
 	c.recordUsage(db, usage)
@@ -145,7 +148,18 @@ func (c *Client) runActor(ctx context.Context, db *gorm.DB, usage *models.Fallba
 	runCtx, cancel := context.WithTimeout(ctx, c.cfg.RunTimeout)
 	defer cancel()
 
-	started, err := c.startRun(runCtx, actorID, input)
+	// Once a paid POST is sent, finish receiving its ID even if the archive
+	// gets canceled. Then the normal canceled wait aborts the known run.
+	// Never wait for actor completion in this POST: cancellation used to lose
+	// already-created metadata run IDs when the paired downloader failed.
+	if err := runCtx.Err(); err != nil {
+		usage.Detail = "start skipped: " + err.Error()
+		c.recordUsage(db, usage)
+		return nil, err
+	}
+	startCtx, cancelStart := context.WithTimeout(context.WithoutCancel(runCtx), 30*time.Second)
+	started, err := c.startRun(startCtx, actorID, input)
+	cancelStart()
 	if err != nil {
 		usage.Detail = truncate("start failed: "+err.Error(), 500)
 		c.recordUsage(db, usage)
@@ -252,9 +266,9 @@ func (c *Client) startRun(ctx context.Context, actorID string, input any) (*run,
 	if err != nil {
 		return nil, err
 	}
-	// The API's own wait-for-finish cap is 60s; most runs finish inside it
-	// and never need a poll.
-	endpoint := fmt.Sprintf("%s/acts/%s/runs?waitForFinish=60", apiBase, url.PathEscape(actorID))
+	// Obtain the run ID immediately; waiting here can lose a billable run
+	// when the requesting job is canceled before the response arrives.
+	endpoint := fmt.Sprintf("%s/acts/%s/runs", apiBase, url.PathEscape(actorID))
 	var resp struct {
 		Data runObject `json:"data"`
 	}

@@ -77,6 +77,11 @@ func (c *Client) archiveYouTube(ctx context.Context, targetURL string, logWriter
 	usage := &models.FallbackUsage{ArchiveItemID: itemID, ShortID: shortID, URL: targetURL}
 	record, err := c.youtubeDownloadRecord(ctx, db, usage, watchURL, logWriter)
 	if err != nil {
+		// Drain the canceled metadata task so its run ID, abort, and billing
+		// evidence are persisted before this archive attempt returns.
+		cancelScrape()
+		facts := <-scrape
+		io.Copy(logWriter, &facts.log)
 		return archivers.Result{}, err
 	}
 

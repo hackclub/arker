@@ -484,6 +484,12 @@ this.
 
 Two platform quirks the code compensates for, so do not "simplify" them away:
 
+- Start POSTs must return their run IDs immediately, not wait for completion.
+  Waiting 60 seconds used to lose already-created YouTube metadata run IDs
+  when a failed downloader canceled the paired task. Once a POST is sent,
+  a bounded detached context preserves its receipt; cancellation then aborts
+  the known run. The YouTube error path drains the canceled metadata task
+  so its ID, abort, and cost evidence persist before the archive returns.
 - Pay-per-event actors can report zero **or a partial nonzero start fee** at
   completion; failed runs also accrue delayed charges. `settleCost` re-reads
   every started run at `defaultCostSettleDelays`, retries transient failures,
