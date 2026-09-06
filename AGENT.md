@@ -484,13 +484,19 @@ this.
 
 Two platform quirks the code compensates for, so do not "simplify" them away:
 
-- Pay-per-event actors report `usageTotalUsd = 0` at `SUCCEEDED`; the start
-  fee and the per-result fee land in the ledger a few seconds later (measured
-  ~4–20s). `settleCost` re-reads the run in the background at
-  `defaultCostSettleDelays` and updates only the row's `cost_usd`. Tests call
-  `Close()` to wait for it; the server does not drain on SIGTERM, so a run
-  that finished in the last three minutes before a redeploy can keep a
-  partial figure. Apify's console is the authority for reconciliation.
+- Pay-per-event actors can report zero **or a partial nonzero start fee** at
+  completion; failed runs also accrue delayed charges. `settleCost` re-reads
+  every started run at `defaultCostSettleDelays`, retries transient failures,
+  and updates only cost/reconciliation fields. Stale caller saves cannot
+  overwrite a reconciled cost (including a legitimate zero correction).
+  `RunCostReconciler` additionally scans persisted usage rows in bounded pages,
+  skips runs younger than five minutes, and rechecks successful billing reads
+  daily. It recovers work interrupted by a redeploy. A missing `usageTotalUsd`
+  is an error, not zero. `cost_reconciled_at` is the last successful terminal
+  billing read, not a promise the invoice can never change.
+  Run totals exclude account-level storage/API charges, subscription charges,
+  and other applications or ad-hoc test runs. Reconcile those separately against
+  Apify's billing-cycle usage; never assign them to a capture without evidence.
 - Facebook delivery URLs sometimes point at an ISP CDN appliance
   (`*.fna.fbcdn.net`) that publishes only an AAAA record, and Arker's hosts
   have no IPv6 route (rewriting the host 403s — the signature is bound to it).
@@ -499,7 +505,7 @@ Two platform quirks the code compensates for, so do not "simplify" them away:
   reason in `Detail`.
 
 `internal/apify/live_test.go` exercises every actor against real posts and
-spends real money (~$0.07 for the full set). It is skipped unless
+spends real money (2026-09-06: $0.12778 for 19 scenarios / 23 actor runs). It is skipped unless
 `APIFY_LIVE_TOKEN` is set; `APIFY_LIVE_ONLY=<substring>` narrows it and
 `APIFY_LIVE_OUT=<dir>` keeps the artifacts and a `summary.json`. Run it before
 shipping anything that touches the fallback — recorded fixtures cannot tell you

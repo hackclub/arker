@@ -646,6 +646,9 @@ func main() {
 			RunTimeout:    cfg.ApifyRunTimeout,
 			MaxRunCostUSD: cfg.ApifyMaxRunCostUSD,
 		})
+		reconcileCtx, stopReconciler := context.WithCancel(context.Background())
+		defer stopReconciler()
+		go apifyClient.RunCostReconciler(reconcileCtx, db)
 		archiversMap[utils.ArchiveTypeYtDlp] = apify.WithFallback(archiversMap[utils.ArchiveTypeYtDlp], utils.ArchiveTypeYtDlp, apifyClient)
 		archiversMap[utils.ArchiveTypeGalleryDl] = apify.WithFallback(archiversMap[utils.ArchiveTypeGalleryDl], utils.ArchiveTypeGalleryDl, apifyClient)
 		socialThumbnailProvider = apifyClient

@@ -152,9 +152,13 @@ func (c *Client) runActor(ctx context.Context, db *gorm.DB, usage *models.Fallba
 		return nil, err
 	}
 	usage.OperationID = started.ID
+	usage.CostUSD = started.CostUSD
 	usage.ResourceID = started.KeyValueStoreID
 	c.recordUsage(db, usage)
 	fmt.Fprintf(logWriter, "Apify actor %s started: run %s\n", usage.Product, started.ID)
+	// Every started run can accrue delayed fees, even failures and nonzero
+	// partial charges. Schedule after the caller has saved its initial facts.
+	defer func() { c.settleCost(db, usage.ID, started.ID, usage.Product) }()
 
 	finished, err := c.waitForRun(runCtx, started.ID, logWriter)
 	if finished != nil {
@@ -180,11 +184,10 @@ func (c *Client) runActor(ctx context.Context, db *gorm.DB, usage *models.Fallba
 	finished.Items = items
 	usage.Records = len(items)
 	c.recordUsage(db, usage)
-	fmt.Fprintf(logWriter, "Apify run %s finished: %d item(s), $%.4f\n", finished.ID, len(items), finished.CostUSD)
+	fmt.Fprintf(logWriter, "Apify run %s finished: %d item(s), initial reported cost $%.6f (billing may settle later)\n", finished.ID, len(items), finished.CostUSD)
 	c.checkRunCost(finished.ID, usage.Product, finished.CostUSD)
 	if finished.CostUSD == 0 {
 		fmt.Fprintf(logWriter, "Run cost not yet reported by the platform; the usage row is updated once it settles\n")
-		c.settleCost(db, usage.ID, finished.ID, usage.Product)
 	}
 	return finished, nil
 }
@@ -195,12 +198,12 @@ func (c *Client) checkRunCost(runID, product string, costUSD float64) {
 	}
 }
 
-// settleCost re-reads a run whose cost was still zero when it finished.
+// settleCost re-reads every started run, including failed and partly billed runs.
 // Pay-per-event actors are charged asynchronously, so the run object reports
 // $0 for a few seconds after SUCCEEDED and the ledger would otherwise
-// under-count every such run. The re-reads happen in the background so the
-// archive does not wait on billing, and touch only the cost column so they
-// cannot clobber the Success/Detail the caller finalizes meanwhile.
+// under-count such runs. The re-reads happen in the background so the
+// archive does not wait on billing, and touch only cost/reconciliation fields
+// so they cannot clobber the Success/Detail the caller finalizes meanwhile.
 func (c *Client) settleCost(db *gorm.DB, usageID uint, runID, product string) {
 	if db == nil || usageID == 0 || len(c.costSettleDelays) == 0 {
 		return
@@ -216,28 +219,16 @@ func (c *Client) settleCost(db *gorm.DB, usageID uint, runID, product string) {
 				time.Sleep(delay - c.costSettleDelays[i-1])
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			var resp struct {
-				Data runObject `json:"data"`
-			}
-			err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("%s/actor-runs/%s", apiBase, url.PathEscape(runID)), nil, &resp)
+			cost, err := c.reconcileRunCost(ctx, db, usageID, runID, product)
 			cancel()
 			if err != nil {
 				slog.Warn("Could not re-read Apify run cost", "run", runID, "error", err)
-				return
-			}
-			cost := resp.Data.UsageTotalUSD
-			if cost == 0 || cost == recorded {
 				continue
 			}
-			if err := db.Model(&models.FallbackUsage{}).Where("id = ?", usageID).Update("cost_usd", cost).Error; err != nil {
-				slog.Error("Failed to record settled Apify run cost", "run", runID, "error", err)
-				return
-			}
 			recorded = cost
-			c.checkRunCost(runID, product, cost)
 		}
 		if recorded == 0 {
-			slog.Warn("Apify run cost never settled; ledger row keeps $0", "run", runID, "actor", product)
+			slog.Warn("Apify run still reports zero cost after settlement window", "run", runID, "actor", product)
 		}
 	}()
 }
@@ -408,12 +399,12 @@ func (c *Client) recordUsage(db *gorm.DB, usage *models.FallbackUsage) {
 	// the settled database value. Ordinary updates therefore leave cost alone;
 	// a nonzero cost reported synchronously by the run is written explicitly.
 	cost := usage.CostUSD
-	if err := db.Omit("cost_usd").Save(usage).Error; err != nil {
+	if err := db.Omit("cost_usd", "cost_reconciled_at").Save(usage).Error; err != nil {
 		slog.Error("Failed to record Apify usage", "error", err, "url", usage.URL)
 		return
 	}
 	if cost > 0 {
-		if err := db.Model(&models.FallbackUsage{}).Where("id = ?", usage.ID).UpdateColumn("cost_usd", cost).Error; err != nil {
+		if err := db.Model(&models.FallbackUsage{}).Where("id = ? AND cost_reconciled_at IS NULL AND cost_usd < ?", usage.ID, cost).UpdateColumn("cost_usd", cost).Error; err != nil {
 			slog.Error("Failed to record Apify usage cost", "error", err, "url", usage.URL)
 		}
 	}

@@ -35,22 +35,24 @@ type archiveResultResponse struct {
 }
 
 type archiveResultCost struct {
-	Currency  string                       `json:"currency"`
-	TotalUSD  float64                      `json:"total_usd"`
-	Estimated bool                         `json:"estimated"`
-	Breakdown []archiveResultCostBreakdown `json:"breakdown"`
-	Note      string                       `json:"note"`
+	UnreconciledOperations int64                        `json:"unreconciled_operations"`
+	Currency               string                       `json:"currency"`
+	TotalUSD               float64                      `json:"total_usd"`
+	Estimated              bool                         `json:"estimated"`
+	Breakdown              []archiveResultCostBreakdown `json:"breakdown"`
+	Note                   string                       `json:"note"`
 }
 
 type archiveResultCostBreakdown struct {
-	Provider         string  `json:"provider"`
-	Product          string  `json:"product,omitempty"`
-	Operations       int64   `json:"operations"`
-	Successes        int64   `json:"successes"`
-	Records          int64   `json:"records,omitempty"`
-	BytesTransferred int64   `json:"bytes_transferred,omitempty"`
-	CostUSD          float64 `json:"cost_usd"`
-	Estimated        bool    `json:"estimated"`
+	UnreconciledOperations int64   `json:"unreconciled_operations"`
+	Provider               string  `json:"provider"`
+	Product                string  `json:"product,omitempty"`
+	Operations             int64   `json:"operations"`
+	Successes              int64   `json:"successes"`
+	Records                int64   `json:"records,omitempty"`
+	BytesTransferred       int64   `json:"bytes_transferred,omitempty"`
+	CostUSD                float64 `json:"cost_usd"`
+	Estimated              bool    `json:"estimated"`
 }
 
 type archiveResultItem struct {
@@ -283,7 +285,7 @@ func buildArchiveResultCost(db *gorm.DB, items []models.ArchiveItem) (archiveRes
 	cost := archiveResultCost{
 		Currency:  "USD",
 		Breakdown: []archiveResultCostBreakdown{{Provider: "native", Operations: int64(len(items)), CostUSD: 0, Estimated: false}},
-		Note:      "Native archive operations are free. Apify costs are the platform-reported run cost; historical Bright Data rows are estimates from configured rates. The provider's billing dashboard is the invoice of record.",
+		Note:      "Native archive operations are free. Apify costs are the platform-reported run cost; historical Bright Data rows are estimates from configured rates. Run costs can settle later and exclude account-level storage/API fees, subscriptions, and other consumers. The provider's billing dashboard is the invoice of record.",
 	}
 	ids := make([]uint, 0, len(items))
 	for _, item := range items {
@@ -296,16 +298,17 @@ func buildArchiveResultCost(db *gorm.DB, items []models.ArchiveItem) (archiveRes
 		return cost, nil
 	}
 	var rows []struct {
-		Provider         string
-		Product          string
-		Operations       int64
-		Successes        int64
-		Records          int64
-		BytesTransferred int64
-		CostUSD          float64
+		Provider               string
+		Product                string
+		Operations             int64
+		Successes              int64
+		Records                int64
+		BytesTransferred       int64
+		CostUSD                float64
+		UnreconciledOperations int64
 	}
 	if err := db.Model(&models.FallbackUsage{}).
-		Select("provider", "product", "COUNT(*) AS operations", "COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END), 0) AS successes", "COALESCE(SUM(records), 0) AS records", "COALESCE(SUM(bytes_transferred), 0) AS bytes_transferred", "COALESCE(SUM(cost_usd), 0) AS cost_usd").
+		Select("provider", "product", "COUNT(*) AS operations", "COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END), 0) AS successes", "COALESCE(SUM(records), 0) AS records", "COALESCE(SUM(bytes_transferred), 0) AS bytes_transferred", "COALESCE(SUM(cost_usd), 0) AS cost_usd", "COALESCE(SUM(CASE WHEN provider = 'apify' AND cost_reconciled_at IS NULL THEN 1 ELSE 0 END), 0) AS unreconciled_operations").
 		Where("archive_item_id IN ?", ids).Group("provider").Group("product").Order("provider").Order("product").Scan(&rows).Error; err != nil {
 		return archiveResultCost{}, err
 	}
@@ -317,8 +320,9 @@ func buildArchiveResultCost(db *gorm.DB, items []models.ArchiveItem) (archiveRes
 		// Bright Data costs were rate-based estimates; Apify reports the
 		// billed amount for each run.
 		estimated := provider == models.FallbackProviderBrightData
-		cost.Breakdown = append(cost.Breakdown, archiveResultCostBreakdown{Provider: provider, Product: row.Product, Operations: row.Operations, Successes: row.Successes, Records: row.Records, BytesTransferred: row.BytesTransferred, CostUSD: row.CostUSD, Estimated: estimated})
+		cost.Breakdown = append(cost.Breakdown, archiveResultCostBreakdown{UnreconciledOperations: row.UnreconciledOperations, Provider: provider, Product: row.Product, Operations: row.Operations, Successes: row.Successes, Records: row.Records, BytesTransferred: row.BytesTransferred, CostUSD: row.CostUSD, Estimated: estimated})
 		cost.TotalUSD += row.CostUSD
+		cost.UnreconciledOperations += row.UnreconciledOperations
 		if estimated {
 			cost.Estimated = true
 		}

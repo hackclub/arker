@@ -30,17 +30,18 @@ type usageDay struct {
 
 // usageEntry is one recent usage row, trimmed for the API.
 type usageEntry struct {
-	CreatedAt   time.Time `json:"created_at"`
-	ShortID     string    `json:"short_id"`
-	URL         string    `json:"url"`
-	Provider    string    `json:"provider"`
-	Product     string    `json:"product"`
-	OperationID string    `json:"operation_id,omitempty"`
-	Records     int       `json:"records,omitempty"`
-	Bytes       int64     `json:"bytes_transferred,omitempty"`
-	CostUSD     float64   `json:"cost_usd"`
-	Success     bool      `json:"success"`
-	Detail      string    `json:"detail,omitempty"`
+	CostReconciledAt *time.Time `json:"cost_reconciled_at"`
+	CreatedAt        time.Time  `json:"created_at"`
+	ShortID          string     `json:"short_id"`
+	URL              string     `json:"url"`
+	Provider         string     `json:"provider"`
+	Product          string     `json:"product"`
+	OperationID      string     `json:"operation_id,omitempty"`
+	Records          int        `json:"records,omitempty"`
+	Bytes            int64      `json:"bytes_transferred,omitempty"`
+	CostUSD          float64    `json:"cost_usd"`
+	Success          bool       `json:"success"`
+	Detail           string     `json:"detail,omitempty"`
 }
 
 // FallbackUsage reports what the paid fallback has been spending: overall
@@ -95,22 +96,23 @@ func FallbackUsage(c *gin.Context, db *gorm.DB) {
 	recent := make([]usageEntry, len(rows))
 	for i, row := range rows {
 		recent[i] = usageEntry{
-			CreatedAt:   row.CreatedAt,
-			ShortID:     row.ShortID,
-			URL:         row.URL,
-			Provider:    row.Provider,
-			Product:     row.Product,
-			OperationID: row.OperationID,
-			Records:     row.Records,
-			Bytes:       row.BytesTransferred,
-			CostUSD:     row.CostUSD,
-			Success:     row.Success,
-			Detail:      row.Detail,
+			CostReconciledAt: row.CostReconciledAt,
+			CreatedAt:        row.CreatedAt,
+			ShortID:          row.ShortID,
+			URL:              row.URL,
+			Provider:         row.Provider,
+			Product:          row.Product,
+			OperationID:      row.OperationID,
+			Records:          row.Records,
+			Bytes:            row.BytesTransferred,
+			CostUSD:          row.CostUSD,
+			Success:          row.Success,
+			Detail:           row.Detail,
 		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"note":         "Apify costs are the platform-reported run cost; historical Bright Data rows are rate-based estimates. The provider's billing dashboard is the invoice of record.",
+		"note":         "Apify costs are the platform-reported run cost; historical Bright Data rows are rate-based estimates. Run costs can settle later and exclude account-level storage/API fees, subscriptions, and other consumers. The provider's billing dashboard is the invoice of record.",
 		"total":        overall,
 		"by_product":   byProduct,
 		"last_30_days": days,

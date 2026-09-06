@@ -121,6 +121,13 @@ func TestApiArchiveResultVideoProvidersAndLegacy(t *testing.T) {
 					t.Fatalf("fallback cost = %#v", cost)
 				}
 				paid := cost["breakdown"].([]any)[1].(map[string]any)
+				wantUnreconciled := float64(0)
+				if tc.source == models.ArchiveSourceApify {
+					wantUnreconciled = 2
+				}
+				if cost["unreconciled_operations"] != wantUnreconciled || paid["unreconciled_operations"] != wantUnreconciled {
+					t.Fatalf("reconciliation disclosure = %#v", cost)
+				}
 				if paid["provider"] != tc.source {
 					t.Fatalf("paid breakdown = %#v", paid)
 				}

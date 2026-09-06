@@ -197,6 +197,9 @@ type FallbackUsage struct {
 	// (bytes served out of an Apify key-value store), not from platform CDNs.
 	BytesTransferred int64
 	CostUSD          float64
+	// CostReconciledAt records the last authoritative post-run billing read.
+	// Nil means the cost may still be an initial, partial charge.
+	CostReconciledAt *time.Time
 	Success          bool
 	Detail           string
 }
