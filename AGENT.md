@@ -516,7 +516,10 @@ Archives rescued before the swap carry `source = "brightdata"` and a
 
 ### Database Changes
 1. Update models in `internal/models/models.go`
-2. Add migration logic to `cmd/main.go` (AutoMigrate call)
+2. Add migration logic to `cmd/main.go`. Existing production tables require
+   explicit idempotent DDL: the current GORM/pgx pairing can fail before
+   AutoMigrate adds columns. See `ensureApifyCostSchema` and
+   `ensureCanonicalURLSchema`; SQLite-only tests do not cover this failure.
 3. Test with `make db-reset` for clean database
 
 ## Troubleshooting

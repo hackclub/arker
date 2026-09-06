@@ -277,6 +277,15 @@ func ensureThumbnailKindSchema(db *gorm.DB) error {
 	return nil
 }
 
+// ensureApifyCostSchema is explicit because AutoMigrate cannot alter existing
+// production tables with the current GORM/pgx pairing (see above).
+func ensureApifyCostSchema(db *gorm.DB) error {
+	if db.Dialector.Name() != "postgres" {
+		return nil
+	}
+	return db.Exec(`ALTER TABLE fallback_usages ADD COLUMN IF NOT EXISTS cost_reconciled_at timestamptz`).Error
+}
+
 // canonicalURLBackfillBatch bounds how many rows one transaction rewrites.
 // Small enough that no statement holds row locks on a meaningful slice of the
 // table, large enough that 50k rows is 50 round trips rather than 50k.
@@ -458,6 +467,9 @@ func main() {
 	}
 	if err := utils.MigrateBrightDataUsage(db); err != nil {
 		slog.Error("Failed to carry Bright Data usage history into fallback_usages", "error", err)
+	}
+	if err := ensureApifyCostSchema(db); err != nil {
+		log.Fatalf("Apify billing schema migration failed: %v", err)
 	}
 	// Explicit DDL, not AutoMigrate: AutoMigrate cannot add a column to a table
 	// that already exists with these driver versions, and it fails silently.
