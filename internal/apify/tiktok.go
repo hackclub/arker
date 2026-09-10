@@ -66,9 +66,11 @@ func (c *Client) tiktokVideo(ctx context.Context, targetURL string, record map[s
 	if videoURL == "" {
 		if isSlideshow := boolField(record, "isSlideshow"); isSlideshow != nil && *isSlideshow {
 			// A photo post reached the yt-dlp route (a /video/ URL that is
-			// really a slideshow). There is no MP4 to store; the gallery item
-			// for the same capture holds the stills.
-			err := fmt.Errorf("TikTok post %s is a photo slideshow, not a video", targetURL)
+			// really a slideshow). There is no MP4 to store. Wrapping
+			// ErrPhotoSlideshow lets the worker re-type the item to gallery-dl
+			// even when the native run never got far enough to notice (TikTok
+			// bot-walls the page and this paid record is the first look).
+			err := fmt.Errorf("%w: TikTok post %s is a photo slideshow (isSlideshow)", archivers.ErrPhotoSlideshow, targetURL)
 			usage.Detail = truncate(err.Error(), 500)
 			c.recordUsage(db, usage)
 			return archivers.Result{}, err

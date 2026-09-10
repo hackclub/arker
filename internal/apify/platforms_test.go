@@ -311,6 +311,11 @@ func TestTikTokSlideshowOnVideoRouteIsRejected(t *testing.T) {
 	if !strings.Contains(err.Error(), "photo slideshow") {
 		t.Errorf("error = %v", err)
 	}
+	// The worker keys its gallery-dl hand-off on this sentinel; the paid
+	// record is often the first look at a bot-walled post.
+	if !errors.Is(err, archivers.ErrPhotoSlideshow) {
+		t.Errorf("error does not wrap ErrPhotoSlideshow: %v", err)
+	}
 }
 
 func TestTikTokDeletedPostIsNotFound(t *testing.T) {
