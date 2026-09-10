@@ -147,11 +147,17 @@ func GetItemLog(c *gin.Context, db *gorm.DB) {
 // RetryAllFailedJobs directly retries all failed archive items.
 // Pass ?type=yt-dlp (or any archive type) to retry only one archive type.
 func RetryAllFailedJobs(c *gin.Context, db *gorm.DB, riverClient *river.Client[pgx.Tx]) {
-	query := db.Where("status = 'failed'")
+	query := db.Where("archive_items.status = 'failed'")
 	if typ := c.Query("type"); typ != "" {
 		// Normalize so a runbook that still says ?type=youtube keeps matching
 		// rows rather than silently retrying nothing.
-		query = query.Where("type = ?", utils.NormalizeArchiveType(typ))
+		query = query.Where("archive_items.type = ?", utils.NormalizeArchiveType(typ))
+	}
+	if shortID := c.Query("short_id"); shortID != "" {
+		// One capture, for an operator repairing a known-bad archive without
+		// re-running every failed item of the type (which, for the sites the
+		// Apify fallback covers, is paid work).
+		query = query.Where("archive_items.capture_id IN (SELECT id FROM captures WHERE short_id = ?)", shortID)
 	}
 
 	// Get all failed items
@@ -342,7 +348,7 @@ var missingItemBackfillURLPattern = map[string]struct {
 		matches: utils.IsVideoURL,
 	},
 	utils.ArchiveTypeGalleryDl: {
-		sqlLike: "(LOWER(archived_urls.original) LIKE '%instagram.com%' OR LOWER(archived_urls.original) LIKE '%twitter.com%' OR LOWER(archived_urls.original) LIKE '%x.com%' OR LOWER(archived_urls.original) LIKE '%reddit.com%' OR LOWER(archived_urls.original) LIKE '%redd.it%' OR LOWER(archived_urls.original) LIKE '%tumblr.com%' OR LOWER(archived_urls.original) LIKE '%bsky.app%' OR LOWER(archived_urls.original) LIKE '%flickr.com%' OR LOWER(archived_urls.original) LIKE '%imgur.com%' OR LOWER(archived_urls.original) LIKE '%deviantart.com%' OR LOWER(archived_urls.original) LIKE '%artstation.com%' OR LOWER(archived_urls.original) LIKE '%pixiv.net%' OR LOWER(archived_urls.original) LIKE '%pinterest.com%' OR LOWER(archived_urls.original) LIKE '%newgrounds.com%' OR LOWER(archived_urls.original) LIKE '%vsco.co%' OR LOWER(archived_urls.original) LIKE '%facebook.com%')",
+		sqlLike: "(LOWER(archived_urls.original) LIKE '%instagram.com%' OR LOWER(archived_urls.original) LIKE '%twitter.com%' OR LOWER(archived_urls.original) LIKE '%x.com%' OR LOWER(archived_urls.original) LIKE '%reddit.com%' OR LOWER(archived_urls.original) LIKE '%redd.it%' OR LOWER(archived_urls.original) LIKE '%tumblr.com%' OR LOWER(archived_urls.original) LIKE '%bsky.app%' OR LOWER(archived_urls.original) LIKE '%flickr.com%' OR LOWER(archived_urls.original) LIKE '%imgur.com%' OR LOWER(archived_urls.original) LIKE '%deviantart.com%' OR LOWER(archived_urls.original) LIKE '%artstation.com%' OR LOWER(archived_urls.original) LIKE '%pixiv.net%' OR LOWER(archived_urls.original) LIKE '%pinterest.com%' OR LOWER(archived_urls.original) LIKE '%newgrounds.com%' OR LOWER(archived_urls.original) LIKE '%vsco.co%' OR LOWER(archived_urls.original) LIKE '%facebook.com%' OR LOWER(archived_urls.original) LIKE '%tiktok.com%')",
 		// Same gate as live capture: without cookies, backfilling a login-only
 		// site would queue thousands of guaranteed failures.
 		//

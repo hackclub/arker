@@ -167,6 +167,14 @@ func (f *FallbackArchiver) Archive(ctx context.Context, url string, logWriter io
 		slog.Info("Apify fallback skipped: content unavailable at source", "url", url, "type", f.Type, "native_error", nativeErr)
 		return result, nativeErr
 	}
+	// The post has no video: it is a slideshow that reached the video route
+	// through its /video/ spelling. The worker re-routes it to gallery-dl; a
+	// paid video fetch would only report the same thing.
+	if errors.Is(nativeErr, archivers.ErrPhotoSlideshow) {
+		fmt.Fprintf(logWriter, "\nNative flow found a photo slideshow (%v); not attempting the Apify video fallback\n", nativeErr)
+		slog.Info("Apify fallback skipped: post is a photo slideshow", "url", url, "type", f.Type, "native_error", nativeErr)
+		return result, nativeErr
+	}
 	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < minFallbackBudget {
 		fmt.Fprintf(logWriter, "\nNative flow failed but only %s remains in the job budget; skipping Apify fallback this attempt\n",
 			time.Until(deadline).Round(time.Second))

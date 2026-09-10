@@ -21,6 +21,16 @@ var ErrSocialThumbnailUnavailable = errors.New("social thumbnail unavailable")
 // not about Arker's access to it, so a paid fallback would fail the same way.
 var ErrContentUnavailable = errors.New("content unavailable at the source")
 
+// ErrPhotoSlideshow means a URL routed to the video archiver turned out to be
+// an image post: a TikTok photo post reached through its /video/<id> spelling
+// (TikTok's own share URLs and Display API use that form for every post, and
+// the page redirects to /photo/<id>). yt-dlp does not fail on these — it
+// silently yields the soundtrack as an audio-only "video" — so the archiver
+// has to notice and refuse, and the worker hands the post to gallery-dl,
+// which stores the stills. A paid fallback cannot rescue this: the post has
+// no video to buy.
+var ErrPhotoSlideshow = errors.New("post is a photo slideshow, not a video")
+
 // contentUnavailableMarkers are the platform messages yt-dlp relays verbatim
 // when the content is gone rather than gated. Access problems (bot checks,
 // login walls, HTTP 400/403, rate limits) are deliberately absent: those are

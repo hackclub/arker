@@ -2,6 +2,7 @@ package archivers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"gorm.io/gorm"
 	"io"
@@ -290,6 +291,12 @@ func (a *YtDlpArchiver) archive(ctx context.Context, url string, logWriter io.Wr
 		fmt.Fprintf(logWriter, "Failed to read yt-dlp info JSON: %v\n", err)
 		return Result{}, err
 	}
+	if downloadVideo {
+		if reason := audioOnlySlideshowReason(rawInfo); reason != "" {
+			fmt.Fprintf(logWriter, "Not a video: %s; the post belongs to the gallery archiver\n", reason)
+			return Result{}, fmt.Errorf("%w: %s", ErrPhotoSlideshow, reason)
+		}
+	}
 	metadata, sanitizedRaw, err := BuildYtDlpVideoArtifacts(rawInfo, url, version, media, time.Now())
 	if err != nil {
 		fmt.Fprintf(logWriter, "Failed to normalize yt-dlp info JSON: %v\n", err)
@@ -353,6 +360,46 @@ func (a *YtDlpArchiver) archive(ctx context.Context, url string, logWriter io.Wr
 		// completeness needs no count from the extractor.
 		Completeness: CompletenessComplete,
 	}, nil
+}
+
+// audioOnlySlideshowReason reports why the info JSON describes an image post
+// rather than a video, or "" when it is a video.
+//
+// yt-dlp's TikTok extractor handles a photo post reached through a /video/
+// URL by offering only the soundtrack (extractor/tiktok.py, "slideshow
+// audio-only mp3/m4a format"): vcodec "none", a single audio format, no
+// dimensions. Storing that as the archive of the post is exactly the wrong
+// artifact — the stills are the post — so the check is deliberately narrow to
+// TikTok, where the shape is documented; an audio-only result from another
+// extractor is still stored, as it always was.
+func audioOnlySlideshowReason(rawInfo []byte) string {
+	var info struct {
+		ExtractorKey string `json:"extractor_key"`
+		Extractor    string `json:"extractor"`
+		VCodec       string `json:"vcodec"`
+		Formats      []struct {
+			VCodec string `json:"vcodec"`
+		} `json:"formats"`
+	}
+	if err := json.Unmarshal(rawInfo, &info); err != nil {
+		return ""
+	}
+	extractor := strings.ToLower(info.ExtractorKey)
+	if extractor == "" {
+		extractor = strings.ToLower(info.Extractor)
+	}
+	if extractor != "tiktok" {
+		return ""
+	}
+	if info.VCodec != "none" {
+		return ""
+	}
+	for _, format := range info.Formats {
+		if format.VCodec != "" && format.VCodec != "none" {
+			return ""
+		}
+	}
+	return "TikTok offered only the soundtrack (no video stream): this /video/ URL is a photo slideshow"
 }
 
 // detectedLanguageFromProbe reads the video's language off the probe output.

@@ -356,7 +356,7 @@ func findFindOrCreateCandidate(tx *gorm.DB, archivedURLIDs []uint, criteria find
 	}
 	var candidates []models.Capture
 	if err := tx.Where("archived_url_id IN ? AND alias_of_id IS NULL", archivedURLIDs).
-		Preload("ArchiveItems").Find(&candidates).Error; err != nil {
+		Preload("ArchivedURL").Preload("ArchiveItems").Find(&candidates).Error; err != nil {
 		return nil, "", err
 	}
 
@@ -394,7 +394,7 @@ func captureStatusForTypes(c *models.Capture, criteria findOrCreateCriteria) (st
 	status := "completed"
 	var completedAt time.Time
 	for _, typ := range criteria.types {
-		item, ok := byType[utils.NormalizeArchiveType(typ)]
+		item, ok := byType[substituteMediaType(c, typ)]
 		if !ok {
 			return "", time.Time{}, false
 		}
@@ -417,6 +417,35 @@ func captureStatusForTypes(c *models.Capture, criteria findOrCreateCriteria) (st
 		}
 	}
 	return status, completedAt, true
+}
+
+// substituteMediaType returns the archive type that answers for typ on this
+// capture. A TikTok /video/ URL that turned out to be a slideshow holds a
+// gallery-dl item where its yt-dlp item was (see
+// redirectSlideshowToGallery); that item is the capture of the post, so a
+// request for the video type is judged by it. Any other type, or a capture
+// that does have the video item, is unchanged.
+func substituteMediaType(c *models.Capture, typ string) string {
+	canonical := utils.NormalizeArchiveType(typ)
+	if !utils.ArchiveTypesEqual(canonical, utils.ArchiveTypeYtDlp) || c.ArchivedURL.Original == "" {
+		return canonical
+	}
+	if !utils.GalleryStandsInForVideo(c.ArchivedURL.Original) {
+		return canonical
+	}
+	hasVideo, hasGallery := false, false
+	for _, item := range c.ArchiveItems {
+		switch {
+		case utils.ArchiveTypesEqual(item.Type, utils.ArchiveTypeYtDlp):
+			hasVideo = true
+		case utils.ArchiveTypesEqual(item.Type, utils.ArchiveTypeGalleryDl):
+			hasGallery = true
+		}
+	}
+	if hasGallery && !hasVideo {
+		return utils.ArchiveTypeGalleryDl
+	}
+	return canonical
 }
 
 func completedSocialItemIsReusable(item models.ArchiveItem) bool {
@@ -532,6 +561,7 @@ func findReusableCapture(tx *gorm.DB, archivedURLIDs []uint, types []string) *mo
 		archivedURLIDs, time.Now().Add(-window)).
 		Order("timestamp DESC").
 		Limit(10).
+		Preload("ArchivedURL").
 		Preload("ArchiveItems").
 		Find(&candidates).Error; err != nil {
 		slog.Error("Failed to look up reusable captures", "archived_url_ids", archivedURLIDs, "error", err)
@@ -556,7 +586,7 @@ func captureCoversTypes(c *models.Capture, types []string) bool {
 		byType[utils.NormalizeArchiveType(item.Type)] = item.Status
 	}
 	for _, t := range types {
-		status, ok := byType[utils.NormalizeArchiveType(t)]
+		status, ok := byType[substituteMediaType(c, t)]
 		if !ok || status == "failed" {
 			return false
 		}

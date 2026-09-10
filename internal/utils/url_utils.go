@@ -219,6 +219,46 @@ func IsTikTokPhotoPostURL(rawURL string) bool {
 	return strings.Contains(strings.ToLower(parsed.Path), "/photo/")
 }
 
+// TikTokPhotoPostURL rewrites a TikTok /video/<id> URL to its /photo/<id>
+// spelling. TikTok's share URLs and Display API name every post /video/,
+// photo posts included; the page redirects to /photo/ on visit. Other URLs
+// are returned unchanged.
+func TikTokPhotoPostURL(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || !hostMatches(strings.ToLower(parsed.Hostname()), "tiktok.com") {
+		return rawURL
+	}
+	if !strings.Contains(strings.ToLower(parsed.Path), "/video/") {
+		return rawURL
+	}
+	parsed.Path = strings.Replace(parsed.Path, "/video/", "/photo/", 1)
+	parsed.RawPath = ""
+	return parsed.String()
+}
+
+// GalleryStandsInForVideo reports whether a gallery-dl item may take the
+// place of the yt-dlp item the URL routes to. True for TikTok /video/ URLs:
+// the spelling does not say whether the post is a video or a slideshow, so
+// the video archiver discovers that at capture time and, for a slideshow,
+// the capture ends up holding a gallery item instead of a video item. Callers
+// that judge a capture by its required types must accept that substitute or
+// they would re-capture the same post forever.
+func GalleryStandsInForVideo(rawURL string) bool {
+	return IsTikTokURL(rawURL) && !IsTikTokPhotoPostURL(rawURL)
+}
+
+// MediaFetchURLForType is the URL an archiver of the given type is pointed
+// at for a capture recorded against rawURL. A gallery-dl item on a TikTok
+// /video/ URL exists only because the video archiver found a slideshow, so
+// gallery-dl (and its fallback, which routes on the photo spelling) gets the
+// /photo/ form. Everything else is unchanged.
+func MediaFetchURLForType(archiveType, rawURL string) string {
+	if ArchiveTypesEqual(archiveType, ArchiveTypeGalleryDl) && GalleryStandsInForVideo(rawURL) {
+		return TikTokPhotoPostURL(rawURL)
+	}
+	return rawURL
+}
+
 // IsTikTokShortLinkURL reports whether a URL is a TikTok share short link
 // (vm.tiktok.com/X, vt.tiktok.com/X, tiktok.com/t/X).
 //
@@ -228,11 +268,10 @@ func IsTikTokPhotoPostURL(rawURL string) bool {
 // would mean a network call inside GetArchiveTypes, which is a pure function
 // called from request handlers and the queue.
 //
-// The photo-post case therefore fails, but it fails EXPLICITLY: yt-dlp reports
-// that the post has no video, the yt-dlp item goes to failed, and
-// IsSocialMediaPostURL still recognizes the URL, so the API returns a failed
-// social_post rather than a silent MHTML-only success. See
-// docs note in IsSocialMediaPostURL.
+// The photo-post case is discovered at capture time instead: yt-dlp offers
+// only the soundtrack, the archiver reports archivers.ErrPhotoSlideshow, and
+// the worker hands the item to gallery-dl (see GalleryStandsInForVideo). The
+// same applies to a full /video/<id> URL that is really a photo post.
 func IsTikTokShortLinkURL(rawURL string) bool {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -558,9 +597,10 @@ func ShouldCreateGalleryDLItem(rawURL string) bool {
 // authentication_required failure instead of pretending nothing social was
 // asked for.
 //
-// A TikTok short link that turns out to be a photo post is recognized here and
-// routed to yt-dlp, which fails explicitly; resolving the redirect first would
-// require a network call from this pure function. Facebook container shapes (a
+// A TikTok short link or /video/ URL that turns out to be a photo post is
+// recognized here and routed to yt-dlp, which discovers the slideshow and hands
+// the item to gallery-dl; resolving the redirect first would require a network
+// call from this pure function. Facebook container shapes (a
 // page, its photo tab, its feed) and other unclaimed shapes are NOT recognized
 // and keep ordinary URL behavior.
 func IsSocialMediaPostURL(rawURL string) bool {

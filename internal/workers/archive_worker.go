@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 	"gorm.io/gorm"
 
@@ -88,6 +90,18 @@ func (w *ArchiveWorker) Work(ctx context.Context, job *river.Job[ArchiveJobArgs]
 	if err != nil {
 		logger.Error("Job processing failed", "error", err)
 
+		// The video archiver found a slideshow behind a /video/ URL. The post
+		// is real and archivable, just not by this archiver: hand the item to
+		// gallery-dl and stop retrying — every attempt would say the same.
+		if errors.Is(err, archivers.ErrPhotoSlideshow) && utils.ArchiveTypesEqual(args.Type, utils.ArchiveTypeYtDlp) {
+			if redirectErr := redirectSlideshowToGallery(ctx, w.db, &item, args, err); redirectErr != nil {
+				logger.Error("Failed to hand slideshow to gallery-dl", "error", redirectErr)
+				return river.JobCancel(fmt.Errorf("%w; gallery-dl hand-off failed: %v", err, redirectErr))
+			}
+			logger.Info("Slideshow handed to gallery-dl")
+			return river.JobCancel(err)
+		}
+
 		// On the final attempt, mark as failed permanently and append a clear message
 		if job.Attempt >= job.MaxAttempts {
 			_ = w.db.Model(&item).Updates(map[string]interface{}{
@@ -105,6 +119,53 @@ func (w *ArchiveWorker) Work(ctx context.Context, job *river.Job[ArchiveJobArgs]
 
 	logger.Info("Job processing completed successfully")
 	return nil
+}
+
+// redirectSlideshowToGallery re-types a yt-dlp item as gallery-dl and queues
+// the gallery job. The item is re-typed rather than failed-and-replaced so
+// the capture holds one media item, as it would had the URL been spelled
+// /photo/ from the start: the API's social result and find-or-create's
+// reuse both read the capture the same way, and there is no failed video
+// row left behind for a retry sweep to re-run.
+func redirectSlideshowToGallery(ctx context.Context, db *gorm.DB, item *models.ArchiveItem, args ArchiveJobArgs, cause error) error {
+	var existing int64
+	if err := db.Model(&models.ArchiveItem{}).
+		Where("capture_id = ? AND type = ? AND id <> ?", item.CaptureID, utils.ArchiveTypeGalleryDl, item.ID).
+		Count(&existing).Error; err != nil {
+		return err
+	}
+	if existing > 0 {
+		// A gallery item already exists (an earlier hand-off or a manual
+		// backfill); this video row is then just wrong, not redundant work.
+		if err := db.Model(item).Updates(map[string]interface{}{"status": "failed", "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
+		return utils.AppendArchiveItemLog(db, item.ID, item.RetryCount, fmt.Sprintf("\n\n%v; the capture's gallery-dl item holds the post\n", cause))
+	}
+
+	if err := db.Model(item).Updates(map[string]interface{}{
+		"type":       utils.ArchiveTypeGalleryDl,
+		"status":     "pending",
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		return err
+	}
+	_ = utils.AppendArchiveItemLog(db, item.ID, item.RetryCount, fmt.Sprintf("\n\n%v\nRe-typed this item as gallery-dl and queued the gallery capture of %s\n", cause, utils.TikTokPhotoPostURL(args.URL)))
+
+	client, err := river.ClientFromContextSafely[pgx.Tx](ctx)
+	if err != nil {
+		return fmt.Errorf("no River client in job context: %w", err)
+	}
+	_, err = client.Insert(ctx, ArchiveJobArgs{
+		ShortID: args.ShortID,
+		Type:    utils.ArchiveTypeGalleryDl,
+		URL:     args.URL,
+	}, &river.InsertOpts{
+		MaxAttempts: 3,
+		Tags:        []string{"archive", utils.ArchiveTypeGalleryDl, "slideshow"},
+		UniqueOpts:  river.UniqueOpts{ByArgs: true, ByPeriod: 1 * time.Minute},
+	})
+	return err
 }
 
 // processArchiveJob handles the logic for a single job attempt.
@@ -145,7 +206,13 @@ func processArchiveJob(ctx context.Context, jobArgs ArchiveJobArgs, item *models
 	}
 
 	// Archive the content. PWBundle is returned for browser-based archivers.
-	result, err := arch.Archive(ctx, jobArgs.URL, dbLogWriter, db, item.ID)
+	// A gallery item on a TikTok /video/ URL is a slideshow the video archiver
+	// found; gallery-dl gets the /photo/ spelling.
+	fetchURL := utils.MediaFetchURLForType(jobArgs.Type, jobArgs.URL)
+	if fetchURL != jobArgs.URL {
+		fmt.Fprintf(dbLogWriter, "Fetching %s as %s\n", jobArgs.URL, fetchURL)
+	}
+	result, err := arch.Archive(ctx, fetchURL, dbLogWriter, db, item.ID)
 
 	// CRITICAL: Always defer bundle cleanup to ensure the browser is closed.
 	if result.Bundle != nil {

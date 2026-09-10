@@ -179,6 +179,11 @@ When using Amp with `make dev` running in another window:
 - `POST /admin/api-keys` - Create new API key
 - `POST /admin/url/:id/capture` - Request new capture
 - `GET /admin/item/:id/log` - View capture logs
+- `POST /admin/retry-failed?type=<t>&short_id=<id>` - Re-queue failed items; both
+  filters optional. `short_id` repairs one capture without re-running every
+  failed item of the type (paid work on the sites the Apify fallback covers)
+- `POST /admin/backfill-videos?type=gallery-dl|yt-dlp|git&dry_run=true&limit=N` -
+  Create the media item a capture's URL should have had (see `BackfillMissingMediaItems`)
 
 ### Health & Monitoring
 - `GET /health` - Application and database health check
@@ -388,9 +393,21 @@ Platform quirks worth knowing before changing a route:
   DRM-protected class the native path cannot fetch either. DRM is cryptographic
   rather than positional, so a different network position buys nothing.
 - **TikTok** photo posts (`/photo/`) go to gallery-dl — yt-dlp cannot download a
-  slideshow. Videos and `vm`/`vt`/`t` short links stay on yt-dlp; a short link
-  that resolves to a photo post fails explicitly rather than being resolved at
-  routing time, which would mean a network call from a pure function.
+  slideshow. Videos and `vm`/`vt`/`t` short links stay on yt-dlp. **A `/video/`
+  URL can still be a photo post**: TikTok's share links and Display API spell
+  every post `/video/<id>` and the page redirects to `/photo/` on visit
+  (hack-club-videos submits that form for all of its TikTok posts). yt-dlp does
+  not fail on one — it yields the soundtrack as an audio-only "video" — so the
+  yt-dlp archiver checks the info JSON (`audioOnlySlideshowReason`: TikTok +
+  `vcodec: none` + no video format) and returns `ErrPhotoSlideshow`. The
+  worker then re-types the item to gallery-dl in place, queues the gallery job,
+  and cancels the video job; gallery-dl is pointed at the `/photo/` spelling
+  (`utils.MediaFetchURLForType`) so its extractor and the Apify fallback route
+  on it. Because the capture then holds a gallery item where a video item was
+  expected, find-or-create and alias reuse accept gallery-dl in place of yt-dlp
+  for TikTok `/video/` URLs (`utils.GalleryStandsInForVideo`) instead of
+  re-capturing the post on every submission. The Apify video fallback is
+  skipped for this error: there is no video to buy.
 - **Soundtracks on image posts.** Instagram carousels and TikTok slideshows
   carry a music track. gallery-dl writes it as just another numbered file
   (TikTok: `000.mp3`, `type: audio`; Instagram: numbered after the last slide,

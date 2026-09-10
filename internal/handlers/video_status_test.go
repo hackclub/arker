@@ -395,3 +395,26 @@ func TestBackfillMissingMediaItemsSkipsLoginOnlySitesWithoutCookies(t *testing.T
 		t.Errorf("short_ids = %v, want the Imgur capture, which works anonymously", got)
 	}
 }
+
+// TikTok photo posts captured before the /photo/ route existed have no
+// gallery item; the backfill must offer them one.
+func TestBackfillMissingMediaItemsDryRunTikTokPhotoPost(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newHandlerLogTestDB(t)
+	createVideoCapture(t, db, "eScNI", "https://www.tiktok.com/@someone/photo/7412345678901234567", map[string]string{
+		"screenshot": "completed",
+	})
+	// A /video/ URL is the video archiver's to judge; routing never gives it
+	// a gallery item up front.
+	createVideoCapture(t, db, "ANx6Y", "https://www.tiktok.com/@someone/video/7412345678901234567", map[string]string{
+		"screenshot": "completed",
+		"yt-dlp":     "completed",
+	})
+
+	body := doBackfill(t, newBackfillRouter(t, db), "type=gallery-dl&dry_run=true")
+
+	got := body.ShortIDs[utils.ArchiveTypeGalleryDl]
+	if len(got) != 1 || got[0] != "eScNI" {
+		t.Fatalf("short_ids[gallery-dl] = %v, want [eScNI]", got)
+	}
+}
