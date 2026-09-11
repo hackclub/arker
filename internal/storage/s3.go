@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
@@ -336,17 +337,56 @@ func (w *s3Writer) Close() error {
 	defer file.Close()
 
 	ctx := context.Background()
-	_, err = w.storage.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(w.storage.bucket),
-		Key:    aws.String(w.key),
-		Body:   file, // Stream directly from disk
-	})
-
-	if err != nil {
+	if err := uploadFile(ctx, w.storage.client, w.storage.bucket, w.key, file); err != nil {
 		return fmt.Errorf("failed to upload object to S3: %w", err)
 	}
 
 	return nil
+}
+
+// multipartThreshold is the object size above which uploads are split into
+// parts. A single PutObject is capped at 5 GB by S3 and R2, and long
+// recordings (multi-hour livestreams at 1080p+) routinely exceed that; below
+// the threshold one request is still the cheapest way to store an object.
+const multipartThreshold = 256 << 20
+
+// multipartThresholdForTest lets tests exercise the multipart path without
+// writing hundreds of megabytes; production code never changes it.
+var multipartThresholdForTest int64 = multipartThreshold
+
+// multipartPartSize keeps a 5 TB object under S3's 10,000-part limit while
+// staying well above the 5 MB minimum part size; R2 additionally requires
+// every part but the last to be the same size, which the manager guarantees.
+const multipartPartSize = 512 << 20
+
+// uploadFile stores file at key, streaming it as a multipart upload when it
+// is large enough that a single PutObject would be rejected as EntityTooLarge.
+func uploadFile(ctx context.Context, client *s3.Client, bucket, key string, file *os.File) error {
+	stat, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat temp file: %w", err)
+	}
+	if stat.Size() < multipartThresholdForTest {
+		_, err = client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+			Body:   file, // Stream directly from disk
+		})
+		return err
+	}
+	uploader := manager.NewUploader(client, func(u *manager.Uploader) {
+		u.PartSize = multipartPartSize
+		u.Concurrency = 3
+		// Abort the multipart upload on failure so R2 does not keep billing
+		// for orphaned parts.
+		u.LeavePartsOnError = false
+	})
+	_, err = uploader.Upload(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+		Body:   file,
+	})
+	return err
 }
 
 // cleanup removes the temporary file - safe to call multiple times
