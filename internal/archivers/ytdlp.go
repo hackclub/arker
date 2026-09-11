@@ -182,6 +182,31 @@ func (a *YtDlpArchiver) archive(ctx context.Context, url string, logWriter io.Wr
 		testCmd.Args = append(testCmd.Args, utils.YtDlpProxyArgs()...)
 		testCmd.Args = append(testCmd.Args, fetchURL)
 		testOutput, err := testCmd.CombinedOutput()
+		if err != nil && len(cookieArgs) > 0 {
+			// A stale or throttled session can make the platform reject
+			// every authenticated request (Instagram answers HTTP 400 for
+			// all reels once it flags the account) while the same post is
+			// still served to anyone logged out. Try once anonymously; when
+			// that works, run the download the same way so the capture is
+			// fulfilled natively instead of failing over to a paid
+			// fallback or failing outright.
+			fmt.Fprintf(redactedLog, "yt-dlp test failed with cookies: %v\nOutput: %s\n", err, string(testOutput))
+			fmt.Fprintf(logWriter, "Retrying video accessibility test without cookies...\n")
+			anonCmd := exec.CommandContext(ctx, "yt-dlp")
+			anonCmd.Args = append(anonCmd.Args, testArgs...)
+			anonCmd.Args = append(anonCmd.Args, utils.YtDlpImpersonateArgsForURL(url)...)
+			anonCmd.Args = append(anonCmd.Args, refererArgs...)
+			anonCmd.Args = append(anonCmd.Args, utils.YtDlpProxyArgs()...)
+			anonCmd.Args = append(anonCmd.Args, fetchURL)
+			anonOutput, anonErr := anonCmd.CombinedOutput()
+			if anonErr == nil {
+				fmt.Fprintf(logWriter, "Anonymous access works; continuing without cookies for this run\n")
+				cookieArgs = nil
+				testOutput, err = anonOutput, nil
+			} else {
+				fmt.Fprintf(redactedLog, "yt-dlp anonymous test failed too: %v\nOutput: %s\n", anonErr, string(anonOutput))
+			}
+		}
 		if err != nil {
 			fmt.Fprintf(redactedLog, "yt-dlp test failed: %v\nOutput: %s\n", err, string(testOutput))
 			return Result{}, classifyYtDlpFailure(fmt.Errorf("yt-dlp cannot access video: %v", err), string(testOutput))
