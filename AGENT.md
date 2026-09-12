@@ -435,7 +435,15 @@ Platform quirks worth knowing before changing a route:
 - **Login-only sites** (Instagram feed posts, X, Pinterest, Facebook posts) get
   no gallery-dl item without a cookie jar: the run cannot succeed and would
   spend rate limit proving it. The API reports `authentication_required` for
-  those. The exception is a site the Apify fallback covers — Instagram,
+  those. A failed social item whose log ends in the worker's
+  `content unavailable at the source` classification is reported as
+  `content_unavailable` instead of `extractor_failed`; it is `retryable:
+  false` when the platform said the content is gone (removed, or blocked —
+  a worldwide copyright block reads "Video unavailable") and `retryable: true`
+  while the source can still change (an unstarted or just-ended live event, a
+  private video). Consumers stop re-capturing on `retryable: false`: one
+  WMG-blocked video collected 28 captures and $8.35 of paid fallback runs
+  before this. The exception is a site the Apify fallback covers — Instagram,
   X, Pinterest and Facebook posts today — which does get an item when the
   fallback is configured, because the
   guaranteed-failed native run is then followed by one that can actually

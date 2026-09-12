@@ -686,6 +686,70 @@ func TestProvenanceOnFailedSocialItem(t *testing.T) {
 	}
 }
 
+// A platform verdict that the content is gone is not a retryable failure: a
+// new capture from any IP fails identically, and before this every retry of a
+// worldwide copyright-blocked video (youtube 06113cg3dBU: 28 captures, $8.35
+// of paid fallback runs) was reported as extractor_failed/retryable.
+func TestContentUnavailableFailureIsNotRetryable(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	createVideoCapture(t, db, "blk01", "https://www.youtube.com/watch?v=06113cg3dBU", map[string]string{"yt-dlp": "failed"})
+	var item models.ArchiveItem
+	db.Where("type = ?", "yt-dlp").First(&item)
+	log := "ERROR: [youtube] 06113cg3dBU: Video unavailable\n\n\nFinal attempt failed after 3 tries: content unavailable at the source: Video unavailable: yt-dlp cannot access video: exit status 1"
+	if err := utils.AppendArchiveItemLog(db, item.ID, 3, log); err != nil {
+		t.Fatalf("append log: %v", err)
+	}
+
+	_, body := getResult(t, resultRouter(db, store), "blk01")
+	social := socialOf(t, body)
+	failure := social["failure"].(map[string]any)
+	if failure["code"] != "content_unavailable" || failure["retryable"] != false {
+		t.Fatalf("failure = %#v, want content_unavailable and not retryable", failure)
+	}
+	prov := social["provenance"].(map[string]any)
+	if reason, _ := prov["last_failure_reason"].(string); !strings.Contains(reason, "content unavailable at the source") {
+		t.Fatalf("last_failure_reason = %q", reason)
+	}
+}
+
+// A live event that has not started (or a private video) is unavailable
+// today but can become a recording tomorrow, so it is content_unavailable and
+// still retryable.
+func TestUnstartedLiveEventIsUnavailableButRetryable(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	createVideoCapture(t, db, "liv01", "https://www.youtube.com/watch?v=upcoming", map[string]string{"yt-dlp": "failed"})
+	var item models.ArchiveItem
+	db.Where("type = ?", "yt-dlp").First(&item)
+	if err := utils.AppendArchiveItemLog(db, item.ID, 3, "ERROR: [youtube] upcoming: This live event will begin in 2 days\n\nFinal attempt failed after 3 tries: content unavailable at the source: This live event will begin in: yt-dlp cannot access video: exit status 1"); err != nil {
+		t.Fatalf("append log: %v", err)
+	}
+	_, body := getResult(t, resultRouter(db, store), "liv01")
+	failure := socialOf(t, body)["failure"].(map[string]any)
+	if failure["code"] != "content_unavailable" || failure["retryable"] != true {
+		t.Fatalf("failure = %#v, want content_unavailable and retryable", failure)
+	}
+}
+
+// An ordinary extractor failure stays retryable: that is what the fallback
+// and the next capture exist for.
+func TestOrdinaryExtractorFailureStaysRetryable(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	createVideoCapture(t, db, "bot01", "https://www.youtube.com/watch?v=botcheck", map[string]string{"yt-dlp": "failed"})
+	var item models.ArchiveItem
+	db.Where("type = ?", "yt-dlp").First(&item)
+	if err := utils.AppendArchiveItemLog(db, item.ID, 3, "ERROR: Sign in to confirm you're not a bot\n\nFinal attempt failed after 3 tries: yt-dlp cannot access video: exit status 1"); err != nil {
+		t.Fatalf("append log: %v", err)
+	}
+	_, body := getResult(t, resultRouter(db, store), "bot01")
+	failure := socialOf(t, body)["failure"].(map[string]any)
+	if failure["code"] != "extractor_failed" || failure["retryable"] != true {
+		t.Fatalf("failure = %#v, want extractor_failed and retryable", failure)
+	}
+}
+
 // Rows written before chunked logs existed keep the whole log in the item's own
 // column; the reason has to come from there too.
 func TestLastFailureReasonReadsLegacyLogColumn(t *testing.T) {

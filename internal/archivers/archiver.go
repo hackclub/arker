@@ -46,6 +46,33 @@ var contentUnavailableMarkers = []string{
 	"Offline.",
 }
 
+// contentGoneMarkers are the subset of contentUnavailableMarkers that mean
+// the content will not come back on its own: a removed, deleted or blocked
+// video (a worldwide copyright block also reads "Video unavailable") or a
+// live stream whose recording was never published. A live event that has not
+// begun, one that has just ended, or a private video can all turn into a
+// downloadable recording later, so they stay retryable.
+var contentGoneMarkers = []string{
+	"This live stream recording is not available",
+	"Video unavailable",
+	"This video has been removed",
+	"This video is no longer available",
+}
+
+// ContentGone reports whether a failure reason produced by
+// classifyYtDlpFailure names content that no later attempt can fetch.
+func ContentGone(reason string) bool {
+	if !strings.Contains(reason, ErrContentUnavailable.Error()) {
+		return false
+	}
+	for _, marker := range contentGoneMarkers {
+		if strings.Contains(reason, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // classifyYtDlpFailure wraps err with ErrContentUnavailable when yt-dlp's
 // output shows the platform said the content itself is gone.
 func classifyYtDlpFailure(err error, output string) error {

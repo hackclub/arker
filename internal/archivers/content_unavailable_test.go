@@ -30,3 +30,21 @@ func TestClassifyYtDlpFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestContentGone(t *testing.T) {
+	cases := map[string]bool{
+		"content unavailable at the source: Video unavailable: yt-dlp cannot access video":              true,
+		"content unavailable at the source: This video has been removed: exit status 1":                 true,
+		"content unavailable at the source: This live stream recording is not available: exit status 1": true,
+		"content unavailable at the source: This live event will begin in: exit status 1":               false,
+		"content unavailable at the source: This live event has ended: exit status 1":                   false,
+		"content unavailable at the source: Private video: exit status 1":                               false,
+		"Video unavailable without the classification prefix":                                           false,
+		"yt-dlp cannot access video: exit status 1":                                                     false,
+	}
+	for reason, want := range cases {
+		if got := ContentGone(reason); got != want {
+			t.Errorf("ContentGone(%q) = %v, want %v", reason, got, want)
+		}
+	}
+}

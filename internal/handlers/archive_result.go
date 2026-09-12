@@ -361,12 +361,14 @@ func buildSocialPost(c *gin.Context, store storage.Storage, db *gorm.DB, capture
 	case "processing":
 		result.Status = "processing"
 	case "failed":
-		result.Status, result.Terminal, result.Failure = "failed", true, &socialFailure{Code: "extractor_failed", Message: "The social extractor failed", Retryable: true}
+		result.Status, result.Terminal = "failed", true
+		result.Provenance.LastFailureReason = lastFailureReason(db, social)
+		result.Failure = socialExtractorFailure(result.Provenance.LastFailureReason)
 	case "completed":
 		result.Terminal = true
 	}
 	if social.Status != "completed" {
-		if social.Status == "failed" || social.RetryCount > 1 {
+		if social.Status != "failed" && social.RetryCount > 1 {
 			result.Provenance.LastFailureReason = lastFailureReason(db, social)
 		}
 		return result
@@ -413,6 +415,34 @@ func buildSocialPost(c *gin.Context, store storage.Storage, db *gorm.DB, capture
 		result.Provenance.LastFailureReason = lastFailureReason(db, social)
 	}
 	return result
+}
+
+// socialExtractorFailure is the failure block for a social item whose
+// extractor gave up. Most failures are retryable: bot checks, throttles and
+// outages clear with time or a fallback. A platform verdict that the content
+// itself is unavailable is reported as content_unavailable; it is retryable
+// only while the source can still change (a live event not yet begun or just
+// ended, a private video). Content that is gone — removed, or blocked
+// worldwide, which also surfaces as "Video unavailable" — is not: every later
+// capture from every IP fails the same way, and each one used to cost a paid
+// fallback run. The worker writes that classification into the item's log as
+// its final line, so the verdict is read from the reason the log yields.
+func socialExtractorFailure(lastFailureReason string) *socialFailure {
+	switch {
+	case archivers.ContentGone(lastFailureReason):
+		return &socialFailure{
+			Code:      "content_unavailable",
+			Message:   "The platform reports this content is gone (removed or blocked); another capture cannot succeed until the source changes",
+			Retryable: false,
+		}
+	case strings.Contains(lastFailureReason, archivers.ErrContentUnavailable.Error()):
+		return &socialFailure{
+			Code:      "content_unavailable",
+			Message:   "The platform reports this content is not available yet (an unstarted or just-ended live event, or a private video); a later capture may succeed",
+			Retryable: true,
+		}
+	}
+	return &socialFailure{Code: "extractor_failed", Message: "The social extractor failed", Retryable: true}
 }
 
 // selectSocialItem picks the archive item that represents this URL's social
