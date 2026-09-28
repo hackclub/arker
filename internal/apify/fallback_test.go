@@ -380,3 +380,15 @@ func TestFallbackSkippedWhenSourceReportsContentUnavailable(t *testing.T) {
 		t.Errorf("usage rows = %d, want 0", rows)
 	}
 }
+
+func TestFollowerOnlyAccessDoesNotBuyPublicFallback(t *testing.T) {
+	backend := &fakeBackend{supports: true}
+	nativeErr := fmt.Errorf("%w: follower-only access", archivers.ErrSourceAccessRequired)
+	arch := &FallbackArchiver{
+		Primary: &fakePrimary{err: nativeErr}, Type: utils.ArchiveTypeYtDlp, Backend: backend,
+	}
+	_, err := arch.Archive(context.Background(), "https://www.instagram.com/reel/PRIVATE/", io.Discard, nil, 1)
+	if !errors.Is(err, archivers.ErrSourceAccessRequired) || backend.called {
+		t.Fatalf("err=%v paid fallback called=%v", err, backend.called)
+	}
+}

@@ -437,11 +437,15 @@ Platform quirks worth knowing before changing a route:
   spend rate limit proving it. The API reports `authentication_required` for
   those. A failed social item whose log ends in the worker's
   `content unavailable at the source` classification is reported as
-  `content_unavailable` instead of `extractor_failed`; it is `retryable:
-  false` when the platform said the content is gone (removed, or blocked —
-  a worldwide copyright block reads "Video unavailable") and `retryable: true`
-  while the source can still change (an unstarted or just-ended live event, a
-  private video). Consumers stop re-capturing on `retryable: false`: one
+  `content_unavailable` instead of `extractor_failed`. Its additive
+  `failure.category`, `failure.reason` and `failure.retry.action/automatic`
+  fields are the machine-readable consumer policy (see
+  `docs/proposals/archive-status-api.md`). The legacy `retryable` flag means
+  a future capture may succeed under changed conditions, not "retry now".
+  Generic "Video unavailable" does not establish deletion or a worldwide
+  block. Explicit follower-only access is `authentication_required`, with
+  automatic retries and public paid fallback disabled until Arker has
+  authorized source access. Consumers stop re-capturing on `retryable: false`: one
   WMG-blocked video collected 28 captures and $8.35 of paid fallback runs
   before this. The exception is a site the Apify fallback covers — Instagram,
   X, Pinterest and Facebook posts today — which does get an item when the

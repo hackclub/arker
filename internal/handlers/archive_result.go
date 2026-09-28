@@ -220,9 +220,20 @@ type socialWarning struct {
 	Message string `json:"message"`
 }
 type socialFailure struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	Retryable bool   `json:"retryable"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// Retryable is retained for older clients: a new capture might succeed,
+	// not an instruction to automatically submit one. Retry is authoritative.
+	Retryable bool               `json:"retryable"`
+	Category  string             `json:"category"`
+	Reason    string             `json:"reason"`
+	Retry     socialFailureRetry `json:"retry"`
+}
+
+type socialFailureRetry struct {
+	// Action is a stable, provider-neutral enum; clients never parse Message.
+	Action    string `json:"action"`
+	Automatic bool   `json:"automatic"`
 }
 
 // ApiArchiveResult returns one provider-neutral representation of a capture.
@@ -338,6 +349,12 @@ func buildSocialPost(c *gin.Context, store storage.Storage, db *gorm.DB, capture
 		return nil
 	}
 	result := &socialPostResult{Status: "pending", Media: []normalizedMedia{}, RawMetadata: []rawMetadataLink{}, Warnings: []socialWarning{}, Provenance: socialProvenance{Source: "native", Mode: "primary"}}
+	// Cover every early return, including unsupported and partial archives.
+	defer func() {
+		if result.Failure != nil {
+			setSocialFailurePolicy(result.Failure, result.Provenance.LastFailureReason)
+		}
+	}()
 	social := selectSocialItem(capture.ArchiveItems, sourceURL)
 	if social == nil {
 		result.Status, result.Terminal = "failed", true
@@ -363,7 +380,7 @@ func buildSocialPost(c *gin.Context, store storage.Storage, db *gorm.DB, capture
 	case "failed":
 		result.Status, result.Terminal = "failed", true
 		result.Provenance.LastFailureReason = lastFailureReason(db, social)
-		result.Failure = socialExtractorFailure(result.Provenance.LastFailureReason)
+		result.Failure = socialExtractorFailureForItem(db, social, result.Provenance.LastFailureReason)
 	case "completed":
 		result.Terminal = true
 	}
@@ -417,28 +434,64 @@ func buildSocialPost(c *gin.Context, store storage.Storage, db *gorm.DB, capture
 	return result
 }
 
-// socialExtractorFailure is the failure block for a social item whose
-// extractor gave up. Most failures are retryable: bot checks, throttles and
-// outages clear with time or a fallback. A platform verdict that the content
-// itself is unavailable is reported as content_unavailable; it is retryable
-// only while the source can still change (a live event not yet begun or just
-// ended, a private video). Content that is gone — removed, or blocked
-// worldwide, which also surfaces as "Video unavailable" — is not: every later
-// capture from every IP fails the same way, and each one used to cost a paid
-// fallback run. The worker writes that classification into the item's log as
-// its final line, so the verdict is read from the reason the log yields.
+// Older workers discarded the source access diagnosis when wrapping an error
+// with the paid fallback budget message. Recover only the last extractor error
+// from the bounded tail, never an earlier attempt's permission failure.
+func socialExtractorFailureForItem(db *gorm.DB, item *models.ArchiveItem, reason string) *socialFailure {
+	failure := socialExtractorFailure(reason)
+	if failure.Code != "extractor_failed" {
+		return failure
+	}
+	lines := strings.Split(recentArchiveLogTail(db, item), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), "Output: "))
+		if strings.HasPrefix(line, "Starting video archive for:") || strings.HasPrefix(line, "Starting gallery archive for:") {
+			break
+		}
+		if !strings.HasPrefix(line, "ERROR:") {
+			continue
+		}
+		if strings.Contains(line, "This content is only available for registered users who follow this account") {
+			return socialExtractorFailure(archivers.ErrSourceAccessRequired.Error())
+		}
+		break
+	}
+	return failure
+}
+
+// socialExtractorFailure separates retry policy from proof of deletion.
+// In particular, unavailable recordings and generic "Video unavailable" do
+// not establish that a post was deleted or blocked worldwide.
 func socialExtractorFailure(lastFailureReason string) *socialFailure {
 	switch {
-	case archivers.ContentGone(lastFailureReason):
+	case strings.Contains(lastFailureReason, archivers.ErrSourceAccessRequired.Error()):
 		return &socialFailure{
-			Code:      "content_unavailable",
-			Message:   "The platform reports this content is gone (removed or blocked); another capture cannot succeed until the source changes",
+			Code:      "authentication_required",
+			Message:   "The extractor reports that this post requires an authorized follower account; configure authorized source credentials in Arker before retrying",
 			Retryable: false,
 		}
+	case archivers.ContentGone(lastFailureReason):
+		message := "The platform reports no playable content; automatic retries are disabled until source availability changes. This alone does not prove deletion or a worldwide block"
+		if strings.Contains(lastFailureReason, "This live stream recording is not available") {
+			message = "The platform reports that this live-stream recording is unavailable; retry only after the owner publishes a playable recording"
+		}
+		return &socialFailure{Code: "content_unavailable", Message: message, Retryable: false}
 	case strings.Contains(lastFailureReason, archivers.ErrContentUnavailable.Error()):
+		message := "The platform reports that this content is currently unavailable; a later capture may succeed if source availability changes"
+		if strings.Contains(lastFailureReason, "This live event will begin in") || strings.Contains(lastFailureReason, "Offline.") {
+			message = "The platform reports that this live event is offline or has not started; retry after it becomes playable, not in a tight loop"
+		}
+		return &socialFailure{Code: "content_unavailable", Message: message, Retryable: true}
+	case strings.Contains(lastFailureReason, "Apify fallback declined after"):
 		return &socialFailure{
-			Code:      "content_unavailable",
-			Message:   "The platform reports this content is not available yet (an unstarted or just-ended live event, or a private video); a later capture may succeed",
+			Code:      "extractor_failed",
+			Message:   "Native extraction failed and the paid fallback retry budget was exhausted; do not immediately resubmit. Check source access or wait for the fallback cooldown. Provider not-found responses do not prove deletion",
+			Retryable: true,
+		}
+	case strings.Contains(lastFailureReason, "failed_to_fetch_post_details"):
+		return &socialFailure{
+			Code:      "extractor_failed",
+			Message:   "Native extraction and the Instagram provider could not fetch this post; source availability is unconfirmed. Check source access before another paid attempt",
 			Retryable: true,
 		}
 	}

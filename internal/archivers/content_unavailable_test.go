@@ -14,6 +14,7 @@ func TestClassifyYtDlpFailure(t *testing.T) {
 		{"dead livestream", "ERROR: [youtube] aTe_x3MWhbw: This live stream recording is not available.", true},
 		{"upcoming live", "ERROR: [youtube] 15FGNbtNbj8: This live event will begin in a few moments.", true},
 		{"removed", "ERROR: [youtube] abc: Video unavailable", true},
+		{"private with login advice", "ERROR: [youtube] abc: Private video. Sign in if you have been granted access to this video", true},
 		{"instagram 400", "ERROR: [Instagram] DPjQ_rxE0Sh: Video info extraction failed: HTTP Error 400: Bad Request", false},
 		{"bot check", "ERROR: [youtube] abc: Sign in to confirm you're not a bot", false},
 		{"marker without error line", "WARNING: Video unavailable in some regions", false},
@@ -46,5 +47,32 @@ func TestContentGone(t *testing.T) {
 		if got := ContentGone(reason); got != want {
 			t.Errorf("ContentGone(%q) = %v, want %v", reason, got, want)
 		}
+	}
+}
+
+func TestAvailabilityClassificationUsesOnlyRelevantErrorLine(t *testing.T) {
+	base := errors.New("exit status 1")
+	for _, output := range []string{
+		"WARNING: Video unavailable in some regions\nERROR: Sign in to confirm you're not a bot",
+		"Video unavailable\nERROR: HTTP Error 429: Too Many Requests",
+		"ERROR: [youtube] id: Video unavailable. Sign in to confirm you're not a bot",
+		"ERROR: [youtube] id: Video unavailable: HTTP Error 403: Forbidden",
+	} {
+		if got := classifyYtDlpFailure(base, output); got != base {
+			t.Errorf("access failure must retain fallback eligibility: %q: %v", output, got)
+		}
+	}
+}
+
+func TestFollowerOnlyAccessIsActionable(t *testing.T) {
+	output := "WARNING: Instagram API is not granting access\nERROR: [Instagram] DaVg-TCPQoZhBWnWJlUgEM4v1Xqk3cEcABe1yM0: This content is only available for registered users who follow this account. Use --cookies for authentication."
+	got := classifyYtDlpFailure(errors.New("exit status 1"), output)
+	if !errors.Is(got, ErrSourceAccessRequired) || errors.Is(got, ErrContentUnavailable) {
+		t.Fatalf("wanted source access restriction, not deletion: %v", got)
+	}
+	// Empty responses on ordinary shortcodes are ambiguous, not private.
+	base := errors.New("exit status 1")
+	if got := classifyYtDlpFailure(base, "ERROR: [Instagram] DYb9QTmTJni: Instagram sent an empty media response."); got != base {
+		t.Fatalf("empty media response must remain inconclusive: %v", got)
 	}
 }

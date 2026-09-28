@@ -160,6 +160,12 @@ func (f *FallbackArchiver) Archive(ctx context.Context, url string, logWriter io
 	if !f.Backend.SupportsFallback(url, f.Type) {
 		return result, nativeErr
 	}
+	// A public extractor cannot acquire the caller's follower permissions.
+	// Preserve the actionable error instead of buying the same empty result.
+	if errors.Is(nativeErr, archivers.ErrSourceAccessRequired) {
+		fmt.Fprintf(logWriter, "\nNative flow failed (%v); skipping public Apify fallback: authorized source access is required\n", nativeErr)
+		return result, nativeErr
+	}
 	// The platform said the content is gone. Every provider fetches the
 	// same content, so this is not a case for a paid retry.
 	if errors.Is(nativeErr, archivers.ErrContentUnavailable) {

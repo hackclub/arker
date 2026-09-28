@@ -842,3 +842,48 @@ func TestApiArchiveResultGalleryReportsMusicOutsideMedia(t *testing.T) {
 		t.Errorf("audio_url = %q", music["audio_url"])
 	}
 }
+
+func TestActionableCaptureFailureMessages(t *testing.T) {
+	for _, tc := range []struct {
+		reason, code, message string
+		retryable             bool
+	}{
+		{"source access requires authorized credentials: follower-only", "authentication_required", "authorized follower", false},
+		{"content unavailable at the source: Video unavailable", "content_unavailable", "does not prove deletion", false},
+		{"content unavailable at the source: This live stream recording is not available", "content_unavailable", "publishes a playable recording", false},
+		{"content unavailable at the source: Offline.", "content_unavailable", "not in a tight loop", true},
+		{"native flow failed; Apify fallback declined after 2 recent paid failures (last: post not found: failed_to_fetch_post_details)", "extractor_failed", "retry budget was exhausted", true},
+		{"Apify fallback failed: post not found: failed_to_fetch_post_details", "extractor_failed", "availability is unconfirmed", true},
+	} {
+		failure := socialExtractorFailure(tc.reason)
+		if failure.Code != tc.code || failure.Retryable != tc.retryable || !strings.Contains(failure.Message, tc.message) {
+			t.Errorf("%q: %#v", tc.reason, failure)
+		}
+	}
+}
+
+func TestHistoricalFollowerOnlyFailureDoesNotNeedPaidRecapture(t *testing.T) {
+	db := newHandlerLogTestDB(t)
+	store := storage.NewMemoryStorage()
+	createVideoCapture(t, db, "priv1", "https://www.instagram.com/reel/PRIVATE/", map[string]string{"yt-dlp": "failed"})
+	var item models.ArchiveItem
+	db.Where("type = ?", "yt-dlp").First(&item)
+	log := "Starting video archive for: https://www.instagram.com/reel/PRIVATE/\nERROR: [Instagram] PRIVATE: This content is only available for registered users who follow this account.\nFinal attempt failed after 3 tries: native flow failed (yt-dlp cannot access video: exit status 1); Apify fallback declined after 2 recent paid failures (last: post not found: failed_to_fetch_post_details)"
+	if err := utils.AppendArchiveItemLog(db, item.ID, 3, log); err != nil {
+		t.Fatal(err)
+	}
+	_, body := getResult(t, resultRouter(db, store), "priv1")
+	failure := socialOf(t, body)["failure"].(map[string]any)
+	if failure["code"] != "authentication_required" || failure["retryable"] != false {
+		t.Fatalf("historical failure = %#v", failure)
+	}
+	// A later attempt with a different error must not inherit the restriction.
+	if err := utils.AppendArchiveItemLog(db, item.ID, 4, "\nStarting video archive for: https://www.instagram.com/reel/PRIVATE/\nERROR: HTTP Error 429\nFinal attempt failed: extractor failed"); err != nil {
+		t.Fatal(err)
+	}
+	_, body = getResult(t, resultRouter(db, store), "priv1")
+	failure = socialOf(t, body)["failure"].(map[string]any)
+	if failure["code"] != "extractor_failed" || failure["retryable"] != true {
+		t.Fatalf("stale restriction leaked: %#v", failure)
+	}
+}

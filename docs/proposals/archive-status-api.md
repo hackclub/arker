@@ -61,3 +61,91 @@ authentication-blocked, unsupported, and legacy captures. Unknown IDs return
   "result_url": "https://archive.hackclub.com/api/v1/archive/abc12"
 }
 ```
+
+## Machine-readable failure policy
+
+A known archive that could not capture the source still returns **HTTP 200**.
+This means the status lookup succeeded, not that capture succeeded. Consumers
+must use `social_post.fulfilled` and `social_post.failure`, not HTTP status or
+the existence of an MHTML/screenshot item.
+
+Every non-null `social_post.failure` now adds `category`, `reason`, and
+`retry`. This is additive within schema version 1; existing `code`,
+`message`, `retryable`, lifecycle values, and successful responses remain.
+Do not parse `message` or `provenance.last_failure_reason` for control flow.
+
+Example: an offline live event, with no stored media:
+
+```json
+{
+  "status": "failed",
+  "terminal": true,
+  "fulfilled": false,
+  "post": null,
+  "media": [],
+  "failure": {
+    "code": "content_unavailable",
+    "message": "The platform reports that this live event is offline or has not started; retry after it becomes playable, not in a tight loop",
+    "retryable": true,
+    "category": "source_unavailable",
+    "reason": "live_not_ready",
+    "retry": {
+      "action": "wait_for_source_change",
+      "automatic": false
+    }
+  }
+}
+```
+
+`terminal` applies to **this capture**, not the permanent lifetime of the
+source. Stop polling this short ID when terminal. Reading its GET never
+schedules a new attempt. Source unavailability is an expected unsuccessful
+outcome; clients can show “Unavailable at source” rather than an application
+outage.
+
+### Categories and reasons
+
+| Category | Reasons | Meaning |
+|---|---|---|
+| `source_unavailable` | `live_not_ready`, `recording_unavailable`, `removed_content`, `source_unavailable` | Source reports no playable media. Generic unavailability does not prove deletion or a worldwide block. |
+| `access_required` | `authentication_required`, `private_content` | Arker needs legitimate source access; an ordinary retry cannot supply permissions. |
+| `capture_failed` | `extraction_failed`, `availability_unconfirmed`, `fallback_budget_exhausted` | Capture failed or its paid allowance was exhausted; do not infer source deletion. |
+| `artifact_incomplete` | `legacy_archive`, `metadata_unavailable`, `media_incomplete`, `completeness_unknown`, `raw_metadata_unavailable` | Arker could not fulfill the stored-media/metadata contract. Preserve any reported partial media. |
+| `unsupported` | `unsupported_url` | No supported social capture route. |
+
+Provider “not found” alone maps to inconclusive capture failure, not
+`removed_content`. When the final error is exhausted fallback allowance,
+`fallback_budget_exhausted` takes precedence. It describes the failed attempt,
+not a promise that the allowance is still exhausted when GET is read days later.
+
+### Retry actions
+
+| Action | Consumer behavior |
+|---|---|
+| `wait_for_source_change` | Settle this attempt as source-unavailable. Submit a new capture only after source availability changes; do not repeatedly buy the same unavailable content. |
+| `configure_source_access` | Surface an access requirement to the operator. Credentials and authorized access are configured in **Arker**, not in the consumer. Retry only after that changes. |
+| `investigate` | Settle as requiring investigation. Arker must diagnose the extractor or fallback limit before another paid attempt. |
+| `repair_archive` | Surface an incomplete archive. Repair/backfill is Arker's responsibility, not consumer-side scraping or media-path construction. |
+| `do_not_retry` | Stop automatic submissions for this unsupported input. |
+
+`retry.automatic` is false for these exhausted/terminal outcomes. Arker's
+internal attempts have already run; this API does not schedule background
+recovery. No retry deadline is invented from old logs.
+
+The legacy `retryable` flag means “another capture could succeed under changed
+conditions,” **not** “retry immediately.” New clients should prefer
+`retry.action` and `retry.automatic`. For an older server without `retry`,
+apply a bounded backoff to `retryable=true`; never loop indefinitely.
+For an unknown future category, reason or action, display `message` and stop
+automatic resubmission until the client understands the new policy.
+
+Minimal consumer flow:
+
+1. `fulfilled=true`: consume Arker's normalized metadata and media URLs.
+2. `terminal=false`: keep polling the same GET with backoff; do not resubmit.
+3. `terminal=true`: settle this attempt, retain any partial media, and display
+   the structured failure category. Only initiate a new attempt after the
+   specified retry action has been satisfied.
+
+No internal manifest reads, provider selection, or consumer scraping are
+required.

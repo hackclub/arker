@@ -21,6 +21,10 @@ var ErrSocialThumbnailUnavailable = errors.New("social thumbnail unavailable")
 // not about Arker's access to it, so a paid fallback would fail the same way.
 var ErrContentUnavailable = errors.New("content unavailable at the source")
 
+// ErrSourceAccessRequired is a source-specific permission restriction, not a
+// generic login wall or bot check that a public paid extractor might solve.
+var ErrSourceAccessRequired = errors.New("source access requires authorized credentials")
+
 // ErrPhotoSlideshow means a URL routed to the video archiver turned out to be
 // an image post: a TikTok photo post reached through its /video/<id> spelling
 // (TikTok's own share URLs and Display API use that form for every post, and
@@ -73,12 +77,33 @@ func ContentGone(reason string) bool {
 	return false
 }
 
-// classifyYtDlpFailure wraps err with ErrContentUnavailable when yt-dlp's
-// output shows the platform said the content itself is gone.
+// classifyYtDlpFailure only classifies actual error lines. A warning or a
+// printed title elsewhere in combined output is not an availability verdict.
 func classifyYtDlpFailure(err error, output string) error {
-	for _, marker := range contentUnavailableMarkers {
-		if strings.Contains(output, "ERROR:") && strings.Contains(output, marker) {
-			return fmt.Errorf("%w: %s: %v", ErrContentUnavailable, marker, err)
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "ERROR:") {
+			continue
+		}
+		if strings.Contains(line, "This content is only available for registered users who follow this account") {
+			return fmt.Errorf("%w: the extractor reports follower-only access: %v", ErrSourceAccessRequired, err)
+		}
+		// Some extractors prefix access errors with "Video unavailable".
+		// Do not turn those into permanent content verdicts or skip fallback.
+		lower := strings.ToLower(line)
+		accessFailure := strings.Contains(lower, "sign in") || strings.Contains(lower, "log in") ||
+			strings.Contains(lower, "login") || strings.Contains(lower, "http error") ||
+			strings.Contains(lower, "rate limit") || strings.Contains(lower, "not a bot")
+		for _, marker := range contentUnavailableMarkers {
+			// Explicit private/removed diagnoses still apply even if the
+			// source also suggests signing in. Only the generic prefix is
+			// ambiguous in an access-error message.
+			if marker == "Video unavailable" && accessFailure {
+				continue
+			}
+			if strings.Contains(line, marker) {
+				return fmt.Errorf("%w: %s: %v", ErrContentUnavailable, marker, err)
+			}
 		}
 	}
 	return err
