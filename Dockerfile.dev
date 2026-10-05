@@ -51,24 +51,36 @@ WORKDIR /app
 RUN go install github.com/air-verse/air@v1.52.3
 
 # Install Playwright CLI that matches our library version
-RUN go install github.com/mxschmitt/playwright-go/cmd/playwright@v0.6100.0
+RUN go install github.com/mxschmitt/playwright-go/cmd/playwright@v0.6201.1
 ENV PATH="/root/go/bin:${PATH}"
 
 # Copy go.mod and go.sum first for better Docker layer caching
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Install Playwright browsers (dependencies already installed above)
-RUN playwright install chromium
+# Install Playwright browsers: bundled chromium + Chrome for Testing (stable).
+# Chrome for Testing is amd64-only; skip gracefully on arm64.
+RUN playwright install chromium && \
+    (playwright install chrome 2>/dev/null || echo "Chrome for Testing not available on $(arch), using bundled Chromium")
 
 # Verify installation
 RUN playwright --version
 
-# Create data directories
-RUN mkdir -p /data /cache
+# Create non-root runtime user (matches production Dockerfile)
+RUN groupadd -r arker && useradd -r -g arker -d /home/arker -m arker
+
+# Create data directories and grant ownership to runtime user
+RUN mkdir -p /data /cache && chown -R arker:arker /data /cache /app
+RUN chmod -R o+rX /root /root/.cache && \
+    mkdir -p /home/arker/.cache && \
+    ln -s /root/.cache/ms-playwright /home/arker/.cache/ms-playwright && \
+    ln -s /root/.cache/ms-playwright-go /home/arker/.cache/ms-playwright-go && \
+    chown -R arker:arker /home/arker/.cache
 
 # Copy Air config for live reloading
 COPY .air.toml .
+
+USER arker
 
 # Default command is to run Air
 CMD ["air"]

@@ -40,3 +40,7 @@ services:
     # Enable init process for proper zombie process reaping
     # This prevents Chrome zombie processes from accumulating
     init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_add:
+      - SYS_ADMIN

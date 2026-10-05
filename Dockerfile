@@ -82,12 +82,18 @@ ENV DENO_INSTALL="/root/.deno"
 ENV PATH="${DENO_INSTALL}/bin:${PATH}"
 
 # Install Playwright CLI early for better caching
-RUN go install github.com/mxschmitt/playwright-go/cmd/playwright@v0.6100.0
+RUN go install github.com/mxschmitt/playwright-go/cmd/playwright@v0.6201.1
 ENV PATH="/root/go/bin:${PATH}"
 
-# Install Playwright browser in separate layer (cached unless Playwright version changes)
+# Install Playwright browsers. "chrome" is Chrome for Testing (Google's
+# stable channel binary), updated independently of Playwright's pinned
+# Chromium — critical for staying ahead of V8 zero-days like
+# CVE-2026-11645 and CVE-2026-87491. Chrome for Testing only ships
+# amd64; on arm64 (dev on Apple Silicon) we fall back to the bundled
+# Chromium.
 RUN playwright install-deps && \
     playwright install --with-deps chromium && \
+    (playwright install chrome 2>/dev/null || echo "Chrome for Testing not available on $(arch), using bundled Chromium") && \
     playwright --version
 
 WORKDIR /app
@@ -100,8 +106,22 @@ RUN go mod download
 COPY . .
 RUN go build -o arker ./cmd
 
-# Create necessary directories
-RUN mkdir -p /data /cache
+# Create non-root runtime user. Chromium renderer exploits land as this
+# user instead of root, which limits container-escape blast radius.
+RUN groupadd -r arker && useradd -r -g arker -d /home/arker -m arker
+
+# Create necessary directories and grant ownership to runtime user
+RUN mkdir -p /data /cache && chown -R arker:arker /data /cache /app
+
+# Playwright browsers and the playwright-go driver are installed under
+# /root. Make them readable by the runtime user, and symlink the cache
+# into arker's home so playwright-go finds its driver at the expected
+# $HOME/.cache path.
+RUN chmod -R o+rX /root /root/.cache && \
+    mkdir -p /home/arker/.cache && \
+    ln -s /root/.cache/ms-playwright /home/arker/.cache/ms-playwright && \
+    ln -s /root/.cache/ms-playwright-go /home/arker/.cache/ms-playwright-go && \
+    chown -R arker:arker /home/arker/.cache
 
 EXPOSE 8080
 
@@ -109,5 +129,7 @@ EXPOSE 8080
 # process never wait()s on. Without an init, prod accumulates ~1k defunct PIDs
 # per day and eventually hits the container's pids cgroup limit, at which point
 # archiving breaks with fork failures.
+USER arker
+
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["./arker"]

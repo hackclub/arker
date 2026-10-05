@@ -71,15 +71,20 @@ func (b *PWBundle) CreateBrowser(contextOptions playwright.BrowserNewContextOpti
 
 	fmt.Fprintf(b.logWriter, "Launching Chrome browser...\n")
 
-	// Standard browser launch args for security and performance
+	// Standard browser launch args for security and performance.
+	//
+	// --no-sandbox is required inside Docker unless the container has
+	// CAP_SYS_ADMIN (for user-namespace sandbox) or is running on a kernel
+	// with unprivileged userns enabled for the runtime user. If the compose
+	// file grants SYS_ADMIN, this flag can be removed to re-enable
+	// Chromium's renderer sandbox — the single highest-value hardening step.
 	launchArgs := []string{
 		"--no-sandbox",
 		"--disable-setuid-sandbox",
 		"--disable-dev-shm-usage",
-		"--disable-web-security",
 		// WORKING Intel GPU hardware acceleration (tested with intel_gpu_top)
 		"--enable-gpu",                   // Enable GPU processes
-		"--disable-gpu-sandbox",          // Required in containers
+		"--disable-gpu-sandbox",          // Required for GPU accel in containers
 		"--use-gl=angle",                 // Use ANGLE for GL
 		"--use-angle=gl-egl",             // Use EGL backend through ANGLE (WORKING!)
 		"--enable-accelerated-2d-canvas", // Enable hardware-accelerated 2D canvas
@@ -89,15 +94,31 @@ func (b *PWBundle) CreateBrowser(contextOptions playwright.BrowserNewContextOpti
 		// here. It makes Chromium deadlock on shutdown, which wedges browser.Close()/
 		// pw.Stop() forever and previously deadlocked the whole archive queue.
 		"--no-zygote",
+		// Harden the renderer against exploit delivery via archived pages.
+		"--disable-background-networking",
+		"--disable-default-apps",
+		"--disable-extensions",
+		"--disable-component-update",
+		"--disable-domain-reliability",
 	}
 
 	// Set EGL_PLATFORM for Intel GPU hardware acceleration
 	os.Setenv("EGL_PLATFORM", "surfaceless")
 
-	browser, err := b.pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
+	// Prefer Chrome for Testing (stable channel) over the bundled Chromium
+	// so we pick up V8 security patches sooner. Chrome for Testing is only
+	// available on amd64, so fall back to the bundled build on arm64 / dev.
+	launchOpts := playwright.BrowserTypeLaunchOptions{
 		Headless: playwright.Bool(true),
+		Channel:  playwright.String("chrome"),
 		Args:     launchArgs,
-	})
+	}
+	browser, err := b.pw.Chromium.Launch(launchOpts)
+	if err != nil {
+		fmt.Fprintf(b.logWriter, "Chrome stable channel unavailable, falling back to bundled Chromium: %v\n", err)
+		launchOpts.Channel = nil
+		browser, err = b.pw.Chromium.Launch(launchOpts)
+	}
 	if err != nil {
 		fmt.Fprintf(b.logWriter, "Failed to launch browser: %v\n", err)
 		return fmt.Errorf("failed to launch browser: %w", err)
