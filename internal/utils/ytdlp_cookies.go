@@ -89,9 +89,14 @@ func YtDlpImpersonateArgsForURL(rawURL string) []string {
 func InitYtDlpCookies(cookiesFile, cookiesB64, dir string) (string, error) {
 	path := strings.TrimSpace(cookiesFile)
 	if path != "" {
-		if _, err := os.Stat(path); err != nil {
+		// Open rather than Stat: a jar that exists but the process cannot
+		// read (root:600 on a bind mount, app running as non-root) must be
+		// reported at startup, not discovered by every job that runs.
+		f, err := os.Open(path)
+		if err != nil {
 			return "", fmt.Errorf("YTDLP_COOKIES_FILE %q is not readable: %w", path, err)
 		}
+		_ = f.Close()
 	} else if b64 := strings.TrimSpace(cookiesB64); b64 != "" {
 		content, err := base64.StdEncoding.DecodeString(b64)
 		if err != nil {

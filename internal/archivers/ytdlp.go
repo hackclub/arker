@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"gorm.io/gorm"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -139,10 +140,15 @@ func (a *YtDlpArchiver) archive(ctx context.Context, url string, logWriter io.Wr
 	// One private cookies copy for both yt-dlp runs in this job; yt-dlp
 	// writes the jar back on exit, so it must not share a file with
 	// concurrent jobs.
+	// A jar that cannot be read degrades to an anonymous run instead of
+	// failing the job: most sites need no login, and the ones that do still
+	// get their paid fallback. Failing here once failed every TikTok and
+	// YouTube capture because the secrets mount was not readable.
 	cookieArgs, cleanupCookies, err := utils.YtDlpCookieArgsForRun()
 	if err != nil {
-		fmt.Fprintf(logWriter, "Failed to prepare yt-dlp cookies: %v\n", err)
-		return Result{}, err
+		fmt.Fprintf(logWriter, "Failed to prepare yt-dlp cookies, continuing without them: %v\n", err)
+		slog.Error("Media cookie jar unreadable; archiving anonymously", "tool", "yt-dlp", "error", err)
+		cookieArgs, cleanupCookies = nil, func() {}
 	}
 	defer cleanupCookies()
 

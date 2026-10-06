@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"os"
@@ -117,10 +118,12 @@ func (a *GalleryDLArchiver) Archive(ctx context.Context, url string, logWriter i
 	// gallery-dl only reads the jar (there is a separate --cookies-export for
 	// writing), but reuse the per-run private copy anyway: it keeps a
 	// read-only mounted secret safe and matches how yt-dlp is invoked.
+	// An unreadable jar degrades to an anonymous run (see ytdlp.go).
 	cookieArgs, cleanupCookies, err := utils.MediaCookieArgsForRun()
 	if err != nil {
-		fmt.Fprintf(logWriter, "Failed to prepare gallery-dl cookies: %v\n", err)
-		return Result{}, err
+		fmt.Fprintf(logWriter, "Failed to prepare gallery-dl cookies, continuing without them: %v\n", err)
+		slog.Error("Media cookie jar unreadable; archiving anonymously", "tool", "gallery-dl", "error", err)
+		cookieArgs, cleanupCookies = nil, func() {}
 	}
 	defer cleanupCookies()
 	if len(cookieArgs) == 0 {

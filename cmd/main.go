@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"log/slog"
 	"net/http"
@@ -650,6 +652,11 @@ func main() {
 			if cfg.ApifyAPIToken != "" {
 				slog.Info("Apify token read from the secrets mount", "path", "/data/secrets/apify-token")
 			}
+		} else if !errors.Is(readErr, fs.ErrNotExist) {
+			// Present but unreadable (e.g. root:600 while the app runs as
+			// non-root) silently disabled every paid fallback once.
+			slog.Error("Apify token on the secrets mount is unreadable; paid fallbacks are disabled",
+				"path", "/data/secrets/apify-token", "uid", os.Getuid(), "error", readErr)
 		}
 	}
 	if cfg.ApifyAPIToken != "" {
@@ -677,6 +684,12 @@ func main() {
 	}
 
 	os.MkdirAll(cfg.CachePath, 0755)
+	if probe, probeErr := os.MkdirTemp(cfg.CachePath, ".write-probe-"); probeErr != nil {
+		slog.Error("Cache path is not writable; serving unpacked archives will fail",
+			"path", cfg.CachePath, "uid", os.Getuid(), "error", probeErr)
+	} else {
+		_ = os.Remove(probe)
+	}
 
 	// Initialize browser monitoring
 	monitor := monitoring.GetGlobalMonitor()

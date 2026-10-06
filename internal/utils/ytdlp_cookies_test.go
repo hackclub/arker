@@ -208,3 +208,21 @@ func TestInitYtDlpCookiesFileTakesPrecedenceOverBase64(t *testing.T) {
 		t.Fatalf("InitYtDlpCookies path = %q, want file path %q", path, cookiesPath)
 	}
 }
+
+// A jar that exists but cannot be read (root:600 on a bind mount while the app
+// runs as non-root) must be reported at startup, not pass a Stat check and then
+// fail every job.
+func TestInitYtDlpCookiesUnreadableFileErrors(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can read a 0000 file")
+	}
+	resetYtDlpCookies(t)
+
+	jar := filepath.Join(t.TempDir(), "cookies.txt")
+	if err := os.WriteFile(jar, []byte("# Netscape HTTP Cookie File\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InitYtDlpCookies(jar, "", t.TempDir()); err == nil {
+		t.Fatal("InitYtDlpCookies accepted an unreadable cookies file")
+	}
+}

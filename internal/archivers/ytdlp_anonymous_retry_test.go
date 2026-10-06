@@ -102,3 +102,38 @@ func TestYtDlpArchiveRetriesAnonymouslyWhenCookiesAreRejected(t *testing.T) {
 		t.Errorf("log does not record the anonymous retry:\n%s", log.String())
 	}
 }
+
+// A jar that turns unreadable after startup (a permissions change on the
+// secrets mount) must degrade the run to anonymous, not fail the job: the
+// 2026-10-05 non-root deploy failed every TikTok and YouTube capture this way
+// even though neither needed the cookies.
+func TestYtDlpArchiveRunsAnonymouslyWhenJarIsUnreadable(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can read a 0000 file")
+	}
+	calls := installCookieRejectingYtDlp(t)
+	jar := filepath.Join(t.TempDir(), "cookies.txt")
+	if err := os.WriteFile(jar, []byte("# Netscape HTTP Cookie File\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := utils.InitYtDlpCookies(jar, "", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = utils.InitYtDlpCookies("", "", "") })
+	if err := os.Chmod(jar, 0o000); err != nil {
+		t.Fatal(err)
+	}
+
+	var log bytes.Buffer
+	a := &YtDlpArchiver{}
+	if _, err := a.RefreshVideoMetadata(context.Background(), "https://www.instagram.com/reel/DdJVK8WNOk7/", &log, VideoMedia{Extension: ".mp4", ContentType: "video/mp4", SizeBytes: 1}); err != nil {
+		t.Fatalf("archive failed instead of running anonymously: %v\nlog:\n%s", err, log.String())
+	}
+	raw, _ := os.ReadFile(calls)
+	if strings.Contains(string(raw), "--cookies") {
+		t.Errorf("a run carried --cookies although the jar was unreadable:\n%s", raw)
+	}
+	if !strings.Contains(log.String(), "continuing without them") {
+		t.Errorf("log does not record the cookie failure:\n%s", log.String())
+	}
+}

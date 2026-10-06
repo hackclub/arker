@@ -67,7 +67,10 @@ RUN playwright install chromium && \
 RUN playwright --version
 
 # Create non-root runtime user (matches production Dockerfile)
-RUN groupadd -r arker && useradd -r -g arker -d /home/arker -m arker
+# The UID/GID are pinned: host bind mounts (secrets, cache) are chowned to
+# them, and an unpinned system UID can shift between image builds. 10001 is
+# outside the host's system-account range, so no host daemon shares it.
+RUN groupadd -r -g 10001 arker && useradd -r -u 10001 -g arker -d /home/arker -m arker
 
 # Create data directories and grant ownership to runtime user
 RUN mkdir -p /data /cache && chown -R arker:arker /data /cache /app
