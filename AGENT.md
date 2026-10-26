@@ -392,6 +392,17 @@ Platform quirks worth knowing before changing a route:
   not get one**: the Vimeo Videos dataset crawler errors on exactly the
   DRM-protected class the native path cannot fetch either. DRM is cryptographic
   rather than positional, so a different network position buys nothing.
+- **YouTube** gates some public videos for logged-out viewers behind "Please
+  sign in. This helps protect our community." (per video, not per IP; seen
+  2026-10). Every logged-out player client hits it except the embedded
+  player's. When a probe fails with a
+  sign-in `ERROR:` on a YouTube URL, the archiver probes once more anonymously
+  with `--extractor-args youtube:player_client=web_embedded`
+  (`utils.YtDlpYouTubeLoginGateArgs`) and downloads the same way if that works;
+  if not, the original error stands and the Apify fallback runs as before.
+  Embedded-player records lack `like_count`, `timestamp` and `availability`.
+  `RefreshSocialThumbnail` and the contract-only metadata backfill never probe,
+  so they do not get this retry and still fail on gated videos.
 - **TikTok** photo posts (`/photo/`) go to gallery-dl — yt-dlp cannot download a
   slideshow. Videos and `vm`/`vt`/`t` short links stay on yt-dlp. **A `/video/`
   URL can still be a photo post**: TikTok's share links and Display API spell

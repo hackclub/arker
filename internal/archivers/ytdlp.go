@@ -173,6 +173,7 @@ func (a *YtDlpArchiver) archive(ctx context.Context, url string, logWriter io.Wr
 	refererArgs = append(refererArgs, utils.YtDlpFormatFallbackArgsForURL(fetchURL)...)
 
 	detectedLang := ""
+	var playerClientArgs []string
 	if !contractOnly {
 		// Prepare command arguments. The language is printed last and on its own
 		// so the subtitle filter can be built from the video's actual language.
@@ -188,6 +189,7 @@ func (a *YtDlpArchiver) archive(ctx context.Context, url string, logWriter io.Wr
 		testCmd.Args = append(testCmd.Args, utils.YtDlpProxyArgs()...)
 		testCmd.Args = append(testCmd.Args, fetchURL)
 		testOutput, err := testCmd.CombinedOutput()
+		failedOutputs := []string{string(testOutput)}
 		if err != nil && len(cookieArgs) > 0 {
 			// A stale or throttled session can make the platform reject
 			// every authenticated request (Instagram answers HTTP 400 for
@@ -211,6 +213,31 @@ func (a *YtDlpArchiver) archive(ctx context.Context, url string, logWriter io.Wr
 				testOutput, err = anonOutput, nil
 			} else {
 				fmt.Fprintf(redactedLog, "yt-dlp anonymous test failed too: %v\nOutput: %s\n", anonErr, string(anonOutput))
+				failedOutputs = append(failedOutputs, string(anonOutput))
+			}
+		}
+		if gateArgs := utils.YtDlpYouTubeLoginGateArgs(url, failedOutputs...); err != nil && gateArgs != nil {
+			// YouTube asks logged-out viewers of some public videos to sign
+			// in; its embedded player still serves them. Retry anonymously
+			// through that client and, when it works, download the same way.
+			// A failure here keeps the original error, so the paid fallback
+			// runs exactly as before.
+			fmt.Fprintf(logWriter, "YouTube asks for a sign-in; retrying via the embedded player client...\n")
+			embedCmd := exec.CommandContext(ctx, "yt-dlp")
+			embedCmd.Args = append(embedCmd.Args, testArgs...)
+			embedCmd.Args = append(embedCmd.Args, gateArgs...)
+			embedCmd.Args = append(embedCmd.Args, utils.YtDlpImpersonateArgsForURL(url)...)
+			embedCmd.Args = append(embedCmd.Args, refererArgs...)
+			embedCmd.Args = append(embedCmd.Args, utils.YtDlpProxyArgs()...)
+			embedCmd.Args = append(embedCmd.Args, fetchURL)
+			embedOutput, embedErr := embedCmd.CombinedOutput()
+			if embedErr == nil {
+				fmt.Fprintf(logWriter, "YouTube login gate; continuing via the embedded player client\n")
+				cookieArgs = nil
+				playerClientArgs = gateArgs
+				testOutput, err = embedOutput, nil
+			} else {
+				fmt.Fprintf(redactedLog, "yt-dlp embedded player test failed too: %v\nOutput: %s\n", embedErr, string(embedOutput))
 			}
 		}
 		if err != nil {
@@ -256,6 +283,7 @@ func (a *YtDlpArchiver) archive(ctx context.Context, url string, logWriter io.Wr
 	if !contractOnly {
 		cmd.Args = append(cmd.Args, utils.YtDlpSubtitleArgs(detectedLang)...)
 	}
+	cmd.Args = append(cmd.Args, playerClientArgs...)
 	cmd.Args = append(cmd.Args, utils.YtDlpImpersonateArgsForURL(url)...)
 	cmd.Args = append(cmd.Args, refererArgs...)
 	cmd.Args = append(cmd.Args, cookieArgs...)
